@@ -1,33 +1,24 @@
-# Astro Starter Kit: Minimal
+# Engineering Interview Kit
 
-```sh
-npm create astro@latest -- --template minimal
-```
+A comprehensive, high-signal revision kit for Software Engineers preparing for interviews.
 
-> 🧑‍🚀 **Seasoned astronaut?** Delete this file. Have fun!
+Built with **Astro**, **Tailwind CSS**, and **MDX**, this project provides a lightning-fast, beautifully designed static site that renders technical concepts, Mermaid diagrams, and code snippets effortlessly.
 
-## 🚀 Project Structure
+## 🚀 Features
 
-Inside of your Astro project, you'll see the following folders and files:
+- **High Signal-to-Noise Ratio**: Every topic follows a strict pattern: TL;DR, Mental Model (Mermaid diagram), Example, Interview Questions, and Gotchas.
+- **Mermaid Diagrams**: Native support for complex system design and architecture models.
+- **Dynamic Routing**: Content is dynamically generated from MDX files organized by category (JavaScript, TypeScript, Go, Node.js, SQL, System Design).
+- **Premium Design**: Clean, modern dark UI built with Tailwind CSS.
 
-```text
-/
-├── public/
-├── src/
-│   └── pages/
-│       └── index.astro
-└── package.json
-```
+## 📂 Project Structure
 
-Astro looks for `.astro` or `.md` files in the `src/pages/` directory. Each page is exposed as a route based on its file name.
+- `src/content/topics/` - All the MDX content lives here, grouped by category.
+- `src/pages/` - Astro routing and page components.
+- `src/layouts/` - Main site layout and global styling.
+- `src/content.config.ts` - Zod schema enforcing frontmatter types.
 
-There's nothing special about `src/components/`, but that's where we like to put any Astro/React/Vue/Svelte/Preact components.
-
-Any static assets, like images, can be placed in the `public/` directory.
-
-## 🧞 Commands
-
-All commands are run from the root of the project, from a terminal:
+## 🛠️ Commands
 
 | Command                   | Action                                           |
 | :------------------------ | :----------------------------------------------- |
@@ -35,9 +26,21 @@ All commands are run from the root of the project, from a terminal:
 | `npm run dev`             | Starts local dev server at `localhost:4321`      |
 | `npm run build`           | Build your production site to `./dist/`          |
 | `npm run preview`         | Preview your build locally, before deploying     |
-| `npm run astro ...`       | Run CLI commands like `astro add`, `astro check` |
-| `npm run astro -- --help` | Get help using the Astro CLI                     |
 
-## 👀 Want to learn more?
+## 📝 Adding New Content
 
-Feel free to check [our documentation](https://docs.astro.build) or jump into our [Discord server](https://astro.build/chat).
+To add a new topic, create a new `.mdx` file in the appropriate category folder under `src/content/topics/`. Make sure to include the required frontmatter:
+
+```yaml
+---
+title: "Topic Name"
+description: "A short description."
+importance: "HIGH" # HIGH, MEDIUM, LOW
+revisionTime: 5
+category: "JavaScript"
+---
+```
+
+## 🌐 Deployment
+
+This project is configured for seamless deployment to **Netlify** using the `@astrojs/netlify` adapter. Simply connect the repository to Netlify, and it will build and deploy automatically.
