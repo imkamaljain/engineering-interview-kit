@@ -1,0 +1,90 @@
+---
+title: "LEFT JOIN"
+description: "Keep everything on the left, even if there's no match."
+importance: "HIGH"
+revisionTime: 3
+category: "SQL"
+subcategory: "Joins"
+order: 23
+---
+
+## Concept
+
+A **`LEFT JOIN`** (or `LEFT OUTER JOIN`) returns **all rows from the Left table**, regardless of whether they have a match in the Right table. 
+- If there is a match, the Right table's data is attached.
+- If there is **no match**, the Right table's columns are filled with `NULL`.
+
+This is incredibly useful when you want to report on everything in your primary table, but want to conditionally include supplemental data if it exists.
+
+## Mental Model
+
+Let's use the same example:
+- **`Users` (Left)**: Alice (1), Bob (2)
+- **`Orders` (Right)**: Order A (User 1)
+
+If you `LEFT JOIN` Users to Orders:
+- Alice has an order. She gets Order A data.
+- Bob has no orders. **He is still included**, but his Order columns are `NULL`.
+
+| User.Name | Order.Product |
+| :--- | :--- |
+| Alice | Laptop |
+| Bob | NULL |
+
+## Syntax & Examples
+
+```sql
+SELECT users.name, orders.product
+FROM users
+LEFT JOIN orders 
+  ON users.id = orders.user_id;
+```
+
+### The "Anti-Join" (Finding Orphans)
+
+The most powerful interview trick using `LEFT JOIN` is finding "Orphans"—rows that exist in the left table but completely lack related data in the right table.
+You do this by `LEFT JOIN`ing, and then filtering the final result for rows where the Right table's Primary Key is `NULL`.
+
+```sql
+-- Find all Users who have NEVER placed an order
+SELECT users.name 
+FROM users
+LEFT JOIN orders 
+  ON users.id = orders.user_id
+-- If order.id is NULL, it means the LEFT JOIN found no match
+WHERE orders.id IS NULL;
+```
+
+## The WHERE vs ON Trap
+
+This is the most common bug in SQL reporting. You must understand the difference between filtering in the `ON` clause versus the `WHERE` clause during a `LEFT JOIN`.
+
+*Goal: Show ALL users. If they bought a Laptop, show it. If they didn't, show NULL.*
+
+**BAD CODE (The Trap):**
+```sql
+SELECT users.name, orders.product
+FROM users
+LEFT JOIN orders ON users.id = orders.user_id
+WHERE orders.product = 'Laptop';
+```
+*Why it fails:* The `LEFT JOIN` correctly fetches Bob and gives him `product = NULL`. But then the `WHERE` clause runs. It sees `NULL = 'Laptop'`, which is False. It deletes Bob entirely. You accidentally turned your `LEFT JOIN` into an `INNER JOIN`.
+
+**GOOD CODE:**
+```sql
+SELECT users.name, orders.product
+FROM users
+LEFT JOIN orders 
+  ON users.id = orders.user_id 
+  AND orders.product = 'Laptop';
+```
+*Why it works:* By moving the filter into the `ON` clause, it only restricts *which orders are valid for the match*. Bob fails the match, so the `LEFT JOIN` does what it's supposed to do: it keeps Bob, but fills his order column with `NULL`.
+
+## Interview Questions
+
+**Q: You write `SELECT * FROM A LEFT JOIN B ON A.id = B.a_id`. Table A has 10 rows. Table B is completely empty. How many rows will the query return?**
+**A:** Exactly 10 rows. Because it is a `LEFT JOIN`, the database guarantees that every single row from the Left table (Table A) will be returned at least once. Since Table B is empty, all 10 rows will simply have `NULL` for the columns belonging to Table B.
+
+**Q: A developer writes `A LEFT JOIN B`, then chains `INNER JOIN C` immediately after it. Why is this usually a mistake?**
+**A:** The `INNER JOIN C` will likely destroy the safe nulls created by the `LEFT JOIN B`. 
+If a row from A has no match in B, the B columns become `NULL`. When the database moves to the next step (`INNER JOIN C ON B.id = C.b_id`), it attempts to match `NULL = C.b_id`. This fails, and the `INNER JOIN` completely discards the row. The earlier `LEFT JOIN` was rendered useless. If you start a chain of `LEFT JOIN`s, any subsequent joins referencing those tables generally must also be `LEFT JOIN`s to preserve the data.

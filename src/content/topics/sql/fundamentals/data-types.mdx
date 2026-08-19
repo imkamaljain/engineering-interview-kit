@@ -1,0 +1,65 @@
+---
+title: "Data Types"
+description: "Choosing the exact memory footprint for your data."
+importance: "MEDIUM"
+revisionTime: 2
+category: "SQL"
+subcategory: "Fundamentals"
+order: 7
+---
+
+## Concept
+
+In Javascript, a number is just a `Number`, and a string is just a `String`. 
+In SQL, you must explicitly declare the **exact** type and maximum size of data a column will hold. This is because relational databases are heavily optimized for physical hard drive storage. If you declare a column as a 2-byte integer, the database knows it can physically pack exactly 4,000 rows into an 8KB disk page.
+
+Choosing the wrong data type leads to massive storage bloat, slow indexing, and mathematical precision errors.
+
+## The Core Data Types (PostgreSQL Syntax)
+
+### 1. Strings
+- **`CHAR(N)`:** Fixed-length. If you declare `CHAR(10)` and insert "cat", the database physically pads it with 7 invisible spaces. (Rarely used today).
+- **`VARCHAR(N)`:** Variable-length, with a strict maximum limit. If you insert "cat" into `VARCHAR(255)`, it only uses 3 bytes of disk space.
+- **`TEXT`:** Infinite variable-length string. (In PostgreSQL, `TEXT` and `VARCHAR` have the exact same performance, so `VARCHAR(N)` is purely used as a constraint).
+
+### 2. Numbers
+- **`SMALLINT` (2 bytes):** Stores up to ~32,000.
+- **`INTEGER` / `INT` (4 bytes):** Stores up to ~2.1 billion. (The default choice).
+- **`BIGINT` (8 bytes):** Stores up to 9 quintillion. (Mandatory for Auto-Incrementing IDs in massive tables).
+- **`DECIMAL(precision, scale)` / `NUMERIC`:** Exact precision mathematics. `DECIMAL(10, 2)` means 10 total digits, 2 of which are after the decimal point (e.g., `12345678.90`). Mandatory for money.
+- **`FLOAT` / `REAL`:** Approximate mathematics (floating-point). Extremely fast, but mathematically inaccurate. Never use for money.
+
+### 3. Dates and Times
+- **`DATE`:** Just the day (e.g., `2023-10-31`).
+- **`TIMESTAMP`:** Date and Time (e.g., `2023-10-31 14:30:00`).
+- **`TIMESTAMPTZ` (Timestamp with Timezone):** The absolute industry standard. It converts the input to UTC before saving to the hard drive, and converts it back to the client's local timezone when reading.
+
+### 4. Booleans & UUIDs
+- **`BOOLEAN`:** `TRUE`, `FALSE`, or `NULL`.
+- **`UUID`:** A 128-bit string universally unique identifier.
+
+## Trade-Offs: The Money Problem
+
+Why do we have `DECIMAL` and `FLOAT`?
+Computers operate in Base-2 (binary). Humans operate in Base-10.
+In Base-2, it is physically impossible to accurately represent the number `0.1`. If you use `FLOAT` and ask the database to calculate `0.1 + 0.2`, it will return `0.30000000000000004`. If you process a million financial transactions this way, you will lose real money due to rounding errors.
+**`DECIMAL`** forces the database to perform significantly slower, software-based Base-10 math, guaranteeing that `0.1 + 0.2 = 0.3` perfectly every time.
+
+## Real-World Usage: JSONB
+
+Modern RDBMS (especially PostgreSQL) have introduced the **`JSONB` (Binary JSON)** data type.
+This allows you to store unstructured JSON documents directly inside a SQL column. Unlike raw text, PostgreSQL parses the JSON into a binary format upon insertion. This allows you to create highly optimized B-Tree indexes directly on specific keys *inside* the JSON document. 
+This gives PostgreSQL almost all the flexibility of a NoSQL database (like MongoDB) while retaining the power of SQL `JOIN`s for the rest of the table.
+
+## Interview Questions
+
+**Q: A developer uses `BIGINT` (8 bytes) for a `status_id` column that will only ever contain the numbers 1, 2, or 3. The table has 10 billion rows. Why is this a serious architectural flaw?**
+**A:** Because of **Cache Memory (RAM) Exhaustion**. 
+A `SMALLINT` takes 2 bytes. A `BIGINT` takes 8 bytes. You are wasting 6 bytes per row. 
+6 bytes * 10 billion rows = **60 Gigabytes** of entirely wasted storage.
+More importantly, databases are fast because they cache frequently accessed hard drive pages into RAM (buffer pool). If your rows are artificially bloated by 60GB, fewer rows can fit into RAM. The database is forced to constantly flush and read from the slow physical hard drive, crippling the performance of the entire cluster.
+
+**Q: You are storing financial transactions. Some developers recommend using `DECIMAL(10,2)`, while others recommend storing the money as an `INTEGER` representing cents (e.g., $10.50 is stored as 1050). Which is better?**
+**A:** Storing money as an **INTEGER representing cents** is widely considered the industry best practice (prominently used by Stripe).
+- **Speed:** Integer math is handled directly by the CPU's ALU (Arithmetic Logic Unit) in a single clock cycle. `DECIMAL` math is handled by slower software algorithms.
+- **Simplicity:** It completely eliminates all floating-point rounding errors across all programming languages (Node.js, Python, Java), as every system flawlessly understands integers.

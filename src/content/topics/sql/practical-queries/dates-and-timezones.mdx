@@ -1,0 +1,74 @@
+---
+title: "Dates and Timezones"
+description: "The hardest part of software engineering."
+importance: "HIGH"
+revisionTime: 4
+category: "SQL"
+subcategory: "Practical Queries"
+order: 102
+---
+
+## Concept
+
+"A user in Tokyo clicks a button at 8:00 AM on Tuesday. The Node.js server in London processes it. The Database in Virginia saves it."
+*What day did the user click the button?*
+
+If you don't have a strict, absolute strategy for handling Timezones, your database will become completely mathematically corrupted. Daily revenue reports for "Tuesday" will show completely different numbers depending on which analyst runs the report and where they live.
+
+## The Absolute Golden Rule
+
+**You must store every single timestamp in the database in absolute UTC (Coordinated Universal Time). No exceptions.**
+
+1. The frontend (React) detects the user's local action (Tokyo time) and converts it to UTC before sending the API request.
+2. The backend (Node.js) receives the UTC timestamp and sends it to the database.
+3. The Database stores it as UTC.
+4. When reading data, the Database returns UTC to the backend. The backend sends UTC to the frontend.
+5. **Only the Frontend (React)** is legally allowed to convert the UTC timestamp back into the user's local timezone (Tokyo time) for display on the UI.
+
+The database should never, ever store "Local Time". 
+
+## Data Types
+
+### The Wrong Type: `TIMESTAMP` (or `TIMESTAMP WITHOUT TIME ZONE`)
+If you define a column as `TIMESTAMP`, and you insert `'2023-01-01 14:00:00'`, the database just stores the raw string of numbers. It has absolutely no idea what timezone that is. If your server moves from Virginia to California, the meaning of that raw number instantly shifts by 3 hours, destroying your data integrity.
+
+### The Right Type: `TIMESTAMPTZ` (or `TIMESTAMP WITH TIME ZONE`)
+If you define a column as `TIMESTAMPTZ`, the database strictly enforces absolute time. 
+If you insert `'2023-01-01 14:00:00 PST'`, PostgreSQL instantly does the math, converts it to UTC internally, and saves the UTC value to the hard drive. 
+
+## Manipulating Time in SQL
+
+If you need to generate a monthly report for the Tokyo office, you cannot just group by the raw UTC timestamp. You must explicitly cast the UTC time into Tokyo time *during the query*.
+
+```sql
+-- PostgreSQL syntax using AT TIME ZONE
+SELECT 
+    -- 1. Converts the UTC hard drive data into Tokyo local time
+    -- 2. Truncates it to the exact start of the Tokyo day
+    DATE_TRUNC('day', created_at AT TIME ZONE 'Asia/Tokyo') AS tokyo_date,
+    SUM(amount) AS daily_revenue
+FROM orders
+GROUP BY tokyo_date;
+```
+
+### Date Math (INTERVAL)
+Never add 86,400 seconds to calculate "Tomorrow". Due to Daylight Savings Time and Leap Seconds, a day is not always 24 hours.
+Always use the database's internal calendaring engine via the `INTERVAL` keyword.
+
+```sql
+-- Correct way to find users whose trial expires exactly one month from today
+SELECT * FROM users 
+WHERE trial_end_date > NOW() + INTERVAL '1 month';
+```
+
+## Interview Questions
+
+**Q: A developer runs `SELECT NOW();` in their SQL GUI (like DBeaver) in California. It returns `14:00:00`. Another developer runs the exact same query in London. It returns `22:00:00`. They are querying the exact same PostgreSQL database. Why did it return two different answers?**
+**A:** This is the magic (and confusion) of `TIMESTAMPTZ`. 
+The database hard drive always stores UTC. `NOW()` always generates a UTC timestamp.
+However, when PostgreSQL transmits the data over the network back to the client, it looks at the connection's `timezone` configuration variable. If the California developer's GUI automatically set the connection timezone to 'PST', PostgreSQL dynamically translates the UTC timestamp into PST on the fly right before printing it to the screen. 
+The data on the hard drive is perfectly safe and synchronized; only the *display* format changed based on the client's connection settings.
+
+**Q: Why should you avoid storing the exact user's timezone as an offset (e.g., `-08:00`) and instead store the named region (e.g., `America/Los_Angeles`)?**
+**A:** Because of **Daylight Savings Time**.
+If you store `-08:00`, you are hardcoding a static offset. When summer arrives, Los Angeles shifts to `-07:00`. Any cron jobs or scheduled emails calculating against `-08:00` will now fire an hour late. By storing `America/Los_Angeles` (the IANA Time Zone Database format), the SQL engine inherently understands the geopolitical rules of that region and will automatically shift the math seamlessly when Daylight Savings Time begins and ends.

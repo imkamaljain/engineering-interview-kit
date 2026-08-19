@@ -1,0 +1,88 @@
+---
+title: "Consecutive Numbers"
+description: "Finding three-in-a-row."
+importance: "MEDIUM"
+revisionTime: 2
+category: "SQL"
+subcategory: "Interview Questions"
+order: 110
+---
+
+## The Question
+
+**"Given a table `logs` with an auto-incrementing `id` and a `num` column, write a query to find all numbers that appear at least three times consecutively."**
+
+| id | num |
+| :--- | :--- |
+| 1 | 100 |
+| 2 | 100 |
+| 3 | 100 |
+| 4 | 200 |
+| 5 | 100 |
+
+*Expected Output: `100`.*
+
+This tests your ability to compare adjacent rows. There are two acceptable ways to solve this: the Self-Join method and the Window Function method.
+
+## Solution 1: The Triple Self-Join (The Easy Way)
+
+If the `id` column is strictly sequential (no gaps), you can literally join the table to itself three times, offset by `id + 1` and `id + 2`.
+
+```sql
+SELECT DISTINCT l1.num AS ConsecutiveNums
+FROM logs l1
+INNER JOIN logs l2 ON l1.id = l2.id - 1
+INNER JOIN logs l3 ON l1.id = l3.id - 2
+WHERE l1.num = l2.num AND l2.num = l3.num;
+```
+
+**The Flaw:** This solution is brittle. If an admin deleted `id = 2` from the database, the `id` sequence would be `1, 3, 4`. The strict math `l1.id = l2.id - 1` completely breaks down, and the query fails to find consecutive numbers across gaps.
+
+## Solution 2: Window Functions (LEAD and LAG)
+
+The modern, robust way to solve this uses Window Functions. 
+We don't rely on the `id` being perfect math; we just rely on its physical ordering. We use `LEAD()` to peek ahead at the next two rows.
+
+```sql
+WITH PeekAhead AS (
+    SELECT 
+        num,
+        -- Peek 1 row ahead
+        LEAD(num, 1) OVER(ORDER BY id ASC) as next_num,
+        -- Peek 2 rows ahead
+        LEAD(num, 2) OVER(ORDER BY id ASC) as next_next_num
+    FROM logs
+)
+SELECT DISTINCT num AS ConsecutiveNums
+FROM PeekAhead
+WHERE num = next_num AND num = next_next_num;
+```
+
+## Follow-Up Questions
+
+### 1. "What if I wanted to find numbers that appear 10 times consecutively? Writing 9 `LEAD()` functions seems terrible."
+**Your Answer:**
+"You are correct, hardcoding 9 `LEAD()` functions is an anti-pattern. If the threshold is dynamic or large, we reduce this to the **Gaps and Islands** problem.
+We can use the `ROW_NUMBER()` trick. We calculate one `ROW_NUMBER() OVER(ORDER BY id)` for the entire table, and a second `ROW_NUMBER() OVER(PARTITION BY num ORDER BY id)`. By subtracting the two row numbers, we generate a unique grouping key for consecutive identical numbers. We then simply `GROUP BY` that key, and use `HAVING COUNT(*) >= 10`."
+
+*(The Gaps and Islands approach code for reference):*
+```sql
+WITH GroupedLogs AS (
+    SELECT 
+        num,
+        ROW_NUMBER() OVER(ORDER BY id) 
+        - ROW_NUMBER() OVER(PARTITION BY num ORDER BY id) AS island_key
+    FROM logs
+)
+SELECT DISTINCT num AS ConsecutiveNums
+FROM GroupedLogs
+GROUP BY num, island_key
+HAVING COUNT(*) >= 3;
+```
+
+### 2. "Why did you use `SELECT DISTINCT` in your queries?"
+**Your Answer:**
+"If a number appears 4 times consecutively, the logic will actually trigger twice. 
+- Row 1 matches Row 2 and 3. (Outputs 100).
+- Row 2 matches Row 3 and 4. (Outputs 100 again).
+Because the question simply asks *which* numbers appear at least three times consecutively, we don't want to output the same number multiple times. `DISTINCT` collapses the duplicates into a single clean answer."

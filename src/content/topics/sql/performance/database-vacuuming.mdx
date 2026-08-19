@@ -1,0 +1,56 @@
+---
+title: "Database Vacuuming"
+description: "Why PostgreSQL requires a garbage collector."
+importance: "MEDIUM"
+revisionTime: 3
+category: "SQL"
+subcategory: "Performance"
+order: 64
+---
+
+## Concept
+
+In a normal file system, when you delete a file, the OS overwrites the bytes.
+In **PostgreSQL**, when you execute an `UPDATE` or `DELETE` statement, the database **does not delete the old data**.
+
+PostgreSQL uses an architectural design called **MVCC** (Multi-Version Concurrency Control) to provide high-performance Transaction Isolation.
+When you `UPDATE` a row, PostgreSQL actually executes an `INSERT`. It creates a brand new, physical copy of the row with the new data, and leaves the old row on the hard drive, simply marking it as "Dead" (a Dead Tuple).
+
+*Why?* Because a long-running reporting query might have started 5 minutes ago, and it still needs to read the "old" version of the row to maintain its perfectly frozen `Repeatable Read` snapshot.
+
+## The Bloat Problem
+
+If a table receives 1,000 `UPDATE` statements per second, PostgreSQL creates 1,000 new rows and leaves 1,000 Dead Tuples behind every second.
+If left unchecked, a 1GB table will quickly bloat to 100GB of dead, useless ghost data. 
+Because Full Table Scans and Indexes must physically read across these massive gaps of dead space, database performance will grind to an absolute halt.
+
+## The Solution: VACUUM
+
+To fix this, PostgreSQL runs a garbage collection process called **VACUUM**.
+
+### Standard VACUUM (AutoVacuum)
+PostgreSQL runs a background daemon called `autovacuum`. 
+It constantly scans tables looking for Dead Tuples that are no longer needed by any active transactions. When it finds them, it marks that specific space on the hard drive as "Available for re-use."
+*Note: Standard Vacuum does NOT shrink the physical file size on the hard drive. It simply makes the empty holes available for future `INSERT`s, preventing the file from growing further.*
+
+### VACUUM FULL (The Danger Zone)
+If a table has already bloated to 100GB, and the actual data is only 1GB, Standard Vacuum won't give you your 99GB of hard drive space back.
+To physically shrink the file, you must run `VACUUM FULL`. 
+**WARNING:** `VACUUM FULL` requires an **Exclusive Access Lock**. It physically locks the entire table, preventing all reads and writes for the duration of the process. For a massive table, this causes total API downtime for hours. It should only be used in emergencies.
+
+## MySQL vs PostgreSQL
+
+Does MySQL suffer from Dead Tuple bloat?
+**No.** MySQL's InnoDB engine implements MVCC differently.
+When you `UPDATE` a row in MySQL, it actually overwrites the physical row in the Clustered Index. It takes the "old" version of the data and moves it to a separate, temporary space called the **Undo Log**. 
+Because the main table is constantly overwritten in-place, it never bloats with Dead Tuples, and MySQL does not require a complex Vacuum daemon to manage table size. (However, a massive long-running transaction can cause the Undo Log to bloat catastrophically instead).
+
+## Interview Questions
+
+**Q: A PostgreSQL database has `autovacuum` turned on. However, you notice that a heavily updated table is still bloating massively, and the Dead Tuples are not being cleaned up. What is the most common cause of this?**
+**A:** A **Long-Running Idle Transaction**.
+If a developer opens a GUI tool (like DBeaver or DataGrip), runs `BEGIN; SELECT * FROM users;`, goes to lunch, and forgets to click `COMMIT`, that transaction stays open.
+Because PostgreSQL's MVCC must guarantee that the old transaction can still see the database exactly as it was when it started, `autovacuum` is mathematically forbidden from cleaning up *any* Dead Tuples created after that transaction began. The entire database will halt garbage collection and bloat until that specific idle transaction is killed.
+
+**Q: You are performing a massive data migration, inserting 50 million rows into a brand new PostgreSQL table. It is running very slowly. A senior DBA tells you to temporarily turn off `autovacuum` for that specific table during the migration. Why?**
+**A:** Because `autovacuum` consumes heavy Disk I/O and CPU. If the system knows you are doing a massive, one-time bulk insert (and not updating/deleting any rows, meaning no Dead Tuples are being created), the `autovacuum` daemon waking up to sample the table is pure overhead. By disabling it during the migration, you give 100% of the disk's write capacity to your `INSERT` statements. You must remember to turn it back on and run a manual `ANALYZE` after the migration finishes.

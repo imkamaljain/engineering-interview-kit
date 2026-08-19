@@ -1,0 +1,65 @@
+---
+title: "Query Execution Plan"
+description: "How the database actually runs your code."
+importance: "HIGH"
+revisionTime: 4
+category: "SQL"
+subcategory: "Performance"
+order: 56
+---
+
+## Concept
+
+SQL is a **Declarative** language. You tell the database *what* you want (e.g., "Give me all users who are 25 years old"), but you do not tell it *how* to get it. 
+There are no `for` loops or `if` statements in standard SQL querying. 
+
+The **Query Optimizer** is the brain of the database engine. When you submit a SQL query, the optimizer mathematically calculates dozens of different ways to fetch the data (e.g., using an index, using a hash join, doing a full table scan). It estimates the "cost" of each method and chooses the cheapest one.
+The final chosen method is called the **Query Execution Plan**.
+
+## The EXPLAIN Command
+
+You can ask the database to reveal its execution plan before it actually runs the query by prepending the word **`EXPLAIN`**. 
+*(In PostgreSQL, you use `EXPLAIN ANALYZE` to actually execute the query and see the real-world timings vs the estimated timings).*
+
+```sql
+EXPLAIN ANALYZE 
+SELECT name FROM users WHERE email = 'test@mail.com';
+```
+
+**Example Output (PostgreSQL):**
+```text
+Index Scan using idx_users_email on users  (cost=0.42..8.44 rows=1 width=12)
+  Index Cond: (email = 'test@mail.com'::text)
+Planning Time: 0.125 ms
+Execution Time: 0.051 ms
+```
+
+## How to Read an Execution Plan
+
+Execution plans are read from **Inside-Out, Bottom-Up**. The most deeply indented lines happen first.
+
+### Key Terms to Look For:
+1. **Seq Scan (Sequential Scan / Full Table Scan):** The database completely ignored all indexes and read the entire table from top to bottom. (Usually bad, unless the table is tiny).
+2. **Index Scan:** The database traversed the B-Tree index to find a pointer, then performed a random disk jump (Heap Fetch) to grab the actual row. (Good).
+3. **Index Only Scan:** The database got all the requested data directly from the B-Tree without ever touching the main table. (The Holy Grail. Blazing fast).
+4. **Nested Loop Join:** The database used a `for` loop to join two tables. (Good for small tables, terrible for massive ones).
+5. **Hash Join:** The database built an in-memory hash table to join two massive datasets. (Standard for large analytical joins).
+
+## The "Cost" Metric
+
+In the output `cost=0.42..8.44`:
+- **0.42** is the estimated Startup Cost (the time before the very first row is returned).
+- **8.44** is the Total Cost (the time to return all rows).
+
+**Cost is NOT measured in milliseconds.** It is an arbitrary mathematical unit representing Disk I/O and CPU cycles. It is only useful for comparing two different queries against each other on the exact same server.
+
+## Interview Questions
+
+**Q: A developer adds an index to a column. They run `EXPLAIN` on their query, but it still says `Seq Scan`. They assume the index is broken. What is the most likely reason the Optimizer ignored the index?**
+**A:** **Low Selectivity.**
+If the query asks for `WHERE status = 'active'` and the database knows (via its internal statistical Histograms) that 90% of the users are 'active', the Query Optimizer will calculate that doing 9 million random B-Tree disk jumps (Index Scan) is actually much slower than just reading the hard drive sequentially from start to finish (Seq Scan). The Optimizer correctly ignored the index because the index was computationally inefficient for that specific query.
+
+**Q: You run `EXPLAIN ANALYZE` and notice the "Estimated Rows" is 10, but the "Actual Rows" returned was 1,000,000. The query took 10 seconds. What is wrong with the database?**
+**A:** The database's **Table Statistics are stale**.
+The Query Optimizer relies on sampled statistics to guess how many rows a query will return. Because the estimate was violently wrong (10 vs 1 million), the optimizer likely chose a terrible execution plan (like a Nested Loop Join instead of a Hash Join). 
+To fix this, you must run the `ANALYZE` (or `UPDATE STATISTICS`) command on the table. This forces the database to rebuild its histograms, allowing the Optimizer to make the correct mathematical choice.

@@ -1,0 +1,81 @@
+---
+title: "Cumulative Sum (Running Total)"
+description: "Adding it up as we go."
+importance: "HIGH"
+revisionTime: 2
+category: "SQL"
+subcategory: "Practical Queries"
+order: 97
+---
+
+## Concept
+
+A **Cumulative Sum** (or Running Total) calculates the progressive accumulation of data over time. 
+Instead of just showing `$100` on Monday and `$50` on Tuesday, it shows `$100` on Monday, and `$150` on Tuesday.
+
+This is a fundamental requirement for building Financial Ledgers, Inventory Burn-Down charts, and User Growth graphs.
+
+## The Modern Way (Window Functions)
+
+Historically, this required a horrifically slow triangular Self-Join (`JOIN`ing the table to itself where `t1.date >= t2.date`).
+Today, it is solved instantly using the `SUM()` function transformed into a Window Function via the `OVER()` clause.
+
+*Goal: Show daily revenue, and the progressive running total of revenue over the month.*
+
+```sql
+SELECT 
+    date,
+    daily_revenue,
+    
+    -- The Window Function
+    SUM(daily_revenue) OVER (
+        -- Tells the database what "progressive" means
+        ORDER BY date ASC 
+    ) AS running_total
+
+FROM sales;
+```
+
+**Result:**
+| date | daily_revenue | running_total |
+| :--- | :--- | :--- |
+| Jan 1 | 100 | 100 |
+| Jan 2 | 50 | 150 |
+| Jan 3 | 200 | 350 |
+
+### How does the ORDER BY trigger a running total?
+By default, if you just write `SUM() OVER()`, the database sums the *entire table* and attaches the grand total to every row.
+The moment you put an `ORDER BY` clause inside the `OVER()` window, it triggers the **Default Framing Clause**. The database internally changes the math to: `"Sum everything from the absolute first row of the table, up to and including the CURRENT row I am looking at."`
+
+## Partitioning the Running Total
+
+What if you have multiple bank accounts in the same table, and you want a running total for *each specific account*?
+If you just order by date, the database will mix Alice's money with Bob's money into a giant company-wide running total.
+
+You must reset the running total calculator for each user using **`PARTITION BY`**.
+
+```sql
+SELECT 
+    account_id,
+    transaction_date,
+    amount,
+    
+    SUM(amount) OVER (
+        PARTITION BY account_id  -- Reset the calculator here
+        ORDER BY transaction_date ASC
+    ) AS account_balance
+    
+FROM transactions;
+```
+
+## Interview Questions
+
+**Q: You run the Cumulative Sum query, but you notice that for January 2nd, the result shows `$150` on two different rows. You realize there were two separate transactions on January 2nd. Why did the database calculate the exact same running total for both rows, instead of accumulating them sequentially?**
+**A:** This exposes a flaw in the `ORDER BY` granularity.
+If you `ORDER BY date ASC`, the database groups ties together. Because both rows have the exact same date ("Jan 2"), the database processes them simultaneously, summing them both at once, and pasting the final combined total on both rows. 
+To force the database to evaluate them strictly one-by-one, you must break the tie in the `ORDER BY` clause by adding a unique identifier.
+`ORDER BY date ASC, id ASC`. This mathematically guarantees strict sequential processing.
+
+**Q: A developer tries to filter the running total. They write `SELECT date, SUM(rev) OVER(...) as total FROM sales WHERE SUM(rev) OVER(...) > 1000`. It fails. How do they fix it?**
+**A:** Window Functions are executed mathematically *after* the `WHERE` clause. You cannot filter on them directly.
+The developer must wrap the query in a CTE (Common Table Expression), calculate the `total` column inside the CTE, and then apply the `WHERE total > 1000` filter on the outer query.

@@ -1,0 +1,60 @@
+---
+title: "Row-Level Locks"
+description: "Precision locking for high concurrency."
+importance: "MEDIUM"
+revisionTime: 2
+category: "SQL"
+subcategory: "Concurrency"
+order: 71
+---
+
+## Concept
+
+When a transaction needs to acquire a lock to perform an `UPDATE`, the database must decide *how much* of the database to lock. The granularity of the lock determines the concurrency of the entire system.
+
+**Row-Level Locking** is the most precise and granular lock available.
+It locks only the specific row (or rows) being modified, leaving the rest of the 10-million row table completely unlocked and available for other transactions to modify simultaneously.
+
+## How It Works
+
+```sql
+BEGIN;
+-- The database ONLY locks Row 1.
+UPDATE users SET status = 'active' WHERE id = 1;
+```
+
+If Transaction A locks Row 1, Transaction B can simultaneously lock and update Row 2, Row 3, and Row 4 without any waiting. This is the foundation of high-performance OLTP (Online Transaction Processing) systems.
+
+## The Memory Cost of Row Locks
+
+Locks are not magical concepts; they are physical data structures stored in the database server's RAM (the Lock Manager).
+
+If you execute:
+```sql
+UPDATE users SET status = 'inactive' WHERE last_login < '2010-01-01';
+```
+If this query targets 5 million rows, the database must generate and store 5 million individual Row-Level Lock objects in RAM. This consumes massive amounts of memory and CPU cycles just to track the locks.
+
+To prevent the server from crashing due to Out-Of-Memory errors, the database engine will detect this massive allocation and automatically perform **Lock Escalation**. It will delete the 5 million row locks and replace them with a single **Table-Level Lock**, instantly freezing all other transactions on the table.
+
+## Row Locks and Indexes (The MySQL Trap)
+
+Row-level locking behaves fundamentally differently depending on whether the queried column is indexed or not.
+
+**In PostgreSQL:**
+Row-level locks are tied strictly to the physical row (tuple) on the hard drive. If you run `UPDATE users SET name = 'A' WHERE name = 'B'`, PostgreSQL scans the table, finds 'B', and locks that exact physical row.
+
+**In MySQL (InnoDB):**
+Row-level locks are tied to the **Index**, not the physical row.
+If you run `UPDATE users SET name = 'A' WHERE unindexed_column = 'B'`, MySQL cannot use an index. Because it is forced to do a Full Table Scan, it literally locks **every single row in the entire table** as it scans past them. An update on an unindexed column in MySQL effectively acts as a Table-Level lock, destroying concurrency. You must always index columns used in `WHERE` clauses for `UPDATE` statements in MySQL.
+
+## Interview Questions
+
+**Q: A developer is building a Queue system in PostgreSQL using a `jobs` table. Multiple worker threads run `SELECT * FROM jobs WHERE status = 'pending' FOR UPDATE LIMIT 1`. The developer notices massive lock contention and timeouts. Why?**
+**A:** Row-level locks strictly force transactions to wait.
+Worker 1 locks Row 1. Worker 2 runs the query, attempts to lock Row 1, and physically freezes until Worker 1 finishes. 
+To fix this, the developer must use the **`SKIP LOCKED`** clause. This instructs the database to attempt the row lock, and if the row is already locked by another transaction, immediately skip it and try the next row. This allows 50 concurrent workers to instantly grab 50 different rows without a single millisecond of waiting.
+
+**Q: You want to lock a row for reading without blocking other readers, but you want to absolutely prevent anyone from updating it. What lock do you use?**
+**A:** A **Shared Row-Level Lock**.
+In SQL, you explicitly acquire this using `SELECT ... FOR SHARE`. Multiple transactions can acquire this Shared Lock on the exact same row simultaneously. However, if a transaction tries to run an `UPDATE` on the row, it requires an Exclusive Lock, which will be denied (and forced to wait) until all Shared Locks are released.

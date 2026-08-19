@@ -1,0 +1,78 @@
+---
+title: "Pivoting Data"
+description: "Turning rows into columns."
+importance: "MEDIUM"
+revisionTime: 2
+category: "SQL"
+subcategory: "Practical Queries"
+order: 104
+---
+
+## Concept
+
+SQL databases store data vertically (Rows). Human beings (and Excel spreadsheets) prefer to read data horizontally (Columns).
+
+**The Raw Data:**
+| year | quarter | revenue |
+| :--- | :--- | :--- |
+| 2023 | Q1 | 100 |
+| 2023 | Q2 | 150 |
+| 2024 | Q1 | 200 |
+
+**The Desired Pivot (Matrix):**
+| year | Q1_Rev | Q2_Rev |
+| :--- | :--- | :--- |
+| 2023 | 100 | 150 |
+| 2024 | 200 | NULL |
+
+**Pivoting** is the process of rotating data from a vertical row-based format into a horizontal column-based format.
+
+## The Standard SQL Way: SUM(CASE)
+
+While some proprietary databases (like SQL Server and Snowflake) have a built-in `PIVOT` keyword, the universally accepted, ANSI-standard way to pivot data in any database is using **Conditional Aggregation (`SUM` with `CASE`)**.
+
+We group the data by the anchor column (`year`), and then manually create the new horizontal columns using `CASE` statements.
+
+```sql
+SELECT 
+    year,
+    -- If the row is Q1, output the revenue. Otherwise, output NULL.
+    -- The SUM() function aggregates it down into a single clean row for the year.
+    SUM(CASE WHEN quarter = 'Q1' THEN revenue END) AS Q1_Rev,
+    SUM(CASE WHEN quarter = 'Q2' THEN revenue END) AS Q2_Rev,
+    SUM(CASE WHEN quarter = 'Q3' THEN revenue END) AS Q3_Rev,
+    SUM(CASE WHEN quarter = 'Q4' THEN revenue END) AS Q4_Rev
+FROM sales
+GROUP BY year
+ORDER BY year ASC;
+```
+
+### Why does the SUM() work?
+For the 2023 bucket, the database processes the Q1 column:
+- Row 1 (2023, Q1, 100): The CASE evaluates to `100`.
+- Row 2 (2023, Q2, 150): The CASE evaluates to `NULL`.
+- The `SUM()` takes `[100, NULL]` and outputs exactly `100` for the final pivoted cell.
+
+## The Limitation: Dynamic Pivots
+
+The `SUM(CASE)` method has a massive architectural limitation: **You must know the column names in advance.**
+
+If you are pivoting by `quarter`, you hardcode 4 `CASE` statements. Easy.
+But what if you want to pivot by `country`? You don't know how many countries your app has. There might be 5, there might be 150. 
+You **cannot** write a standard SQL query that dynamically generates a variable number of columns on the fly. A SQL `SELECT` statement must mathematically resolve its physical output shape (the column headers) before it even begins reading data from the hard drive.
+
+### How to solve Dynamic Pivots:
+1. **The Backend (Preferred):** You just run a standard vertical `GROUP BY` query, download the raw JSON rows to your Node.js or Python backend, and use Javascript to dynamically pivot the matrix in memory before sending it to the frontend.
+2. **Dynamic SQL (The Hard Way):** You write a Stored Procedure that executes a `SELECT DISTINCT country` query, loops through the results, manually generates a massive SQL string concatenating hundreds of `SUM(CASE)` statements, and then executes the dynamically generated string using `EXECUTE`.
+
+## Interview Questions
+
+**Q: A data scientist wants to un-pivot data. The table has columns `[year, Q1_Rev, Q2_Rev]`, and they want to rotate it back into vertical rows `[year, quarter, revenue]` to feed into a machine learning model. How do you do this?**
+**A:** You Unpivot using the **`UNION ALL`** operator.
+You write multiple `SELECT` statements, manually hardcoding the string labels for each column, and stack them vertically.
+```sql
+SELECT year, 'Q1' AS quarter, Q1_Rev AS revenue FROM pivoted_sales
+UNION ALL
+SELECT year, 'Q2' AS quarter, Q2_Rev AS revenue FROM pivoted_sales;
+```
+*(Modern databases also support the proprietary `UNPIVOT` keyword, or specialized JSON un-nesting functions, to achieve this faster).*

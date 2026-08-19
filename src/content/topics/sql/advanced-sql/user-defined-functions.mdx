@@ -1,0 +1,63 @@
+---
+title: "User-Defined Functions (UDFs)"
+description: "Writing your own SQL keywords."
+importance: "LOW"
+revisionTime: 2
+category: "SQL"
+subcategory: "Advanced SQL"
+order: 79
+---
+
+## Concept
+
+Databases come with hundreds of built-in functions like `UPPER()`, `LOWER()`, `SUM()`, and `NOW()`.
+But what if your business logic requires a very specific calculation that SQL doesn't provide natively? For example, calculating the distance between two GPS coordinates using the Haversine formula.
+
+Instead of downloading the raw latitude and longitude to Node.js and calculating it there, you can create a **User-Defined Function (UDF)**. 
+A UDF allows you to write custom code and use it directly inside your `SELECT` or `WHERE` clauses just like a native SQL function.
+
+## Creating a UDF
+
+*(Example in PostgreSQL using PL/pgSQL)*
+
+```sql
+CREATE FUNCTION calculate_tax(price DECIMAL, tax_rate DECIMAL) 
+RETURNS DECIMAL AS $$
+BEGIN
+    -- Procedural logic goes here
+    RETURN price + (price * tax_rate);
+END;
+$$ LANGUAGE plpgsql;
+```
+
+Once created, you can use it in any query:
+```sql
+SELECT name, price, calculate_tax(price, 0.08) AS total_cost FROM products;
+```
+
+## The Performance Danger: RBAR
+
+**RBAR** stands for **"Row-By-Agonizing-Row"**. It is the enemy of relational database performance.
+
+SQL is a *Set-Based* language. It is designed to manipulate massive sets of data concurrently.
+A UDF is often a *Procedural* black box.
+If you write `SELECT calculate_tax(price) FROM products`, the database cannot optimize it. It is forced to pause the SQL engine, invoke the procedural engine, execute the custom function, and return the result **for every single individual row, one by one.**
+
+If the table has 10 million rows, invoking a UDF 10 million times will be devastatingly slow compared to just doing the math directly in SQL (`SELECT price + (price * 0.08)`). 
+
+## When to use UDFs
+
+You should only use UDFs when the logic is mathematically impossible (or horribly unreadable) to write in standard Set-Based SQL.
+- Parsing complex string regex rules.
+- Cryptographic hashing functions.
+- Complex geospatial math (though extensions like PostGIS usually handle this in C for much better performance).
+
+## Interview Questions
+
+**Q: A developer creates a UDF `get_user_status(user_id)` which runs a `SELECT` query against another table to figure out if the user is active. They write `SELECT name, get_user_status(id) FROM users`. Why is this a terrible idea?**
+**A:** This is the **N+1 Problem implemented inside the database itself.**
+For every single row in the `users` table, the database is pausing to execute a completely separate `SELECT` query via the UDF. If there are 10,000 users, the database executes 10,001 total queries. The developer should have simply used a standard `LEFT JOIN` to fetch the status in a single, set-based query. You should almost never execute queries inside a UDF that is being called from a `SELECT` list.
+
+**Q: Can you write a PostgreSQL UDF in Javascript or Python?**
+**A:** **Yes.** 
+While `PL/pgSQL` is the default, PostgreSQL has a highly extensible architecture. You can install extensions like `PL/v8` (which embeds the Chrome V8 Javascript engine directly into the database) or `PL/Python`. This allows you to write User-Defined Functions using standard Javascript syntax, complete with access to JSON manipulation libraries, executing directly on the database server.

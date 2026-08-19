@@ -1,0 +1,63 @@
+---
+title: "Non-Repeatable Read"
+description: "When the ground shifts beneath your feet."
+importance: "MEDIUM"
+revisionTime: 3
+category: "SQL"
+subcategory: "Transactions"
+order: 42
+---
+
+## Concept
+
+You have elevated your database to `Read Committed` to fix Dirty Reads. 
+But there is a new problem: **Non-Repeatable Reads**.
+
+A Non-Repeatable Read occurs when a single transaction reads the *exact same row* twice, but gets two *different* answers because another transaction successfully modified and committed the row in between the two reads.
+
+## Mental Model
+
+Imagine a script that calculates a user's total net worth and then sends them a congratulatory email.
+
+| Time | Transaction A (The Script) | Transaction B (The User) |
+| :--- | :--- | :--- |
+| T1 | `BEGIN;` | |
+| T2 | `SELECT balance FROM users;` -> **Reads $1000** | |
+| T3 | | `BEGIN;` |
+| T4 | | `UPDATE users SET balance = 0;` |
+| T5 | | `COMMIT;` (User withdrew everything) |
+| T6 | Script generates email text... | |
+| T7 | `SELECT balance FROM users;` -> **Reads $0** | |
+| T8 | `COMMIT;` | |
+
+In Transaction A, the script read the balance at T2 and got $1,000. It read the exact same row at T7 and got $0. The read is "Non-Repeatable." 
+This causes catastrophic logic bugs because the script is now holding contradictory data in its memory during a single atomic operation.
+
+## How to Prevent Non-Repeatable Reads
+
+This anomaly is completely legal and expected behavior in the **`Read Committed`** isolation level (the default for PostgreSQL and SQL Server). 
+Because Transaction B successfully committed at T5, Transaction A is legally allowed to see the new data at T7.
+
+To prevent this, you must elevate the isolation level to **`Repeatable Read`**.
+- In `Repeatable Read`, the database takes a mathematical "Snapshot" of the entire database the millisecond Transaction A executes its first query.
+- At T7, when Transaction A reads the balance again, the database ignores the physical hard drive (which says $0) and instead returns the value from the frozen snapshot (which says $1,000).
+- The script sees $1,000 both times, ensuring perfect internal consistency.
+
+*(Note: MySQL's InnoDB engine uses `Repeatable Read` as its default isolation level, completely eliminating this anomaly out of the box).*
+
+## Trade-Offs
+
+Why isn't `Repeatable Read` the default everywhere?
+Because maintaining massive frozen snapshots of the database in RAM for long-running transactions is extremely expensive. It relies on **MVCC (Multi-Version Concurrency Control)**, where the database must keep the "old" versions of rows alive on the hard drive just in case an old transaction still needs to look at them. If a transaction stays open for 5 minutes, it prevents the database from cleaning up thousands of dead rows (Garbage Collection / Vacuuming), causing the database file to bloat massively in size.
+
+## Interview Questions
+
+**Q: Explain the difference between a Dirty Read and a Non-Repeatable Read.**
+**A:** 
+- A **Dirty Read** happens when Transaction A reads data that Transaction B has *modified but not yet committed*. It is dangerous because Transaction B might roll back, meaning Transaction A read data that never officially existed.
+- A **Non-Repeatable Read** happens when Transaction A reads the same row twice, and gets a different answer the second time because Transaction B successfully *modified and committed* the row in between. The data is valid and officially committed, but it breaks the internal consistency of Transaction A's logic.
+
+**Q: If you are running PostgreSQL (which defaults to `Read Committed`), how can you prevent a Non-Repeatable Read without globally changing the isolation level?**
+**A:** You can use **Pessimistic Locking**.
+During your first read (T2), instead of a standard `SELECT`, you write `SELECT balance FROM users WHERE id = 1 FOR UPDATE;`.
+The `FOR UPDATE` clause places a physical lock on the row. When Transaction B attempts to `UPDATE` the balance at T4, the database forces Transaction B to freeze and wait. Transaction B cannot modify the row until Transaction A completely finishes and calls `COMMIT`. This mathematically guarantees that Transaction A will see the exact same data if it reads the row again, preventing the Non-Repeatable Read.

@@ -1,0 +1,92 @@
+---
+title: "ROW_NUMBER, RANK, DENSE_RANK"
+description: "The top N per group problem."
+importance: "HIGH"
+revisionTime: 3
+category: "SQL"
+subcategory: "Advanced SQL"
+order: 74
+---
+
+## Concept
+
+One of the most notoriously difficult problems in standard SQL is the **"Top N Per Group"** problem.
+- *"Find the top 3 highest-paid employees in every department."*
+- *"Find the most recent order for every single user."*
+
+Before Window Functions, solving this required horrific, unreadable Correlated Subqueries that took minutes to run.
+Today, we solve it instantly using ranking Window Functions: **`ROW_NUMBER()`**, **`RANK()`**, and **`DENSE_RANK()`**.
+
+## The 3 Ranking Functions
+
+All three functions do the same basic thing: they assign an integer (1, 2, 3...) to every row based on how you ordered them. The difference is how they handle **Ties**.
+
+Imagine a race with 4 runners. Alice finishes first. Bob and Charlie cross the finish line at the exact same millisecond. Dave finishes last.
+
+1. **`ROW_NUMBER()`:** Ignores ties completely. It forces sequential numbers.
+   - Alice: 1
+   - Bob: 2
+   - Charlie: 3
+   - Dave: 4
+2. **`RANK()`:** Acknowledges the tie, and skips the next number to compensate.
+   - Alice: 1
+   - Bob: 2
+   - Charlie: 2
+   - Dave: **4** (Skipped 3)
+3. **`DENSE_RANK()`:** Acknowledges the tie, but does not skip numbers.
+   - Alice: 1
+   - Bob: 2
+   - Charlie: 2
+   - Dave: **3** (Did not skip)
+
+## Solving the "Top N Per Group" Problem
+
+*Goal: Find the 1 most recent order for every single user.*
+
+**Step 1: Assign the row numbers.**
+We partition by the `user_id` (creating a separate numbering bucket for each user), and we order by `created_at DESC` (so their newest order gets row number 1).
+
+```sql
+WITH RankedOrders AS (
+    SELECT 
+        id, 
+        user_id, 
+        created_at,
+        ROW_NUMBER() OVER(
+            PARTITION BY user_id 
+            ORDER BY created_at DESC
+        ) as row_num
+    FROM orders
+)
+```
+
+**Step 2: Filter.**
+Because we cannot use Window Functions in a `WHERE` clause, we wrapped it in a CTE. Now we just filter the outer query for `row_num = 1`.
+
+```sql
+SELECT id, user_id, created_at 
+FROM RankedOrders 
+WHERE row_num = 1;
+```
+This is the absolute industry-standard way to solve this problem.
+
+## Using ROW_NUMBER() for Deep Pagination
+
+In the basic queries section, we discussed the "Deep Pagination Problem" where `LIMIT 10 OFFSET 100000` causes terrible $O(N)$ performance degradation.
+If you cannot use Cursor/Keyset pagination (because the user explicitly clicked the "Go To Page 99" button on a UI table), you can actually use `ROW_NUMBER()` to create an optimized pseudo-index.
+
+By generating the row numbers in a CTE, the outer query can simply request `WHERE row_num BETWEEN 100000 AND 100010`. In many database engines, this mathematically bypasses the slow sequential disk read-and-discard loop of traditional `OFFSET`.
+
+## Interview Questions
+
+**Q: You want to find the 2nd highest salary in the entire company. You write `SELECT MAX(salary) FROM employees WHERE salary < (SELECT MAX(salary) FROM employees)`. A senior engineer says this is an anti-pattern. How do you do it better?**
+**A:** The subquery approach is an anti-pattern because it does not scale. If someone asks for the 5th highest salary, you have to nest 5 subqueries, which is unreadable.
+The modern, scalable solution is to use `DENSE_RANK()`.
+```sql
+WITH RankedSalaries AS (
+    SELECT salary, DENSE_RANK() OVER(ORDER BY salary DESC) as rank
+    FROM employees
+)
+SELECT salary FROM RankedSalaries WHERE rank = 2 LIMIT 1;
+```
+*(We use `DENSE_RANK` instead of `ROW_NUMBER` because if the CEO and CFO are tied for 1st place, `ROW_NUMBER` would assign the CFO '2', incorrectly making them the 2nd highest salary).*

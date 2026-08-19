@@ -1,0 +1,86 @@
+---
+title: "Handling NULLs (COALESCE)"
+description: "Avoiding the Three-Valued Logic trap."
+importance: "HIGH"
+revisionTime: 2
+category: "SQL"
+subcategory: "Practical Queries"
+order: 101
+---
+
+## Concept
+
+In standard programming languages (like Javascript), `null` means "empty". `null == null` is `true`.
+In SQL, **NULL does not mean empty**. NULL means "Unknown". 
+
+This leads to the **Three-Valued Logic** trap.
+If you ask the database: *"Is Unknown equal to Unknown?"* (`NULL = NULL`)
+The database replies: *"I don't know."* (`NULL`)
+
+If you ask the database: *"Is 10 greater than Unknown?"* (`10 > NULL`)
+The database replies: *"I don't know."* (`NULL`)
+
+Any mathematical or logical operation touching a `NULL` instantly collapses into `NULL`. This silently corrupts millions of financial reports every year.
+
+## The COALESCE Function
+
+To protect your math and your UI, you must aggressively intercept `NULL` values and replace them with safe, mathematical defaults.
+
+The **`COALESCE()`** function takes an infinite list of arguments. It looks at them from left to right, and returns the **very first one that is not NULL**.
+
+```sql
+SELECT 
+    name,
+    salary,
+    bonus,
+    -- BAD: If bonus is NULL, the total becomes NULL. The user's paycheck reads $0.
+    salary + bonus AS total_bad,
+    
+    -- GOOD: If bonus is NULL, COALESCE falls back to 0. 
+    salary + COALESCE(bonus, 0) AS total_good
+FROM employees;
+```
+
+### Cascading Fallbacks
+
+`COALESCE` is brilliant for cascading UI fallbacks.
+If a user hasn't set a profile picture, maybe they have an avatar. If they don't have an avatar, use the system default.
+```sql
+SELECT COALESCE(profile_pic, avatar_pic, 'default.png') AS display_image 
+FROM users;
+```
+
+## The IFNULL / ISNULL Variants
+
+- **`COALESCE()`** is the official ANSI SQL standard. It works identically in PostgreSQL, MySQL, SQL Server, and Oracle. You should always use this.
+- **`IFNULL()`** is a MySQL-specific function that only takes exactly 2 arguments.
+- **`ISNULL()`** is a SQL Server-specific function that only takes exactly 2 arguments.
+
+## NULLIF (The Inverse)
+
+Sometimes you have the opposite problem. A system dumped thousands of empty strings `''` or `0` into your database, and you want to mathematically convert them *back* into `NULL` so they don't skew your `AVG()` calculations.
+
+**`NULLIF(val1, val2)`** looks at the two values. If they are identical, it returns `NULL`. If they are different, it returns `val1`.
+
+```sql
+-- If the division hits a 0, NULLIF converts it to NULL.
+-- Because dividing by NULL returns NULL, it safely prevents the 
+-- "Division by Zero" crash.
+SELECT revenue / NULLIF(total_orders, 0) AS avg_order_value;
+```
+
+## Interview Questions
+
+**Q: A developer wants to find all users who do NOT live in California. They write: `SELECT * FROM users WHERE state != 'CA'`. However, thousands of international users (who have `state = NULL`) are missing from the results. Why?**
+**A:** This is the Three-Valued Logic trap.
+When the database evaluates `NULL != 'CA'`, the answer is not `TRUE`. The answer is `NULL` (Unknown). The `WHERE` clause strictly filters out anything that is not mathematically `TRUE`. 
+To fix this, the developer must explicitly handle the unknown state:
+`SELECT * FROM users WHERE state != 'CA' OR state IS NULL;`
+*(Note: Always use `IS NULL`, never use `= NULL`).*
+
+**Q: What does the `COUNT(column)` function do when it encounters a `NULL`?**
+**A:** Aggregate functions (except `COUNT(*)`) actively **ignore** `NULL` values.
+If a table has 5 rows, and 2 of them have a `NULL` in the `bonus` column:
+- `COUNT(*)` returns `5`. (It counts physical rows).
+- `COUNT(bonus)` returns `3`. (It ignores the NULLs).
+- `AVG(bonus)` divides the sum of the bonuses by `3`, not `5`. (This is almost always mathematically desired).

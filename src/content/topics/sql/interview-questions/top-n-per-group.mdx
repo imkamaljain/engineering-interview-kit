@@ -1,0 +1,73 @@
+---
+title: "Top N Per Group"
+description: "The classic window function test."
+importance: "HIGH"
+revisionTime: 3
+category: "SQL"
+subcategory: "Interview Questions"
+order: 106
+---
+
+## The Question
+
+**"Given a table `employees` with columns `id`, `name`, `salary`, and `department_id`, write a SQL query to find the top 3 highest-paid employees in each department."**
+
+This is one of the most common SQL interview questions for Senior engineers. It tests your knowledge of Window Functions, specifically the ranking functions and how to partition data correctly.
+
+## The Solution
+
+You must use a Window Function (`DENSE_RANK()`) to assign a ranking to every employee within their specific department. Then, you filter for rankings 1, 2, and 3.
+
+Because you cannot use a Window Function directly in a `WHERE` clause, you must wrap the logic inside a Common Table Expression (CTE).
+
+```sql
+WITH RankedEmployees AS (
+    SELECT 
+        id,
+        name,
+        salary,
+        department_id,
+        -- DENSE_RANK assigns 1 to the highest salary, 2 to the second, etc.
+        -- PARTITION BY resets the ranking counter for every department
+        DENSE_RANK() OVER (
+            PARTITION BY department_id 
+            ORDER BY salary DESC
+        ) as salary_rank
+    FROM employees
+)
+SELECT 
+    department_id,
+    name,
+    salary
+FROM RankedEmployees
+WHERE salary_rank <= 3
+ORDER BY department_id ASC, salary_rank ASC;
+```
+
+## Follow-Up Questions
+
+### 1. "Why did you use `DENSE_RANK()` instead of `ROW_NUMBER()`?"
+**Your Answer:** 
+"If two employees in the exact same department both make the absolute maximum salary of $200k, `ROW_NUMBER()` will arbitrarily assign one of them rank `1` and the other rank `2`. `DENSE_RANK()` correctly identifies that they are mathematically tied for 1st place, and assigns them both rank `1`. The next highest salary gets rank `2`. Using `DENSE_RANK` guarantees that we accurately capture all the top earners, even in the event of ties."
+
+### 2. "How would you solve this if you were using an extremely old version of MySQL (e.g., 5.7) that doesn't support Window Functions?"
+**Your Answer:**
+"Before Window Functions, solving this required a **Correlated Subquery**. It is notoriously slow and unreadable, but it works. We would select the employee, and use a subquery in the `WHERE` clause to count how many people in that exact same department have a salary greater than theirs. If that count is less than 3, it means they are in the top 3."
+
+```sql
+-- The legacy, pre-Window Function solution
+SELECT e1.department_id, e1.name, e1.salary
+FROM employees e1
+WHERE (
+    SELECT COUNT(DISTINCT e2.salary)
+    FROM employees e2
+    WHERE e2.department_id = e1.department_id 
+    AND e2.salary > e1.salary
+) < 3
+ORDER BY e1.department_id, e1.salary DESC;
+```
+*(Explain to the interviewer that while this works, it scales terribly ($O(N^2)$) and should never be used in a modern database environment).*
+
+### 3. "What if the `department_id` is a foreign key, and I want the final output to display the actual Department Name string instead of the ID?"
+**Your Answer:**
+"I would simply `INNER JOIN` the `departments` table in the final outer query, linking `RankedEmployees.department_id = departments.id`. I would do this in the *outer* query rather than inside the CTE, so that the database only has to perform the `JOIN` on the tiny subset of top 3 winners, rather than joining the entire massive employees table before the filtering happens."

@@ -1,0 +1,59 @@
+---
+title: "One-to-Many (1:N)"
+description: "The foundation of relational databases."
+importance: "HIGH"
+revisionTime: 2
+category: "SQL"
+subcategory: "Database Design"
+order: 53
+---
+
+## Concept
+
+A **One-to-Many (1:N)** relationship is the most common relationship in database design. 
+It exists when one row in Table A can be linked to multiple rows in Table B, but a row in Table B can only be linked to exactly one row in Table A.
+
+**Examples:**
+- One User has Many Orders. (An order belongs to exactly one user).
+- One Blog Post has Many Comments. (A comment belongs to exactly one post).
+- One Department has Many Employees. (An employee belongs to exactly one department).
+
+## How to Implement It
+
+You implement a 1:N relationship by simply placing a standard **Foreign Key** on the "Many" table, pointing to the Primary Key of the "One" table.
+
+```sql
+CREATE TABLE users (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255)
+);
+
+-- The "Many" table holds the Foreign Key
+CREATE TABLE orders (
+    id SERIAL PRIMARY KEY,
+    -- Points to the "One" table
+    user_id INT REFERENCES users(id),
+    total DECIMAL(10, 2)
+);
+```
+
+## The Cascade Rule
+
+When you link tables, you must define what happens if the "One" record is deleted. If you delete Alice, what happens to her orders?
+If you do nothing, the database will violently reject the deletion of Alice, throwing a **Foreign Key Constraint Violation**, because deleting her would leave her orders pointing to a User ID that no longer exists (Orphaned Records).
+
+You have three options when defining the Foreign Key:
+1. **`ON DELETE RESTRICT` (Default):** Prevents the deletion of the User until you manually delete all of their orders first. Safest option.
+2. **`ON DELETE CASCADE`:** If you delete the User, the database automatically and silently deletes every single order associated with them. Highly dangerous but useful for tight hierarchies (e.g., deleting a Blog Post cascades and deletes all its Comments).
+3. **`ON DELETE SET NULL`:** If you delete the User, the orders remain in the database, but their `user_id` is updated to `NULL`. Useful for preserving financial history while removing the user's personal data.
+
+## Interview Questions
+
+**Q: A developer wants to add a "Tags" feature to a Blog Post. They decide to use a One-to-Many relationship, adding a `post_id` column to the `tags` table. Why is this architecturally flawed?**
+**A:** This strictly limits every single tag to belonging to *exactly one* blog post. 
+If Post #1 uses the tag "Technology", that tag is now permanently locked to Post #1. If Post #2 also wants to use the tag "Technology", it cannot. The developer would have to insert a duplicate "Technology" row into the tags table. 
+Tags inherently require a **Many-to-Many** relationship (Many posts can have many tags). You cannot model it with a standard One-to-Many Foreign Key.
+
+**Q: In an enormous `orders` table (100 million rows), a developer runs `SELECT * FROM orders WHERE user_id = 5`. It takes 10 seconds. Why, and how do you fix it?**
+**A:** When you create a Foreign Key constraint (`REFERENCES users(id)`), the database checks it for validity, but **it does NOT automatically create an index on the Foreign Key column** (in PostgreSQL and Oracle; MySQL is the exception). 
+Because `user_id` inside the `orders` table is unindexed, finding Alice's orders requires a 100-million row Full Table Scan. You must manually run `CREATE INDEX idx_orders_user_id ON orders(user_id);` to make the 1:N traversal instantly fast.

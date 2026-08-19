@@ -1,0 +1,75 @@
+---
+title: "CASE"
+description: "If/Else logic directly inside the database."
+importance: "MEDIUM"
+revisionTime: 3
+category: "SQL"
+subcategory: "Queries"
+order: 16
+---
+
+## Concept
+
+SQL is declarative, but sometimes you need conditional logic. You want to execute `if/else if/else` logic row-by-row before returning the data.
+The **`CASE`** statement allows you to perform conditional logic directly within a `SELECT` statement (or `ORDER BY`, or `UPDATE` statement).
+
+## Basic Syntax
+
+The syntax is similar to a traditional `switch` statement. It evaluates conditions sequentially from top to bottom. As soon as it hits a `TRUE` condition, it returns the result and stops evaluating that row.
+
+```sql
+SELECT 
+    name,
+    salary,
+    CASE 
+        WHEN salary >= 100000 THEN 'High Earner'
+        WHEN salary >= 50000  THEN 'Mid Earner'
+        ELSE 'Low Earner'
+    END AS income_bracket
+FROM employees;
+```
+
+## Common Use Cases
+
+### 1. Data Cleaning
+Often, legacy databases store obscure integers representing statuses (e.g., `0`, `1`, `2`). You can use `CASE` to translate these into human-readable strings before they reach the frontend.
+
+```sql
+SELECT 
+    order_id,
+    CASE status_id
+        WHEN 0 THEN 'Pending'
+        WHEN 1 THEN 'Shipped'
+        WHEN 2 THEN 'Delivered'
+        ELSE 'Unknown'
+    END AS readable_status
+FROM orders;
+```
+
+### 2. Conditional Aggregation (Pivot Tables)
+This is an incredibly powerful trick. You can combine `SUM` with `CASE` to count specific conditions without using `WHERE`, allowing you to fetch entirely different counts in a single query.
+
+*Scenario: We want to know the total number of Active users vs Banned users in one row.*
+
+```sql
+SELECT 
+    SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active_users,
+    SUM(CASE WHEN status = 'banned' THEN 1 ELSE 0 END) AS banned_users
+FROM users;
+```
+
+## Trade-Offs
+
+- **Pros:** Massively reduces the amount of code needed in your backend Node.js application. Instead of downloading 10,000 rows into Node and running a `.map()` function with `if/else` statements, you force the database to execute it in highly-optimized C code before transmitting the data.
+- **Cons:** If your `CASE` logic becomes 50 lines long containing complex business rules ("If user is Gold Tier and bought Product X on a Tuesday..."), you are putting heavy Business Logic inside the Data Layer. This violates the separation of concerns. Database queries are much harder to unit test than Javascript functions.
+
+## Interview Questions
+
+**Q: A developer writes `CASE WHEN status = NULL THEN 'Missing' ELSE 'Found' END`. It always returns 'Found', even when the status is clearly NULL. Why?**
+**A:** This is the Three-Valued Logic trap again. `status = NULL` evaluates to `NULL` (Unknown), which acts as `FALSE` in a conditional check. The `CASE` statement jumps directly to the `ELSE` block. 
+To fix this, you must explicitly use the `IS` operator: `CASE WHEN status IS NULL THEN ...`.
+*(Alternatively, you can just use the built-in `COALESCE(status, 'Missing')` function which is cleaner).*
+
+**Q: Look at this `UPDATE` statement: `UPDATE products SET price = CASE WHEN category = 'Electronics' THEN price * 1.1 WHEN category = 'Books' THEN price * 0.9 END`. What catastrophic bug does this contain?**
+**A:** This lacks an `ELSE` clause. In a `CASE` statement, if no `WHEN` condition is met, and there is no `ELSE` clause, it implicitly returns `NULL`.
+If this runs against a massive database, all Electronics go up 10%, all Books go down 10%, and **every single other product (Toys, Clothing, Food) has their price permanently overwritten to `NULL`**, destroying the database. You must explicitly include `ELSE price` to maintain unchanged values.

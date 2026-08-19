@@ -1,0 +1,63 @@
+---
+title: "Table-Level Locks"
+description: "The nuclear option of database concurrency."
+importance: "MEDIUM"
+revisionTime: 2
+category: "SQL"
+subcategory: "Concurrency"
+order: 72
+---
+
+## Concept
+
+If Row-Level locking is a sniper rifle (locking exactly one row), **Table-Level Locking** is a nuclear bomb.
+It physically locks the entire logical table. Every single row, index, and page associated with that table becomes completely inaccessible to other transactions attempting conflicting operations.
+
+Table-level locks are catastrophic for highly concurrent web applications. They are generally only used for massive administrative maintenance tasks, or triggered accidentally by poorly written queries.
+
+## Explicit vs Implicit Table Locks
+
+### Explicit Locks (Manual)
+You can manually force the database to lock an entire table using the `LOCK TABLE` command. 
+```sql
+BEGIN;
+-- Absolutely nobody can read or write to this table until I commit.
+LOCK TABLE users IN ACCESS EXCLUSIVE MODE;
+
+-- (Run massive administrative scripts)
+COMMIT;
+```
+This is extremely rare in application code.
+
+### Implicit Locks (Automatic)
+The database automatically acquires Table-Level locks when you run **DDL (Data Definition Language)** commands.
+If you run `ALTER TABLE users ADD COLUMN age INT;`, the database must restructure the physical layout of the table on the hard drive. To prevent corruption, it automatically acquires an `ACCESS EXCLUSIVE` table lock. 
+Any user attempting to `SELECT` or `UPDATE` a user profile during the `ALTER TABLE` command will completely freeze until the migration finishes. 
+
+## The "Lock Escalation" Danger
+
+As discussed in Row-Level Locks, the most common way developers accidentally trigger a Table-Level lock is through **Lock Escalation**.
+
+If you run `UPDATE users SET status = 'inactive' WHERE id > 0`, the database attempts to acquire 10 million individual Row-Level locks. The database's RAM fills up with lock objects. To protect itself from an Out-Of-Memory crash, the Lock Manager automatically deletes all 10 million Row Locks and replaces them with a single Exclusive Table Lock. 
+Suddenly, your targeted `UPDATE` script accidentally took your entire application offline.
+
+*(Note: PostgreSQL does not actually perform Lock Escalation. It stores row-level locks directly inside the data pages on disk rather than in RAM, so it can support infinite row locks. SQL Server and DB2, however, aggressively use Lock Escalation).*
+
+## Trade-Offs
+
+Why do Table Locks even exist if they ruin concurrency?
+Because they are extremely efficient for the CPU. 
+Managing 10 million individual row locks requires massive CPU overhead to constantly check who owns what. Managing 1 Table Lock requires exactly 1 CPU check. 
+If you are running a massive nightly batch job in a Data Warehouse where nobody else is trying to use the table, intentionally escalating to a Table Lock makes the batch job run significantly faster.
+
+## Interview Questions
+
+**Q: You need to add a new column to a 500-million row `orders` table in PostgreSQL. You run `ALTER TABLE orders ADD COLUMN is_archived BOOLEAN DEFAULT FALSE`. The database locks up, and the entire website goes offline for 45 minutes. Why?**
+**A:** `ALTER TABLE` requires an Access Exclusive Table Lock.
+Adding a new column normally takes 1 millisecond (it just updates the table metadata).
+However, because you added a `DEFAULT FALSE` constraint, PostgreSQL is mathematically obligated to instantly rewrite all 500 million existing rows on the hard drive to insert the word `FALSE`. It holds the Table Lock open for all 45 minutes it takes to rewrite the massive file.
+*(Fix: In PostgreSQL 11+, this was finally optimized so static defaults no longer rewrite the table. In older versions, you must add the column without a default, and then slowly `UPDATE` the rows in small, un-locked batches).*
+
+**Q: A developer runs `TRUNCATE TABLE logs`. They assume it will be slow because it has to delete 10 million rows, but it finishes in 10 milliseconds. Why?**
+**A:** `TRUNCATE` does not use Row-Level locks to delete rows one-by-one (like a `DELETE` statement does). 
+`TRUNCATE` acquires an absolute **Table-Level Exclusive Lock**, and then simply tells the Operating System to delete the physical file representing the table from the hard drive, instantly replacing it with a brand new, empty 0-byte file. Because it bypasses the SQL engine's row-by-row transaction log, it is instantaneous.

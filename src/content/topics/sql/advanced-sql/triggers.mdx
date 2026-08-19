@@ -1,0 +1,65 @@
+---
+title: "Triggers"
+description: "Event listeners inside the database."
+importance: "MEDIUM"
+revisionTime: 3
+category: "SQL"
+subcategory: "Advanced SQL"
+order: 77
+---
+
+## Concept
+
+In Node.js, you use Event Listeners (`button.onClick()`). 
+A **Trigger** is an event listener that lives directly inside the database engine. You attach a Trigger to a specific table. You instruct it to listen for `INSERT`, `UPDATE`, or `DELETE` events. 
+When the event happens, the database automatically pauses, executes a custom script, and then continues.
+
+## The Two Types of Triggers
+
+### 1. BEFORE Triggers (Validation & Modification)
+These fire *before* the data is physically written to the hard drive. 
+They have the power to intercept the incoming data, modify it, or completely reject the transaction.
+
+*Use Case:* You want to guarantee that every email inserted into the database is perfectly lowercase, regardless of what the sloppy Node.js backend sends.
+```sql
+-- Pseudo-code logic for a BEFORE trigger
+IF NEW.email IS NOT NULL THEN
+    NEW.email = LOWER(NEW.email);
+END IF;
+RETURN NEW; -- Saves the modified row to disk
+```
+
+### 2. AFTER Triggers (Auditing & Side Effects)
+These fire *after* the data is safely written to the hard drive.
+They cannot modify the row that was just inserted, but they can execute secondary actions (like updating other tables).
+
+*Use Case:* Creating an Audit Log.
+If someone deletes a row from the `users` table, an `AFTER DELETE` trigger automatically takes the deleted row data (stored in the magic `OLD` variable) and inserts it into an `archived_users` table, creating an unbreakable historical audit trail.
+
+## The Architecture Problem
+
+In the early 2000s, DBAs put Triggers on everything. 
+Today, Triggers are widely considered a **massive Anti-Pattern** in software engineering.
+
+Why? **Because they hide Business Logic.**
+If a Junior Developer looks at the Node.js backend code, they see:
+`await db.query("INSERT INTO users (name) VALUES ('Alice')");`
+
+They run the code, and suddenly an order is generated, an audit log is created, and the user's name changes to 'ALICE'. The developer searches the entire Node.js codebase for hours and cannot figure out why this ghost logic is happening. 
+Logic should reside in the Application Layer (Node.js) where it can be unit-tested, source-controlled in Git, and debugged easily. Triggers hide logic in the Data Layer.
+
+## When SHOULD you use Triggers?
+
+There are only two scenarios where modern architects still aggressively use Triggers.
+
+1. **Denormalization Maintenance:** As discussed in the Denormalization section, if you add a `like_count` column to a `tweets` table, you cannot trust the Node.js application to safely increment it. An `AFTER INSERT` trigger on the `likes` table guaranteeing the count stays synchronized is mathematically safer.
+2. **`updated_at` Timestamps:** Because calculating the exact server timestamp is a database-level concern, using a `BEFORE UPDATE` trigger to automatically set `updated_at = NOW()` ensures the timestamp is perfectly accurate and impossible for a developer to forget.
+
+## Interview Questions
+
+**Q: A developer creates an `AFTER INSERT` trigger on the `orders` table. Every time an order is inserted, the trigger uses a database extension (like `pg_net`) to send an HTTP POST request to an external analytics API. Why will this instantly take down the production database?**
+**A:** A Trigger strictly executes **inside the active Database Transaction**. 
+When the backend inserts an order, the database acquires an Exclusive Lock, inserts the row, and then fires the trigger. The trigger sends an HTTP request. If the external analytics API is slow and takes 5 seconds to respond, the database transaction is forced to stay open for 5 seconds. The Exclusive Lock is held for 5 seconds. Every other user trying to place an order completely freezes. **You must never perform network I/O inside a database trigger.**
+
+**Q: In PostgreSQL, can a Trigger execute pure SQL?**
+**A:** No. Unlike simpler databases, PostgreSQL requires Triggers to execute procedural code. You must first write a function using **PL/pgSQL** (PostgreSQL's procedural language, which includes `if` statements, `for` loops, and variables). Once the function is compiled, you create the Trigger and bind it to execute that specific PL/pgSQL function.

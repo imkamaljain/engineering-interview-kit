@@ -1,0 +1,73 @@
+---
+title: "Full-Text Search"
+description: "Building a search engine without Elasticsearch."
+importance: "MEDIUM"
+revisionTime: 3
+category: "SQL"
+subcategory: "Advanced SQL"
+order: 81
+---
+
+## Concept
+
+If you build a blog and want users to search for the word "database", the naive approach is using `LIKE`.
+`SELECT * FROM posts WHERE body LIKE '%database%';`
+
+This is catastrophic for two reasons:
+1. **Performance:** The leading wildcard (`%`) completely disables B-Tree indexes. If you have 100,000 blog posts, every single search forces a Full Table Scan, crushing the CPU.
+2. **Relevance:** It only matches exact strings. If the blog post contains "databases" (plural), or "data-base", the `LIKE` query will completely miss it.
+
+**Full-Text Search (FTS)** is an advanced feature that natively provides Google-like search capabilities directly inside the SQL database, bypassing the need for heavy external tools like Elasticsearch (for medium-scale apps).
+
+## How It Works (PostgreSQL)
+
+FTS involves two massive mathematical transformations.
+
+### 1. The Document (tsvector)
+The database reads the massive blog post string and breaks it down into individual words (Tokenization). It then applies language-specific rules (Stemming) to reduce words to their root form.
+"The dogs are running quickly" -> `'dog', 'run', 'quick'`
+Notice it threw away "the" and "are" (Stop Words), and converted "running" to "run". This compressed, root-word list is called a **tsvector**.
+
+### 2. The Query (tsquery)
+When the user types "running dog" into your search box, the database applies the exact same stemming rules to their query.
+"running dog" -> `'run' & 'dog'` (This is the **tsquery**).
+
+### 3. The Match (`@@`)
+You use the special match operator (`@@`) to check if the `tsquery` exists inside the `tsvector`.
+Because both strings were mathematically stemmed to their root words, "running dog" perfectly matches a blog post about "dogs that run".
+
+## The Implementation
+
+```sql
+-- Create a GIN Index on the stemmed vector
+CREATE INDEX idx_posts_fts ON posts USING GIN (to_tsvector('english', body));
+
+-- Execute the instant, stemmed search
+SELECT title FROM posts 
+WHERE to_tsvector('english', body) @@ to_tsquery('english', 'running & dog');
+```
+
+## Ranking (ts_rank)
+
+A good search engine doesn't just find results; it sorts them by relevance.
+PostgreSQL provides `ts_rank()`. It calculates a score based on how many times the search words appear in the document, how close they are to each other, and where they appear (e.g., words in the Title are weighted heavier than words in the Body).
+
+```sql
+SELECT title, ts_rank(to_tsvector('english', body), to_tsquery('english', 'database')) AS score
+FROM posts
+WHERE to_tsvector('english', body) @@ to_tsquery('english', 'database')
+ORDER BY score DESC;
+```
+
+## Trade-Offs
+
+When should you use PostgreSQL Full-Text Search vs migrating to **Elasticsearch**?
+
+- **Use PostgreSQL FTS:** For 95% of standard web applications (blogs, internal dashboards, e-commerce stores with < 1 million products). It keeps your architecture incredibly simple. You don't have to manage a separate Elasticsearch cluster or write complex data-synchronization scripts.
+- **Use Elasticsearch:** When search is the absolute core of your business. If you have 100 million documents, require complex fuzzy-matching (typo tolerance like "did you mean?"), or require sub-millisecond autocompletion as the user types, PostgreSQL FTS will eventually hit performance bottlenecks.
+
+## Interview Questions
+
+**Q: You set up PostgreSQL Full-Text Search. A user searches for "Apples". It correctly matches a document containing "apple". However, a user searches for "Steve Jobs". The query (`to_tsquery('Steve & Jobs')`) crashes or returns zero results. Why?**
+**A:** `to_tsquery` requires strict Boolean syntax (e.g., `&` for AND, `|` for OR). If you take raw user input from a search box and directly inject it into `to_tsquery`, spaces or punctuation will break the parser. 
+To fix this, you must use **`plainto_tsquery()`** or **`websearch_to_tsquery()`**. These functions safely take raw, messy user input, strip out invalid characters, and automatically format it into the correct Boolean syntax required for the search.

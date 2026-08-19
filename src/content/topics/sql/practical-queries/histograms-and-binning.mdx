@@ -1,0 +1,96 @@
+---
+title: "Histograms and Binning"
+description: "Grouping continuous numbers into discrete buckets."
+importance: "MEDIUM"
+revisionTime: 2
+category: "SQL"
+subcategory: "Practical Queries"
+order: 105
+---
+
+## Concept
+
+If you run `SELECT age, COUNT(*) FROM users GROUP BY age;`, the database will output exactly what you asked for: a separate row for 21, 22, 23, 24, etc.
+If you graph this, it will be incredibly noisy.
+
+Data Analysts usually don't want exact ages. They want **Histograms** (or frequency distributions). They want the data aggregated into distinct "Bins" or "Buckets" (e.g., "18-24", "25-34", "35-44").
+
+SQL is designed for discrete grouping, so turning continuous numerical data into discrete buckets requires mathematical manipulation before the `GROUP BY` happens.
+
+## Strategy 1: The CASE Statement (Custom Bins)
+
+If your bins are uneven or specific to business logic (e.g., grouping users into 'Child', 'Adult', 'Senior'), you must explicitly hardcode the bins using a `CASE` statement.
+
+```sql
+SELECT 
+    CASE 
+        WHEN age < 18 THEN '<18'
+        WHEN age BETWEEN 18 AND 34 THEN '18-34'
+        WHEN age BETWEEN 35 AND 50 THEN '35-50'
+        ELSE '51+' 
+    END AS age_bracket,
+    
+    COUNT(*) AS user_count
+
+FROM users
+GROUP BY 
+    -- You must repeat the CASE statement in the GROUP BY, 
+    -- or use a CTE / derived table.
+    CASE 
+        WHEN age < 18 THEN '<18'
+        WHEN age BETWEEN 18 AND 34 THEN '18-34'
+        WHEN age BETWEEN 35 AND 50 THEN '35-50'
+        ELSE '51+' 
+    END
+ORDER BY age_bracket;
+```
+
+## Strategy 2: Rounding / Floor Math (Uniform Bins)
+
+If you just want uniform buckets (e.g., every 10 years, or every $100), writing out 50 `CASE` statements is tedious.
+You can use mathematical division and the `FLOOR()` function to automatically generate the buckets.
+
+*Goal: Group users into decades (20s, 30s, 40s).*
+
+```sql
+SELECT 
+    -- Step 1: Divide by 10 (25 -> 2.5)
+    -- Step 2: Floor it (2.5 -> 2)
+    -- Step 3: Multiply by 10 (2 -> 20)
+    FLOOR(age / 10.0) * 10 AS decade_start,
+    COUNT(*) AS user_count
+FROM users
+GROUP BY FLOOR(age / 10.0) * 10
+ORDER BY decade_start ASC;
+```
+
+**Result:**
+| decade_start | user_count |
+| :--- | :--- |
+| 20 | 500 |
+| 30 | 1200 |
+| 40 | 800 |
+
+## Strategy 3: The WIDTH_BUCKET Function
+
+Many modern databases (like PostgreSQL and Snowflake) provide a built-in mathematical function designed specifically to solve this problem: **`WIDTH_BUCKET()`**.
+
+You tell it the value, the minimum bound, the maximum bound, and the exact number of buckets you want to generate. The database does the math internally.
+
+```sql
+SELECT 
+    -- (value, min, max, number_of_buckets)
+    -- This divides the ages 0-100 into exactly 10 even buckets.
+    WIDTH_BUCKET(age, 0, 100, 10) AS bucket_number,
+    COUNT(*) as user_count
+FROM users
+GROUP BY bucket_number
+ORDER BY bucket_number;
+```
+
+## Interview Questions
+
+**Q: You use the Floor division method (`FLOOR(age / 10) * 10`) to group users by decade. When you chart the data, you notice a massive gap on the X-axis: there is a bar for the 20s, and a bar for the 40s, but the 30s is completely missing. Why, and how do you fix it?**
+**A:** The `GROUP BY` clause only operates on physical data that exists in the table. If you currently have zero users who are in their 30s, the Floor math never generates the number `30`, so that bucket is silently dropped from the final output matrix.
+When charting Histograms, missing X-axis points completely ruin the visual scale.
+To fix this, you must generate a continuous master list of all expected buckets (using `generate_series(10, 80, 10)` in PostgreSQL, or a physical Numbers Table), and perform a `LEFT JOIN` against your bucketed user data. This forces the database to output a physical row for the `30s` bucket with a count of `0`.

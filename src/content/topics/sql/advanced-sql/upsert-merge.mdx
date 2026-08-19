@@ -1,0 +1,89 @@
+---
+title: "UPSERT (Insert or Update)"
+description: "Handling conflicts elegantly."
+importance: "HIGH"
+revisionTime: 3
+category: "SQL"
+subcategory: "Advanced SQL"
+order: 82
+---
+
+## Concept
+
+A very common requirement in backend engineering is: *"If the user already exists, update their login count. If they don't exist, insert a new row."*
+
+If you write this in Node.js, you usually do this:
+1. `SELECT * FROM users WHERE id = 1;`
+2. If row exists: `UPDATE users SET logins = logins + 1 WHERE id = 1;`
+3. If row doesn't exist: `INSERT INTO users (id, logins) VALUES (1, 1);`
+
+**This is a catastrophic Race Condition.**
+If two parallel web requests execute Step 1 at the exact same millisecond, they both see that the user doesn't exist. They both jump to Step 3. The second request crashes the database with a "Duplicate Primary Key" error.
+
+To solve this atomically, you must use an **UPSERT** (Update or Insert) directly in SQL.
+
+## PostgreSQL Implementation (`ON CONFLICT`)
+
+In PostgreSQL, the UPSERT pattern is achieved using the `ON CONFLICT` clause attached to an `INSERT` statement.
+
+```sql
+INSERT INTO users (id, name, login_count) 
+VALUES (1, 'Alice', 1)
+-- If the ID already exists, do not crash! Intercept the error.
+ON CONFLICT (id) 
+-- Instead of crashing, execute this UPDATE statement
+DO UPDATE SET 
+    login_count = users.login_count + 1,
+    -- The EXCLUDED keyword contains the data we TRIED to insert
+    name = EXCLUDED.name; 
+```
+
+This single query is executed **atomically** within the database engine. It is mathematically immune to race conditions. 
+
+### `DO NOTHING`
+Sometimes you don't want to update the row. You just want the database to silently ignore the duplicate without crashing.
+```sql
+INSERT INTO tags (name) VALUES ('SQL')
+ON CONFLICT (name) DO NOTHING;
+```
+
+## MySQL Implementation (`ON DUPLICATE KEY UPDATE`)
+
+MySQL achieves the exact same atomic operation using slightly different syntax.
+
+```sql
+INSERT INTO users (id, name, login_count) 
+VALUES (1, 'Alice', 1)
+ON DUPLICATE KEY UPDATE 
+    login_count = login_count + 1,
+    name = VALUES(name);
+```
+
+## The Standard SQL: MERGE
+
+Both `ON CONFLICT` and `ON DUPLICATE KEY` are proprietary syntaxes.
+The official SQL standard (supported by SQL Server, Oracle, and recently added to PostgreSQL 15) uses the **`MERGE`** statement.
+
+`MERGE` is significantly more powerful. It allows you to synchronize a massive temporary table into a production table, supporting complex `WHEN MATCHED`, `WHEN NOT MATCHED`, and even `WHEN MATCHED THEN DELETE` logic all in a single query.
+
+*(Example simplified for readability)*
+```sql
+MERGE INTO users AS target
+USING new_data AS source
+ON target.id = source.id
+WHEN MATCHED THEN
+    UPDATE SET login_count = target.login_count + 1
+WHEN NOT MATCHED THEN
+    INSERT (id, name, login_count) VALUES (source.id, source.name, 1);
+```
+
+## Interview Questions
+
+**Q: A developer uses `ON CONFLICT (email) DO UPDATE...` to handle UPSERTs. However, the query throws an error: `there is no unique or exclusion constraint matching the ON CONFLICT specification`. What did they forget?**
+**A:** The `ON CONFLICT` clause physically relies on database indexes to detect the collision. 
+If the `email` column does not have a strict `UNIQUE` constraint (or a Unique Index) defined on it, the database will never trigger a conflict. It will just happily insert a duplicate email. You can only use `ON CONFLICT` targeting columns that are guaranteed to be unique.
+
+**Q: Why is it highly recommended to let the database handle UPSERTs natively rather than managing the `SELECT -> IF -> UPDATE` logic manually in Node.js?**
+**A:** Two reasons:
+1. **Concurrency (Race Conditions):** As mentioned, the Node.js approach will crash if two concurrent requests hit it. The database engine's internal lock manager safely serializes the UPSERT atomically.
+2. **Network Latency:** The Node.js approach requires 2 (or 3) separate network round-trips to the database. The UPSERT statement requires exactly 1 network round-trip, effectively doubling the performance of the endpoint.

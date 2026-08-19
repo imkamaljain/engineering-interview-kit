@@ -1,0 +1,62 @@
+---
+title: "Isolation Levels"
+description: "Balancing data accuracy with concurrency."
+importance: "HIGH"
+revisionTime: 5
+category: "SQL"
+subcategory: "Transactions"
+order: 40
+---
+
+## Concept
+
+In the ACID properties, **Isolation** guarantees that concurrent transactions behave as if they are executing sequentially in a single-file line.
+In reality, enforcing perfect isolation (forcing every transaction to wait in a single-file line) would limit a modern database to processing 10 requests per second. It would be unusably slow.
+
+To achieve high concurrency, databases purposefully "cheat." They relax the Isolation rules, allowing transactions to partially overlap. 
+The SQL standard defines 4 **Isolation Levels**. Choosing the right level is a strict trade-off between **Data Accuracy** and **Performance**.
+
+## The 4 Isolation Levels
+
+### 1. Read Uncommitted (Fastest, Most Dangerous)
+Transactions can read data from other transactions *before* they are committed.
+- **Vulnerability:** Allows **Dirty Reads**. (You read data that gets rolled back a millisecond later. You are operating on data that never officially existed).
+- *Rarely used in modern web apps.*
+
+### 2. Read Committed (The Industry Standard)
+A transaction can only read data that has been fully committed. If User A is currently updating a row, User B will only see the *old* value until User A hits `COMMIT`.
+- **Vulnerability:** Allows **Non-Repeatable Reads**. (If you run `SELECT` twice in the same transaction, you might get two entirely different answers if someone else committed an update in between your reads).
+- *This is the default setting for PostgreSQL and SQL Server.*
+
+### 3. Repeatable Read (Safer, Slower)
+The database takes a "snapshot" of the database the moment your transaction starts. If you run a `SELECT` query 50 times during your transaction, you are guaranteed to get the exact same answer every single time, even if other people are modifying the actual data in the background.
+- **Vulnerability:** Allows **Phantom Reads**. (You check if Username 'Alice' exists. It doesn't. You try to insert 'Alice'. It fails, because someone else inserted 'Alice' into the background while you weren't looking).
+- *This is the default setting for MySQL (InnoDB).*
+
+### 4. Serializable (Perfect Accuracy, Slowest)
+The database enforces absolute mathematical isolation. It physically locks every single row you look at. If concurrent transactions overlap in a way that *might* cause an anomaly, the database violently aborts one of the transactions and throws a Serialization Error.
+- **Vulnerability:** None.
+- **Trade-off:** Massive lock contention. Transactions will constantly fail and force the Node.js application to implement complex retry loops.
+
+## Mental Model: The Anomalies
+
+To understand the levels, you must understand the 4 read anomalies they protect against.
+
+| Isolation Level | Dirty Read | Non-Repeatable Read | Phantom Read | Serialization Anomaly |
+| :--- | :--- | :--- | :--- | :--- |
+| **Read Uncommitted** | ❌ Allowed | ❌ Allowed | ❌ Allowed | ❌ Allowed |
+| **Read Committed** | ✅ Protected | ❌ Allowed | ❌ Allowed | ❌ Allowed |
+| **Repeatable Read** | ✅ Protected | ✅ Protected | ❌ Allowed* | ❌ Allowed |
+| **Serializable** | ✅ Protected | ✅ Protected | ✅ Protected | ✅ Protected |
+
+*(Note: PostgreSQL's implementation of Repeatable Read is so advanced it actually protects against Phantom Reads as well, violating the standard).*
+
+## Interview Questions
+
+**Q: A developer is building a financial reporting tool that must run `SUM(balances)` across a massive table. The query takes 5 minutes to run. If the database is set to `Read Committed` (the default), what catastrophic bug will occur during those 5 minutes?**
+**A:** A **Non-Repeatable Read / Inconsistent Analysis**. 
+Because the query takes 5 minutes, it reads Row 1 at Minute 1, and Row 10,000,000 at Minute 5. If User A transfers $1,000 from Row 10,000,000 to Row 1 at Minute 3, the running query completely missed the $1,000 when it scanned Row 1, and the money was gone by the time it scanned Row 10,000,000. $1,000 has vanished from the final report. To fix this, long-running analytical queries must be wrapped in a `Repeatable Read` transaction so they operate on a frozen point-in-time snapshot of the data.
+
+**Q: You set your database to `Serializable` to guarantee safety. Now, your Node.js server logs are flooded with `ERROR: could not serialize access due to concurrent update` exceptions. What must you change in your backend code?**
+**A:** `Serializable` does not magically put transactions in a clean queue. If two transactions touch the exact same data simultaneously, the database violently crashes one of them to protect the data.
+When you use `Serializable` isolation, you **must** build `try/catch` Retry Loops into your application layer. If Node.js catches a serialization error, it must sleep for 50 milliseconds and automatically retry the entire database transaction from scratch.

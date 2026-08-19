@@ -1,0 +1,55 @@
+---
+title: "MVCC (Multi-Version Concurrency Control)"
+description: "Why readers never block writers."
+importance: "HIGH"
+revisionTime: 4
+category: "SQL"
+subcategory: "Concurrency"
+order: 68
+---
+
+## Concept
+
+In the 1980s, if Alice was writing a massive `UPDATE` to the `users` table, the database had to lock the table. If Bob tried to run a `SELECT` query on the `users` table at the same time, Bob's query would physically freeze and wait until Alice was finished. 
+"Writers blocked Readers." This crippled concurrency.
+
+Modern relational databases (PostgreSQL, MySQL/InnoDB, Oracle) solved this using **MVCC (Multi-Version Concurrency Control)**.
+With MVCC, **Readers never block Writers, and Writers never block Readers.**
+
+## How It Works (The Time Travel Database)
+
+MVCC allows multiple versions of the exact same row to exist on the hard drive simultaneously.
+
+When Alice executes `UPDATE users SET balance = 50 WHERE id = 1;`
+1. The database **does not** delete or overwrite the old row (Balance $100).
+2. The database inserts a brand new, physical row at the bottom of the table (Balance $50).
+3. The database gives the new row a hidden transaction stamp (e.g., `created_by_tx_id = 99`).
+4. It marks the old row with an expiration stamp (`deleted_by_tx_id = 99`).
+
+If Bob runs a `SELECT` query while Alice's transaction is still active (uncommitted), Bob's query checks the hidden stamps. Because Transaction 99 hasn't committed yet, the database hides the new row from Bob, and shows him the old $100 row.
+
+Bob is reading the data at maximum speed without acquiring a single lock. Alice is writing the data at maximum speed holding an exclusive lock on the new row. They do not interact or block each other at all.
+
+## The Garbage Collection Problem
+
+Because `UPDATE`s are actually `INSERT`s, the database file quickly fills up with thousands of old, expired "ghost" rows (Dead Tuples in PostgreSQL, Undo Log entries in MySQL).
+
+Once Alice commits her transaction, and there are no other active queries still looking at the old $100 row, that old row becomes mathematically useless.
+The database must run a background Garbage Collector (like PostgreSQL's **AutoVacuum**) to sweep through the hard drive, find the dead tuples, and mark their space as available for new inserts. If the Vacuum process breaks, the database file will bloat infinitely until the hard drive is full.
+
+## MySQL vs PostgreSQL
+
+While both use MVCC, their physical implementations are radically different.
+- **PostgreSQL (Append-Only):** Both the old row and the new row are physically written directly into the main table file (the Heap). This requires the aggressive AutoVacuum process to clean up the main table.
+- **MySQL (Undo Log):** The main table (the Clustered Index) is actually overwritten in place. The *old* version of the row is ripped out and moved into a completely separate file called the Undo Log. MySQL reconstructs the snapshot for Bob by reading the Undo Log. This keeps the main table clean, but large updates can cause the Undo Log file to bloat catastrophically.
+
+## Interview Questions
+
+**Q: A developer runs a `SELECT COUNT(*)` on a massive PostgreSQL table with 100 million rows. It takes 5 seconds. They complain that PostgreSQL is slow, noting that MySQL's old MyISAM engine could do it instantly in $O(1)$ time. Why is PostgreSQL slower at this specific task?**
+**A:** Because of **MVCC**. 
+Older engines without MVCC maintain a single, global counter of the total rows. 
+In an MVCC database, there is no single "true" count. At any given millisecond, there might be 50 concurrent transactions inserting and deleting rows. The database doesn't know which of those rows are mathematically visible to your specific transaction snapshot. Therefore, to get an accurate count, PostgreSQL is forced to perform a Full Table Scan, reading the hidden transaction ID stamps on every single row to verify if it is legally allowed to be counted.
+
+**Q: What is "Transaction ID Wraparound" in PostgreSQL?**
+**A:** MVCC tracks row visibility using a 32-bit integer Transaction ID (XID), which maxes out at ~4 billion. Every transaction consumes an ID. If the database executes 4 billion transactions, the ID counter wraps back around to 1. Suddenly, the database thinks that a row created 5 years ago (XID 2) was actually created in the future, and instantly hides the entire database from all users (data loss). 
+To prevent this, PostgreSQL's Vacuum process runs a "Freeze" operation, stripping the XID from extremely old rows and marking them permanently visible to everyone forever, ensuring the 4 billion limit is never reached.

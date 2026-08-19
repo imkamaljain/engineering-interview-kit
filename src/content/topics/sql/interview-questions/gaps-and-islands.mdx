@@ -1,0 +1,89 @@
+---
+title: "Gaps and Islands"
+description: "Finding sequential groupings."
+importance: "HIGH"
+revisionTime: 3
+category: "SQL"
+subcategory: "Interview Questions"
+order: 108
+---
+
+## The Question
+
+**"Given a table `user_activity` with columns `user_id` and `login_date`, write a query to find the start date, end date, and total length of every continuous 'streak' of consecutive login days for a specific user."**
+
+This is the legendary **"Gaps and Islands"** problem.
+- An "Island" is a continuous streak of consecutive dates (e.g., Jan 1, Jan 2, Jan 3).
+- A "Gap" is the missing dates between streaks (e.g., the user didn't log in on Jan 4).
+
+## The Solution: The "Row Number Difference" Trick
+
+This problem seems impossible because SQL doesn't natively "remember" the previous row's state to know if a streak broke.
+To solve it, we use a brilliant mathematical trick involving Window Functions.
+
+If we assign a sequential `ROW_NUMBER()` to the user's logins, and subtract that integer from the actual `login_date`, **all dates within the exact same continuous streak will mathematically evaluate to the exact same anchor date.**
+
+### Step 1: The Math
+Imagine Alice logged in on Jan 1, Jan 2, Jan 3, and Jan 6.
+
+| login_date | ROW_NUMBER() | Date minus Row Number (The Magic Grouping Key) |
+| :--- | :--- | :--- |
+| Jan 1 | 1 | Jan 1 - 1 day = **Dec 31** |
+| Jan 2 | 2 | Jan 2 - 2 days = **Dec 31** |
+| Jan 3 | 3 | Jan 3 - 3 days = **Dec 31** |
+| Jan 6 | 4 | Jan 6 - 4 days = **Jan 2** |
+
+Notice that the first three logins all share the exact same magical grouping key (`Dec 31`). The streak broke, so Jan 6 generated a completely new grouping key (`Jan 2`).
+
+### Step 2: The Query
+
+```sql
+WITH NumberedActivity AS (
+    SELECT 
+        user_id, 
+        login_date,
+        ROW_NUMBER() OVER(
+            PARTITION BY user_id 
+            ORDER BY login_date ASC
+        ) as rn
+    FROM user_activity
+),
+GroupedIslands AS (
+    SELECT 
+        user_id,
+        login_date,
+        -- The Magic Subtraction
+        -- (Subtracting an integer from a date subtracts days)
+        login_date - rn::INT AS island_group_key
+    FROM NumberedActivity
+)
+SELECT 
+    user_id,
+    MIN(login_date) AS streak_start,
+    MAX(login_date) AS streak_end,
+    COUNT(*) AS streak_length_in_days
+FROM GroupedIslands
+-- Group by the magic key!
+GROUP BY user_id, island_group_key
+ORDER BY streak_start ASC;
+```
+
+**Output:**
+| user_id | streak_start | streak_end | streak_length_in_days |
+| :--- | :--- | :--- | :--- |
+| Alice | Jan 1 | Jan 3 | 3 |
+| Alice | Jan 6 | Jan 6 | 1 |
+
+## Follow-Up Questions
+
+### 1. "What happens if Alice logged in twice on January 2nd? Does the query break?"
+**Your Answer:**
+"Yes, the query breaks. If Alice logs in twice on Jan 2nd, the `ROW_NUMBER()` will advance, but the date won't. The math (`Jan 2 - 2` vs `Jan 2 - 3`) will generate two different grouping keys, artificially splitting a continuous streak into two separate islands. 
+To fix this, the very first step must be a CTE that applies `SELECT DISTINCT user_id, login_date` to deduplicate the data before the `ROW_NUMBER()` is ever applied."
+
+### 2. "How would you solve the inverse problem? Find the 'Gaps' (the exact dates the user was missing) instead of the 'Islands'?"
+**Your Answer:**
+"To find the Gaps, I wouldn't use the Row Number trick. I would use the `LEAD()` window function.
+I would write `LEAD(login_date) OVER(ORDER BY login_date) as next_login`. 
+Then, I would filter for rows where `next_login - login_date > 1 day`. 
+The `login_date + 1 day` is the start of the gap, and `next_login - 1 day` is the end of the gap."

@@ -1,0 +1,95 @@
+---
+title: "Year-Over-Year (YoY) Growth"
+description: "Comparing the present to the past."
+importance: "MEDIUM"
+revisionTime: 3
+category: "SQL"
+subcategory: "Practical Queries"
+order: 99
+---
+
+## Concept
+
+Business stakeholders constantly ask for comparative metrics: *"How did we do this July compared to last July?"*
+
+Comparing data across different time periods in a single flat SQL table is notoriously tricky because SQL processes data row-by-row. To calculate Year-Over-Year (YoY) or Month-Over-Month (MoM) growth, we must shift historical data forward onto the current row so we can perform the math.
+
+We achieve this using the **`LAG()`** window function combined with a Date Truncation function.
+
+## Step 1: Aggregate the Time Period
+
+You cannot calculate YoY growth on raw, timestamped transaction rows. You must first group the data into clean, aggregated buckets (e.g., total revenue per year, or total revenue per month).
+
+We use a Common Table Expression (CTE) to create the clean monthly buckets.
+
+```sql
+WITH MonthlyRevenue AS (
+    SELECT 
+        -- Truncates '2023-07-15 14:30:00' to '2023-07-01'
+        DATE_TRUNC('month', transaction_date) AS month,
+        SUM(amount) AS revenue
+    FROM sales
+    GROUP BY DATE_TRUNC('month', transaction_date)
+)
+```
+
+## Step 2: Shift the Data (LAG)
+
+Now we have a clean table with 1 row per month. 
+To calculate YoY growth for July 2023, we need to grab the revenue from July 2022. Because our CTE has exactly 1 row per month, July 2022 is exactly **12 rows backward**.
+
+We use `LAG(revenue, 12)` to pull that data onto the current row.
+
+```sql
+SELECT 
+    month,
+    revenue AS current_revenue,
+    
+    -- Peek 12 rows backward to get last year's exact month
+    LAG(revenue, 12) OVER (ORDER BY month ASC) AS last_year_revenue
+
+FROM MonthlyRevenue
+ORDER BY month DESC;
+```
+
+## Step 3: Calculate the Percentage Math
+
+Growth is mathematically calculated as: `(Current - Old) / Old`.
+We can do this entirely within the `SELECT` statement.
+
+```sql
+WITH MonthlyRevenue AS (...),
+ShiftedData AS (
+    SELECT 
+        month,
+        revenue,
+        LAG(revenue, 12) OVER (ORDER BY month ASC) AS last_year_revenue
+    FROM MonthlyRevenue
+)
+SELECT 
+    month,
+    revenue,
+    last_year_revenue,
+    
+    -- The Math (Multiply by 100 to make it a percentage)
+    -- Wrap in ROUND() for clean output
+    ROUND(
+        ((revenue - last_year_revenue) / last_year_revenue) * 100, 
+        2
+    ) AS yoy_growth_percentage
+
+FROM ShiftedData;
+```
+
+## Interview Questions
+
+**Q: The query above works perfectly, but one month the marketing team didn't run any campaigns, and the company made exactly $0 in revenue. The YoY calculation crashes with a `Division by Zero` error. How do you prevent this?**
+**A:** You must use the `NULLIF()` function. 
+`NULLIF(last_year_revenue, 0)` tells the database: *"If the last year's revenue is 0, silently convert it to NULL."*
+Because any mathematical operation involving `NULL` immediately evaluates to `NULL` (Three-Valued Logic), the division operation safely aborts and returns `NULL` instead of violently throwing a Division by Zero exception and crashing the entire report.
+`((revenue - last_year_revenue) / NULLIF(last_year_revenue, 0))`
+
+**Q: A developer uses `LAG(revenue, 12)` to get last year's data. However, the database had 0 sales in February of last year, so no row was ever inserted into the database for February. The YoY calculation for all subsequent months becomes completely wrong. Why?**
+**A:** `LAG()` physically counts rows. It does not understand time. 
+If February is missing, `LAG(12)` starting from this March will skip the missing February row and incorrectly land on last January. Every single month thereafter is shifted by one, mathematically corrupting the entire YoY report.
+To fix this, you cannot rely on missing data. You must execute a `RIGHT JOIN` against a generated "Calendar Table" (or use PostgreSQL's `generate_series()`) to force the database to create a physical row for every single month, filling missing months with `$0` revenue, guaranteeing that `LAG(12)` always travels exactly one year.

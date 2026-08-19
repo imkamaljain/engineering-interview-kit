@@ -1,0 +1,80 @@
+---
+title: "Common Table Expressions (CTEs)"
+description: "Making complex SQL readable."
+importance: "HIGH"
+revisionTime: 3
+category: "SQL"
+subcategory: "Queries"
+order: 19
+---
+
+## Concept
+
+When writing advanced analytics queries, you often end up nesting Subqueries inside Subqueries inside Subqueries. This creates a massive block of unreadable "Spaghetti SQL" that is impossible for other developers to maintain.
+
+A **Common Table Expression (CTE)** is a temporary, named result set. It allows you to pull the complex subqueries out, define them at the very top of your file, and assign them clean variables names. You can then reference them in your main query just like normal tables.
+
+They are declared using the **`WITH`** keyword.
+
+## Basic Syntax
+
+```sql
+-- Define the temporary table "high_earners"
+WITH high_earners AS (
+    SELECT user_id, salary 
+    FROM employees 
+    WHERE salary > 100000
+)
+
+-- Now use it in the main query
+SELECT * 
+FROM high_earners 
+WHERE user_id IN (SELECT id FROM management);
+```
+
+## Chaining CTEs
+
+The true power of CTEs is that you can declare multiple temporary tables in a row, and a CTE can actually query the CTE defined immediately above it. This allows you to break massive data transformations into readable, step-by-step logic.
+
+```sql
+WITH regional_sales AS (
+    -- Step 1: Calculate total sales per region
+    SELECT region, SUM(amount) AS total_sales
+    FROM orders
+    GROUP BY region
+),
+top_region AS (
+    -- Step 2: Find the region with the absolute highest sales
+    -- Notice it queries the "regional_sales" CTE we just made above!
+    SELECT region
+    FROM regional_sales
+    ORDER BY total_sales DESC
+    LIMIT 1
+)
+
+-- Step 3: Main Query. Get all orders belonging to the winning region.
+SELECT * 
+FROM orders 
+WHERE region = (SELECT region FROM top_region);
+```
+
+## Trade-Offs: Performance vs Readability
+
+**Readability:** CTEs are incredible. They turn SQL into top-down, procedural code that reads like a story.
+
+**Performance (The CTE Materialization Trap):** 
+In older versions of PostgreSQL (Prior to v12), CTEs acted as an "Optimization Fence". The database would physically execute the CTE, pause, write the entire temporary result set to physical disk (Materialize it), and then run the main query against that disk file. If your CTE contained 10 million rows, but your main query only asked for 5 rows, the database wasted massive I/O writing 10 million rows to disk.
+*(Subqueries, on the other hand, allowed the optimizer to flatten the whole query and grab only the 5 rows directly).*
+
+*Modern Fix:* As of PostgreSQL 12+, the optimizer is smart enough to "inline" CTEs just like subqueries, so there is no longer a performance penalty. They are evaluated identically to subqueries.
+
+## Interview Questions
+
+**Q: Can you use an `UPDATE` or `DELETE` statement inside a CTE?**
+**A:** Yes, these are called **Data-Modifying CTEs**. They are an extremely powerful feature in PostgreSQL. 
+For example, you can write a CTE that `DELETE`s old log rows and uses the `RETURNING` clause to output the deleted rows. You can then use the main query to instantly `INSERT` those exact deleted rows into an `archive_logs` table. It performs a complex move operation in a single atomic transaction.
+
+**Q: A developer prefers CTEs. Another developer prefers creating temporary tables (`CREATE TEMP TABLE x AS SELECT...`). What is the architectural difference?**
+**A:** 
+- A **CTE** exists *only* for the duration of that single, specific `SELECT` query. The moment the query finishes, the CTE vanishes from memory.
+- A **Temp Table** is a physical structure that exists for the duration of the entire *Database Session*. If the API connection pool keeps the session open for 10 minutes, the Temp Table stays alive, and you can run 50 different, separate `SELECT` queries against it. Temp Tables also allow you to build B-Tree indexes on them for faster querying, which CTEs cannot do.

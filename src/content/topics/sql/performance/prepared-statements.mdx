@@ -1,0 +1,64 @@
+---
+title: "Prepared Statements"
+description: "Optimizing execution and stopping hackers."
+importance: "HIGH"
+revisionTime: 4
+category: "SQL"
+subcategory: "Performance"
+order: 62
+---
+
+## Concept
+
+When you send a standard SQL query string to the database, the database does not instantly run it. It must go through a complex pipeline:
+1. **Parse:** Check the string for syntax errors.
+2. **Analyze:** Verify the tables and columns actually exist.
+3. **Optimize:** The Query Optimizer calculates the cheapest Execution Plan (B-Tree vs Full Table Scan).
+4. **Execute:** The database finally reads the hard drive and returns the data.
+
+If you run `SELECT * FROM users WHERE id = 1`, and then one second later run `SELECT * FROM users WHERE id = 2`, the database completely destroys the old plan and repeats all 4 steps from scratch. 
+This wastes massive amounts of CPU on the Parse and Optimize phases.
+
+## What is a Prepared Statement?
+
+A **Prepared Statement** splits the SQL execution into two distinct phases.
+
+**Phase 1: Prepare (Compile)**
+You send a raw SQL string to the database with placeholders (`$1`, `?`) instead of actual data. 
+`PREPARE get_user AS SELECT * FROM users WHERE id = $1;`
+The database parses the syntax, generates the Execution Plan once, stores it in memory, and waits.
+
+**Phase 2: Execute (Bind)**
+Whenever you actually need the data, you just send the payload variables.
+`EXECUTE get_user(1);`
+`EXECUTE get_user(2);`
+
+Because the execution plan is already compiled and cached in RAM, the database skips steps 1, 2, and 3, instantly jumping straight to Step 4. This massively improves performance for queries that are run repeatedly in a loop.
+
+## Security: Stopping SQL Injection
+
+While Prepared Statements were originally invented for performance, their greatest feature today is **Security**. 
+They are the absolute, infallible defense against **SQL Injection**.
+
+If you use raw string concatenation in Node.js:
+```javascript
+// DANGEROUS!
+const query = "SELECT * FROM users WHERE email = '" + userInput + "'";
+```
+If a hacker inputs `admin@mail.com' OR 1=1; --`, the database parses the newly concatenated string, treats the `OR 1=1` as executable code, and returns the entire user table.
+
+### Why do Prepared Statements stop this?
+When you send a Prepared Statement (`SELECT * FROM users WHERE email = $1`), the database *compiles the execution plan first*, before it ever sees the hacker's input.
+When the hacker's input (`admin@mail.com' OR 1=1; --`) arrives in Phase 2, the database does not re-parse it. It treats the entire payload strictly as a **Literal String Value**. The database literally searches the B-Tree for a user whose email address is exactly `"admin@mail.com' OR 1=1; --"`. It finds nothing and returns 0 rows. It is mathematically impossible for the payload to break out and become executable code.
+
+## Interview Questions
+
+**Q: Most modern ORMs (like Prisma or TypeORM) and query builders (like Knex.js) automatically use Prepared Statements under the hood for every query. Does this mean performance is automatically optimized?**
+**A:** Not necessarily.
+While they use the parameter binding (`$1`) to guarantee security against SQL injection, the actual performance benefit of a Prepared Statement only occurs if the database *caches the plan across multiple executions*.
+Many serverless ORM setups and connection poolers (like PgBouncer in "Transaction Mode") completely destroy the prepared statement cache the second the transaction ends. This means the database is forced to re-prepare the statement every single time anyway, yielding zero performance benefit (though the security benefit remains intact).
+
+**Q: Can you use a Prepared Statement to dynamically change the table name? For example: `PREPARE my_query AS SELECT * FROM $1 WHERE id = 1;`**
+**A:** **No.** You cannot use placeholders for Table Names, Column Names, or SQL Keywords (like `ASC` or `DESC`). 
+Placeholders can ONLY be used for literal data values (strings, integers, booleans). 
+*Why?* Because the database must generate the Execution Plan during the Prepare phase. It physically cannot generate an Execution Plan if it doesn't know which table it is supposed to query (because different tables have different indexes and statistics). If you need dynamic table names, you are forced to use raw string concatenation in your backend code (which is highly dangerous and requires strict whitelisting).

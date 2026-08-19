@@ -1,0 +1,64 @@
+---
+title: "Query Caching"
+description: "Why the fastest query is the one you never run."
+importance: "HIGH"
+revisionTime: 3
+category: "SQL"
+subcategory: "Performance"
+order: 61
+---
+
+## Concept
+
+No matter how many indexes you add, querying a relational database via TCP network connection and spinning hard drives takes time (typically 2 to 10 milliseconds).
+If your application renders a homepage that 10,000 users visit per second, and that homepage requires 5 database queries, you are hitting the database 50,000 times a second. The database will melt.
+
+**Query Caching** solves this by storing the *results* of a query in blazing-fast RAM (usually in an external tool like Redis or Memcached). 
+When User #2 visits the homepage, the Node.js application completely bypasses the SQL database and fetches the pre-rendered HTML/JSON directly from Redis in 0.1 milliseconds.
+
+## Where to Cache?
+
+There are three primary layers where you can implement caching:
+
+### 1. The Database Level (Deprecated)
+Historically, databases like MySQL had a built-in "Query Cache". If you ran the exact same SQL string twice, MySQL returned the answer from RAM. 
+**This is an anti-pattern today.** The MySQL Query Cache was entirely removed in MySQL 8.0 because managing the cache invalidation inside the database engine actually caused more CPU lock contention than it saved. You should never rely on the database to cache queries for you.
+
+### 2. The Application Level (Redis)
+This is the industry standard. Your Node.js code intercepts the request before it even reaches the database connection pool.
+```javascript
+// Check Redis first
+let data = await redis.get('homepage_feed');
+
+if (!data) {
+    // Cache Miss: Query the DB, then save it to Redis for the next person
+    data = await db.query('SELECT ...');
+    await redis.set('homepage_feed', JSON.stringify(data), 'EX', 60); // Expire in 60s
+}
+return data;
+```
+
+### 3. The Edge / CDN Level
+For data that is identical for every single user globally (like the textual content of a Blog Post), you don't even let the request hit your Node.js server. You cache the response at the Cloudflare/CDN edge nodes worldwide.
+
+## Cache Invalidation (The Hardest Problem in Computer Science)
+
+"There are only two hard things in Computer Science: cache invalidation and naming things." - *Phil Karlton*
+
+The fundamental problem with caching is **Stale Data**. If you cache the homepage for 1 hour, and a user publishes a new post, the homepage will look broken to them for 59 minutes.
+
+### Strategies for Invalidation
+1. **Time-To-Live (TTL):** The easiest method. The data automatically deletes itself after 60 seconds. You accept that data might be up to 60 seconds out of date.
+2. **Write-Through Caching:** Whenever your backend executes an `INSERT` or `UPDATE` statement, the Node.js code is mathematically obligated to immediately run `redis.set()` to actively overwrite the cache with the new data. (Hard to maintain, highly prone to bugs).
+3. **Cache Busting (Tags):** You assign a tag (e.g., `user:15`) to a cached object. When User 15 updates their profile, you send a command to Redis to instantly delete all cache entries tagged with `user:15`.
+
+## Interview Questions
+
+**Q: A developer is tasked with caching user session data. They decide to store it in a standard Javascript variable (`const cache = {}`) inside the Node.js server memory instead of setting up Redis. Why will this fail in production?**
+**A:** Because production Node.js applications are deployed across **Multiple Instances (Stateless Architecture)**. 
+If the application is running on 5 separate Kubernetes pods, each pod has its own isolated Javascript memory. If User A logs in on Pod 1, Pod 1 caches their session. When User A clicks the next button, the Load Balancer might route them to Pod 2. Pod 2's internal memory has no idea who User A is, and throws a 401 Unauthorized error. You must use an external, centralized caching server like Redis so all 5 pods share the same state.
+
+**Q: You cache a massive SQL query result in Redis using `TTL = 24 hours`. At 2:00 AM, the cache perfectly expires. Suddenly, 5,000 users hit the homepage at the exact same millisecond. What catastrophic event occurs?**
+**A:** The **Cache Stampede** (or Thundering Herd). 
+Because the cache just expired, all 5,000 users check Redis simultaneously, get a "Cache Miss", and all 5,000 users immediately forward the massive, 5-second SQL query to the database simultaneously. The database instantly crashes. 
+To prevent this, you must implement **Mutex Locks** (or probabilistic early expiration) in your caching logic. When the first user gets a cache miss, they acquire a lock in Redis. The other 4,999 users check the lock and simply wait (or serve stale data) until User 1 finishes querying the database and refills the cache.

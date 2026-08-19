@@ -1,0 +1,75 @@
+---
+title: "Polymorphic Associations"
+description: "When a foreign key points to multiple tables."
+importance: "LOW"
+revisionTime: 3
+category: "SQL"
+subcategory: "Database Design"
+order: 55
+---
+
+## Concept
+
+Standard Foreign Keys strictly point to exactly one table.
+But what if you are building an application where Users can leave "Comments" on Blog Posts, but they can *also* leave "Comments" on Photos, and "Comments" on Videos?
+
+You don't want to create three identical tables (`post_comments`, `photo_comments`, `video_comments`).
+A **Polymorphic Association** is a design pattern where a single table can belong to multiple different types of tables.
+
+## The Anti-Pattern (The Rails Way)
+
+The most famous (and highly criticized) implementation of Polymorphism comes from the Ruby on Rails framework.
+Instead of using a strict SQL Foreign Key, it uses two loosely-typed columns: `entity_id` and `entity_type`.
+
+```sql
+CREATE TABLE comments (
+    id SERIAL PRIMARY KEY,
+    body TEXT,
+    -- The Polymorphic Columns
+    entity_id INT,               -- e.g., 5
+    entity_type VARCHAR(50)      -- e.g., 'Post' or 'Video'
+);
+```
+To find comments for Post #5, the application runs: `SELECT * FROM comments WHERE entity_type = 'Post' AND entity_id = 5`.
+
+### Why is this considered an Anti-Pattern?
+**It destroys Referential Integrity.** 
+Because `entity_id` could point to the `posts` table OR the `videos` table, you **cannot** place a standard SQL `FOREIGN KEY` constraint on it. 
+If someone deletes Post #5, the database has no idea it needs to cascade and delete the associated comments. You are entirely relying on your backend application code to manually clean up orphaned records. If your Node.js server crashes during a delete, your database becomes permanently corrupted with floating ghost comments.
+
+## The Correct Way (Exclusive Arcs)
+
+If you want to maintain strict ACID relational integrity, you must use the **Exclusive Arc** pattern.
+Instead of a single fake ID column, you explicitly define a strict Foreign Key for every possible parent table, and then add a `CHECK` constraint to guarantee that exactly one of them is used.
+
+```sql
+CREATE TABLE comments (
+    id SERIAL PRIMARY KEY,
+    body TEXT,
+    
+    -- Explicit, strict Foreign Keys
+    post_id INT REFERENCES posts(id),
+    video_id INT REFERENCES videos(id),
+    photo_id INT REFERENCES photos(id),
+
+    -- The Magic: Ensure exactly ONE is not null
+    CHECK (
+        (post_id IS NOT NULL)::INT + 
+        (video_id IS NOT NULL)::INT + 
+        (photo_id IS NOT NULL)::INT = 1
+    )
+);
+```
+
+### Trade-Offs of the Exclusive Arc
+- **Pros:** 100% mathematical database integrity. Foreign Keys work. `ON DELETE CASCADE` works perfectly.
+- **Cons:** If you add a new feature (e.g., "Comments on User Profiles"), you must run an `ALTER TABLE` to add a new `profile_id` column and update the complex `CHECK` constraint. 
+
+## Interview Questions
+
+**Q: A developer defends the "Rails Way" (using `entity_type` and `entity_id`), saying the lack of Foreign Keys makes `INSERT` operations significantly faster. Are they right?**
+**A:** Yes, they are technically right. Foreign Keys enforce integrity by forcing the database to perform a read check against the parent table before allowing an `INSERT`. By stripping out the Foreign Key, the database blindly accepts the insert, which is faster. However, trading structural data integrity for minor write-speed optimizations in a relational database defeats the entire purpose of using a relational database. If you don't care about strict integrity and prefer loose polymorphic relationships, you should likely be using a NoSQL document database like MongoDB.
+
+**Q: You are using the Exclusive Arc pattern with 10 different parent tables. Your `comments` table now has 10 different `_id` columns, 9 of which will be `NULL` for every single row. Will this waste massive amounts of disk space?**
+**A:** In modern databases like PostgreSQL, **No.** 
+PostgreSQL uses a highly optimized null bitmap at the beginning of each row header. A `NULL` value physically occupies absolutely zero bytes of storage space on the hard drive. Having 9 `NULL` columns is virtually free in terms of storage, making the Exclusive Arc pattern highly efficient.

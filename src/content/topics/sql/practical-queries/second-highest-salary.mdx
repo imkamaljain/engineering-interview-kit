@@ -1,0 +1,78 @@
+---
+title: "Nth Highest Value (Second Highest Salary)"
+description: "The most famous SQL interview question."
+importance: "HIGH"
+revisionTime: 2
+category: "SQL"
+subcategory: "Practical Queries"
+order: 96
+---
+
+## Concept
+
+If you are interviewing for a Software Engineering or Data role, you have a 90% chance of being asked to find the **"Second Highest Salary"** in a database.
+
+Finding the *highest* salary is trivial (`SELECT MAX(salary)`).
+Finding the *second* highest requires understanding SQL execution order, subqueries, or modern window functions.
+
+## 1. The Subquery Method (The Classic Answer)
+
+This is the most common answer expected in entry-level interviews.
+The logic: Find the absolute maximum salary. Then, find the maximum salary of everyone who makes *less* than that.
+
+```sql
+SELECT MAX(salary) AS second_highest
+FROM employees
+WHERE salary < (
+    -- Subquery returns the absolute highest
+    SELECT MAX(salary) FROM employees
+);
+```
+**Pros:** Easy to explain. Works in every SQL database from the 1990s onward.
+**Cons:** It doesn't scale. If the interviewer follows up with *"Now find the 5th highest salary"*, you have to nest 4 horrific subqueries inside each other.
+
+## 2. The LIMIT / OFFSET Method (The Pragmatic Answer)
+
+If we just want the second item in a sorted list, we can just sort the list descending, skip the first item, and take the second.
+
+```sql
+SELECT DISTINCT salary
+FROM employees
+ORDER BY salary DESC
+LIMIT 1 OFFSET 1;
+```
+**Pros:** Clean and readable. Easily scales to the 5th highest (`LIMIT 1 OFFSET 4`).
+**Cons:** We must use `DISTINCT`. If the CEO and CFO both make $500,000, and we don't use `DISTINCT`, sorting the list makes $500k the first item, and the other $500k the second item. `OFFSET 1` would incorrectly return $500k as the "second highest" salary.
+
+## 3. The Window Function Method (The Senior Answer)
+
+This is the industry standard for analytical queries. It proves you understand modern SQL.
+We use the `DENSE_RANK()` window function to mathematically rank the salaries.
+
+```sql
+WITH RankedSalaries AS (
+    SELECT 
+        salary, 
+        DENSE_RANK() OVER (ORDER BY salary DESC) as rank
+    FROM employees
+)
+SELECT DISTINCT salary 
+FROM RankedSalaries 
+WHERE rank = 2;
+```
+
+**Why `DENSE_RANK` and not `ROW_NUMBER` or `RANK`?**
+If there is a tie for 1st place ($500k, $500k):
+- `ROW_NUMBER` gives them 1 and 2. The query would incorrectly return $500k.
+- `RANK` gives them 1 and 1, and skips the next number (giving the next salary a 3). The query `WHERE rank = 2` would return `NULL`.
+- `DENSE_RANK` gives them 1 and 1, and assigns the very next distinct salary a 2. This is mathematically flawless.
+
+## Interview Questions
+
+**Q: Using the Subquery method (`WHERE salary < (SELECT MAX...)`), what does the query return if the `employees` table only has exactly 1 row?**
+**A:** It returns **`NULL`**. 
+The subquery calculates the `MAX(salary)` (e.g., $100k). The outer query then asks for `MAX(salary) WHERE salary < 100000`. Because there is only one employee, no one meets the criteria. The `MAX()` of an empty set mathematically evaluates to `NULL` in SQL. (This is generally the desired behavior).
+
+**Q: A developer uses the `LIMIT 1 OFFSET 1` method. The CEO makes $500k. The VP makes $400k. The intern makes $50k. The developer forgets the `DISTINCT` keyword. What does the query return?**
+**A:** It returns $400k. 
+Wait, it actually worked? Yes, it accidentally worked because there were no ties in the data. If the CEO and the CFO both made $500k, the list would be `[500, 500, 400, 50]`. Skipping the first item (`OFFSET 1`) would incorrectly return `500`. The `DISTINCT` keyword collapses the list to `[500, 400, 50]`, guaranteeing that `OFFSET 1` correctly lands on the 400.

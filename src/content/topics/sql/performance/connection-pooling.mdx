@@ -1,0 +1,57 @@
+---
+title: "Connection Pooling"
+description: "Why serverless functions crush your database."
+importance: "HIGH"
+revisionTime: 3
+category: "SQL"
+subcategory: "Performance"
+order: 59
+---
+
+## Concept
+
+When a Node.js server needs to run a SQL query, it cannot just yell into the void. It must establish a dedicated **TCP Network Connection** with the database server.
+This connection is heavy. It requires a DNS lookup, a TCP 3-way handshake, TLS cryptographic negotiation, and database authentication. 
+
+If your API opens a brand new connection every single time a user hits an endpoint, the database server will spend 90% of its CPU just negotiating handshakes, and queries will be delayed by hundreds of milliseconds.
+Even worse, PostgreSQL creates a heavy, dedicated OS process (taking ~10MB of RAM) for *every single connection*. If 1,000 users hit your API simultaneously, PostgreSQL tries to spawn 1,000 processes, exhausts all its RAM, and completely crashes.
+
+## The Solution: Connection Pooling
+
+A **Connection Pool** is a cache of database connections kept permanently alive in your Node.js application's memory.
+
+Instead of opening and closing connections, the workflow looks like this:
+1. When the Node server boots up, it establishes 20 permanent connections to the database.
+2. A user hits an endpoint. Node.js borrows 1 connection from the pool.
+3. The query executes instantly (0ms setup time).
+4. Node.js returns the connection to the pool, ready for the next user.
+
+Because a single connection can handle hundreds of queries per second, a small pool of 20 connections is often enough to support thousands of concurrent HTTP requests.
+
+## The Serverless Database Crash
+
+Connection Pooling works perfectly on traditional monolithic servers (like an AWS EC2 instance). 
+
+But in modern architecture, developers love **Serverless Functions** (AWS Lambda, Vercel, Next.js API routes). 
+Serverless functions are ephemeral. When 1,000 users hit a Vercel endpoint, Vercel spins up 1,000 completely separate, isolated Node.js environments.
+Because they are isolated, they cannot share a Connection Pool. Every single one of those 1,000 serverless functions attempts to open its own heavy TCP connection to the database simultaneously.
+**This instantly crashes standard relational databases.**
+
+## How to Fix Serverless Databases
+
+To use standard PostgreSQL or MySQL with Serverless architecture, you must insert a proxy layer between the Lambdas and the database.
+
+1. **PgBouncer (The Classic Solution):** A lightweight proxy server that sits in front of PostgreSQL. The 1,000 serverless functions connect to PgBouncer. PgBouncer accepts all 1,000 lightweight connections, but aggressively multiplexes them down into just 20 heavy connections to the actual PostgreSQL database.
+2. **Data APIs / Edge Proxies (The Modern Solution):** Services like Prisma Accelerate, Supabase, or AWS RDS Proxy. Instead of standard TCP connections, the serverless functions send queries via HTTP requests or WebSockets to a global edge network, which handles the persistent pooling to the real database.
+
+## Interview Questions
+
+**Q: A developer sets their Node.js Connection Pool maximum to 1,000, assuming that having more connections will make the API faster. What happens?**
+**A:** The database will experience **Connection Churn and Context Switching**. 
+Databases only have a limited number of physical CPU cores (e.g., 8 cores). If you throw 1,000 active queries at an 8-core CPU simultaneously, the CPU physically cannot process them all at once. It has to rapidly pause and switch between the 1,000 tasks (Context Switching), wasting massive amounts of time just managing the traffic jam. 
+Counterintuitively, a connection pool should be surprisingly small. A formula popularized by PostgreSQL experts is: `Connections = (Core Count * 2) + Effective Spindle Count`. For an 8-core database, a pool of just 20-30 connections will significantly outperform a pool of 1,000.
+
+**Q: In a massive Microservices architecture, you have 50 different microservices, and each one is deployed across 10 Kubernetes pods. They all share the exact same PostgreSQL database. What architecture problem do you face?**
+**A:** You face the **Distributed Pool Exhaustion** problem.
+If every individual pod configures its own internal Connection Pool to hold 10 connections, you have 500 pods times 10 connections = **5,000 permanent connections** hammering the database. PostgreSQL cannot handle 5,000 idle processes. 
+To fix this, the individual microservices must use very small pools (or no internal pooling), and all traffic must be routed through a centralized, external connection pooler (like PgBouncer) deployed inside the Kubernetes cluster.

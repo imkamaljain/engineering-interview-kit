@@ -1,0 +1,51 @@
+---
+title: "Key-Value Stores"
+description: "The ultimate caching layer."
+importance: "HIGH"
+revisionTime: 3
+category: "SQL"
+subcategory: "SQL vs NoSQL"
+order: 91
+---
+
+## Concept
+
+A **Key-Value Store** is the absolute simplest database architecture possible. It is fundamentally just a massive hash map (or Javascript dictionary).
+You have a string Key (e.g., `session:user_123`), and you have a Value (a string, an integer, or a JSON blob).
+
+You cannot write complex `WHERE` queries. You cannot `JOIN` data. You can only do three things:
+1. `SET(key, value)`
+2. `GET(key)`
+3. `DELETE(key)`
+
+Because the architecture is so brutally simple, Key-Value stores (like **Redis** and **Memcached**) are the fastest databases on the planet.
+
+## Why Are They So Fast?
+
+1. **RAM-Based (In-Memory):** Unlike PostgreSQL or MongoDB, which store data on the hard drive, Redis stores 100% of its data directly in RAM. Reading from RAM is literally thousands of times faster than reading from an NVMe SSD. A standard Redis instance can handle over 100,000 requests per second with sub-millisecond latency.
+2. **Zero Parsing Overhead:** There is no SQL Query Optimizer to calculate execution plans. Fetching a key is an instant $O(1)$ algorithmic lookup.
+
+## Core Use Cases
+
+You almost never use a Key-Value store as your Primary database (because RAM is highly volatile and extremely expensive). You use it as a **Secondary Database (Caching Layer)**.
+
+1. **Query Caching:** As discussed in the Performance section, you cache the results of massive SQL queries in Redis for 5 minutes to protect your primary PostgreSQL database from crushing load.
+2. **Session Management:** Storing active user JWT tokens or session data. When a user navigates to a new page, validating their session via a 0.1ms Redis lookup is significantly faster than hitting the SQL database.
+3. **Rate Limiting:** Tracking how many API requests an IP address made in the last 60 seconds. Redis has built-in atomic increment functions (`INCR`) perfect for this.
+4. **Leaderboards:** Redis has advanced data structures (like Sorted Sets) that can maintain a live gaming leaderboard in memory, instantly returning the top 10 players out of millions.
+
+## Redis vs Memcached
+
+For a long time, Memcached was the standard. Today, **Redis** has won the industry.
+- **Memcached** is purely a volatile cache. If the server loses power, all data vanishes.
+- **Redis** is actually a persistent database. It takes snapshots of the RAM and dumps them to the hard drive in the background (RDB and AOF). If a Redis server loses power, it can boot back up, read the hard drive, and completely restore the RAM state.
+
+## Interview Questions
+
+**Q: A startup's primary PostgreSQL database is struggling with read traffic. A junior developer suggests abandoning PostgreSQL entirely and migrating the entire company's permanent data into Redis to make it faster. Why is this a terrible idea?**
+**A:** Because RAM is exponentially more expensive than hard drive space. 
+1 TB of NVMe SSD storage costs about $100. 1 TB of server RAM costs thousands of dollars. You cannot afford to store 5 years of historical order data in RAM. Redis is designed to hold the *Active Working Set* (the small percentage of data that users are currently interacting with today), while the massive archive of historical data must remain safely on the hard drive in PostgreSQL.
+
+**Q: What is the primary eviction policy used by Redis when its RAM becomes 100% full?**
+**A:** **LRU (Least Recently Used).**
+When Redis runs out of memory, it doesn't just crash. You configure it with an eviction policy. Under LRU, Redis looks at the millions of cached keys, finds the ones that haven't been accessed in the longest time, and actively deletes them to make room for new incoming data. This mathematically ensures that the cache is always filled with the most relevant, highly-demanded data.

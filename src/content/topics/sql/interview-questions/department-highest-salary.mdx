@@ -1,0 +1,80 @@
+---
+title: "Department Highest Salary"
+description: "The multi-column join challenge."
+importance: "MEDIUM"
+revisionTime: 2
+category: "SQL"
+subcategory: "Interview Questions"
+order: 111
+---
+
+## The Question
+
+**"Given an `employee` table and a `department` table, write a SQL query to find employees who have the highest salary in each of the departments."**
+
+*(Note: Unlike the "Top N Per Group" question which asks for the top 3 and requires Window Functions, this question specifically asks for exactly the highest, meaning it can be solved cleanly using standard aggregate subqueries).*
+
+## The Solution: The Multi-Column IN Clause
+
+Most candidates can easily find the max salary for a department:
+`SELECT department_id, MAX(salary) FROM employee GROUP BY department_id;`
+
+The tricky part is taking those results and linking them back to the specific employee names. If you just `JOIN`, you might accidentally link the max salary to the wrong person if two departments have the exact same max salary.
+
+The cleanest standard SQL solution uses a **Multi-Column `IN` Clause**.
+
+```sql
+SELECT 
+    d.name AS Department,
+    e.name AS Employee,
+    e.salary AS Salary
+FROM employee e
+INNER JOIN department d ON e.department_id = d.id
+-- Match BOTH columns simultaneously
+WHERE (e.department_id, e.salary) IN (
+    -- Subquery: Find the absolute max salary per department
+    SELECT department_id, MAX(salary)
+    FROM employee
+    GROUP BY department_id
+);
+```
+
+### How it works:
+The subquery generates an array of arrays: `[(Dept 1, $100k), (Dept 2, $150k)]`.
+The `WHERE IN` clause iterates through the `employee` table. It looks at Alice (Dept 1, $50k). Does `(1, 50k)` exist in the array? No. 
+It looks at Bob (Dept 1, $100k). Does `(1, 100k)` exist in the array? Yes. Bob is printed.
+This safely handles ties (if Charlie also makes $100k in Dept 1, both Bob and Charlie will correctly be printed).
+
+## Solution 2: The Window Function Method
+
+As always, any complex subquery can usually be replaced with a modern Window Function.
+
+```sql
+WITH RankedEmployees AS (
+    SELECT 
+        department_id,
+        name,
+        salary,
+        -- Use RANK or DENSE_RANK to assign 1 to the highest salary
+        RANK() OVER(PARTITION BY department_id ORDER BY salary DESC) as rank
+    FROM employee
+)
+SELECT 
+    d.name AS Department,
+    r.name AS Employee,
+    r.salary AS Salary
+FROM RankedEmployees r
+INNER JOIN department d ON r.department_id = d.id
+WHERE r.rank = 1;
+```
+
+## Interview Questions
+
+**Q: A junior developer attempts to solve this without a subquery or window function. They write: `SELECT d.name, e.name, MAX(e.salary) FROM employee e JOIN department d ... GROUP BY d.name`. Why does this crash?**
+**A:** This is a fundamental misunderstanding of the `GROUP BY` clause. 
+If you group by `d.name` (e.g., 'Engineering'), the database squashes all 50 engineers into a single row, and easily outputs the `MAX(e.salary)` ($150k). 
+But what is it supposed to output for `e.name`? The 50 engineers all have different names. Because `e.name` is not inside an aggregate function, and is not inside the `GROUP BY` clause, the database cannot arbitrarily pick one name to display, so it throws a syntax error. (Older versions of MySQL used to silently pick a random name, which caused massive data corruption bugs, but strict SQL mode finally banned this).
+
+**Q: Between the Subquery `IN` method and the Window Function `RANK()` method, which is better?**
+**A:** The **Window Function method** is superior for readability and scalability. 
+While both execute with similar performance on modern optimizers (often compiling down to similar hash joins), the Window Function is vastly easier to modify. If the business requirement changes tomorrow from "Find the highest salary" to "Find the top 3 highest salaries", the Subquery method completely falls apart and must be rewritten from scratch. The Window Function method only requires changing `WHERE r.rank = 1` to `WHERE r.rank <= 3`.

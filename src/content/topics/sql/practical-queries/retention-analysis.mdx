@@ -1,0 +1,90 @@
+---
+title: "Retention Analysis (Cohorts)"
+description: "Figuring out who comes back."
+importance: "HIGH"
+revisionTime: 4
+category: "SQL"
+subcategory: "Practical Queries"
+order: 100
+---
+
+## Concept
+
+"How many users who signed up in January came back and logged in during February?"
+This is **Cohort Retention Analysis**, the single most important metric for any SaaS or consumer startup. If retention is 0%, your business is dead, regardless of how many people sign up.
+
+To calculate retention in SQL, we must track users across multiple time periods. 
+We achieve this by assigning every user to a "Cohort" (their signup month), finding all their subsequent login months, and calculating the mathematical difference in months between the two.
+
+## Step 1: Assigning the Cohort
+
+First, we need to know when every user signed up. We use a CTE to find their absolute first login date and truncate it to the month.
+
+```sql
+WITH UserCohorts AS (
+    SELECT 
+        user_id,
+        -- Truncate their very first login to the 1st of the month
+        DATE_TRUNC('month', MIN(login_date)) AS cohort_month
+    FROM logins
+    GROUP BY user_id
+)
+```
+
+## Step 2: Calculate the "Month Offset"
+
+Next, we `JOIN` the original logins table back to the Cohort table. 
+For every login a user ever made, we calculate how many months passed between their `cohort_month` and that specific `login_month`.
+
+```sql
+, UserActivity AS (
+    SELECT 
+        c.user_id,
+        c.cohort_month,
+        DATE_TRUNC('month', l.login_date) AS activity_month,
+        
+        -- Calculate the difference in months (PostgreSQL specific math)
+        EXTRACT(year FROM l.login_date) * 12 + EXTRACT(month FROM l.login_date) 
+        - (EXTRACT(year FROM c.cohort_month) * 12 + EXTRACT(month FROM c.cohort_month)) AS month_offset
+        
+    FROM UserCohorts c
+    INNER JOIN logins l ON c.user_id = l.user_id
+)
+```
+
+If a user signed up in Jan, and logged in during Jan, the `month_offset` is `0`.
+If they logged in during Feb, the `month_offset` is `1`.
+
+## Step 3: Count and Pivot the Matrix
+
+Finally, we just count how many *distinct* users exist for every single combination of `cohort_month` and `month_offset`.
+
+```sql
+SELECT 
+    cohort_month,
+    -- Month 0 (The original signup month, always 100% of the cohort)
+    COUNT(DISTINCT CASE WHEN month_offset = 0 THEN user_id END) AS month_0,
+    -- Month 1 Retention
+    COUNT(DISTINCT CASE WHEN month_offset = 1 THEN user_id END) AS month_1,
+    -- Month 2 Retention
+    COUNT(DISTINCT CASE WHEN month_offset = 2 THEN user_id END) AS month_2
+FROM UserActivity
+GROUP BY cohort_month
+ORDER BY cohort_month ASC;
+```
+
+**The Output Matrix:**
+| cohort_month | month_0 | month_1 | month_2 |
+| :--- | :--- | :--- | :--- |
+| 2023-01-01 | 5000 | 1000 | 500 |
+| 2023-02-01 | 4000 | 800 | `NULL` |
+
+*(Note: February doesn't have Month 2 data yet, because we are currently in March).*
+
+To get the actual percentage (e.g., 20% retention in Month 1), you simply wrap the `COUNT` in math: `(month_1 / month_0) * 100`.
+
+## Interview Questions
+
+**Q: In Step 3, why did we explicitly use `COUNT(DISTINCT user_id)` instead of just `COUNT(*)`?**
+**A:** If we used `COUNT(*)`, we would be counting the total number of *login events*. If a highly active user logged in 50 times during February, `COUNT(*)` would add 50 to the `month_1` bucket. Our retention percentage would skyrocket to 1500%, mathematically corrupting the entire analysis.
+Retention analysis requires knowing if the user came back *at least once*. `COUNT(DISTINCT user_id)` mathematically guarantees that the active user is only counted exactly 1 time for February, keeping the retention metrics accurate.

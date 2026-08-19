@@ -1,0 +1,75 @@
+---
+title: "Moving Average"
+description: "Smoothing out the spikes."
+importance: "MEDIUM"
+revisionTime: 3
+category: "SQL"
+subcategory: "Practical Queries"
+order: 98
+---
+
+## Concept
+
+If you look at a graph of daily active users, it usually looks like a jagged sawtooth: High on Tuesdays, plummeting on Saturdays. This makes it very difficult to see the true underlying trend.
+
+A **Moving Average** smooths out the line. Instead of plotting Tuesday's exact data, it plots the average of the *last 7 days* leading up to Tuesday.
+
+To calculate this in SQL, we use Window Functions, but we must explicitly define a **Custom Frame** inside the `OVER()` clause.
+
+## The Framing Clause (`ROWS BETWEEN`)
+
+In the Cumulative Sum lesson, we learned that adding an `ORDER BY` automatically sums everything from the very beginning of time up to the current row.
+For a 7-day moving average, we do *not* want to average from the beginning of time. We want a strict, sliding 7-day window.
+
+We override the default behavior using the `ROWS BETWEEN` syntax.
+
+*Goal: Calculate a 7-day moving average of daily signups.*
+
+```sql
+SELECT 
+    date,
+    signups,
+    
+    AVG(signups) OVER (
+        ORDER BY date ASC 
+        -- The Custom Sliding Window
+        ROWS BETWEEN 6 PRECEDING AND CURRENT ROW
+    ) AS rolling_7_day_avg
+    
+FROM daily_metrics;
+```
+
+### Breaking Down the Math
+When the database reaches the row for January 10th:
+1. `CURRENT ROW`: It looks at January 10.
+2. `6 PRECEDING`: It looks backward 6 rows (Jan 4, 5, 6, 7, 8, 9).
+3. It takes those 7 specific rows, calculates the `AVG()`, and pastes the answer onto January 10.
+4. When it moves to January 11th, the 7-row window completely slides forward.
+
+## Physical Rows vs Logical Values (`RANGE` vs `ROWS`)
+
+There is a massive trap in the query above.
+The `ROWS BETWEEN` clause literally counts physical rows on the hard drive. 
+If your database is missing a row for Sunday (because 0 people signed up, so no row was inserted), the `6 PRECEDING` rows will actually reach all the way back to last Saturday. You are now calculating an 8-day moving average, silently corrupting your financial graph.
+
+To fix this, you must use **`RANGE BETWEEN`** instead of `ROWS BETWEEN`.
+`RANGE` evaluates the actual mathematical value of the `date` column, regardless of missing physical rows.
+
+```sql
+AVG(signups) OVER (
+    ORDER BY date ASC 
+    -- Looks exactly 6 logical days into the past, even if rows are missing
+    RANGE BETWEEN INTERVAL '6 days' PRECEDING AND CURRENT ROW
+)
+```
+*(Note: Support for `RANGE` with intervals varies heavily by database engine. PostgreSQL handles it perfectly; older versions of MySQL do not).*
+
+## Interview Questions
+
+**Q: You run the 7-day moving average query. You notice that the result for January 2nd is just the average of Jan 1 and Jan 2. It didn't average 7 days because there wasn't enough historical data yet. How can you ensure the query only outputs a result if a full 7 days of data exists?**
+**A:** You can use a `CASE` statement combined with the `COUNT()` window function.
+Inside the window, you run `COUNT(signups) OVER(ROWS BETWEEN 6 PRECEDING AND CURRENT ROW)`. If the count is exactly 7, you output the `AVG`. If the count is less than 7, you output `NULL`. 
+
+**Q: A developer wants to calculate the average of the *entire* month and paste it onto every row in that month. They write `AVG(signups) OVER(PARTITION BY EXTRACT(month from date) ORDER BY date ASC)`. Why is the result wrong?**
+**A:** The result is wrong because they included an `ORDER BY` clause. 
+As soon as you add `ORDER BY` inside an `OVER()` window, the database automatically applies the default framing rule (`ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW`), turning it into a *Running Average*, not a static Monthly Average. To get a static, flat average applied to every row, they must delete the `ORDER BY` clause entirely: `AVG(signups) OVER(PARTITION BY EXTRACT(month from date))`.

@@ -1,0 +1,79 @@
+---
+title: "JSON in SQL"
+description: "Blurring the line between SQL and NoSQL."
+importance: "HIGH"
+revisionTime: 4
+category: "SQL"
+subcategory: "Advanced SQL"
+order: 80
+---
+
+## Concept
+
+Historically, the biggest argument for using a NoSQL database (like MongoDB) was schema flexibility. If an e-commerce store sold Laptops (which have `ram` and `cpu` attributes) and T-Shirts (which have `size` and `color` attributes), a strict relational SQL database struggled. 
+You either had to create 50 different tables for 50 different product types (EAV Pattern) or create one massive table with 100 columns where 90% of them were `NULL`.
+
+Modern SQL databases (especially PostgreSQL) completely eliminated this argument by introducing native **JSON/JSONB support**.
+You can now store schemaless, nested JSON documents directly inside a strict SQL table, and query them with blistering speed.
+
+## JSON vs JSONB
+
+PostgreSQL offers two types:
+1. **`JSON`:** Stores the exact string you typed, including whitespace and duplicate keys. Every time you query it, the database has to physically parse the string in real-time. (Almost never used).
+2. **`JSONB` (Binary JSON):** The database parses the JSON once upon `INSERT`, strips whitespace, removes duplicates, and converts it into a highly optimized binary tree structure on the hard drive. **Always use JSONB.**
+
+## Querying JSONB
+
+You can query deep into the JSON tree using special operators (like `->` and `->>`).
+
+```sql
+-- The Table
+CREATE TABLE products (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255),
+    attributes JSONB
+);
+
+-- Insert schemaless data
+INSERT INTO products (name, attributes) 
+VALUES ('Laptop', '{"ram": "16GB", "cpu": "i7"}');
+
+-- Query inside the JSON blob
+-- The ->> operator extracts the value as Text
+SELECT name FROM products 
+WHERE attributes->>'ram' = '16GB';
+```
+
+## Indexing JSONB (The GIN Index)
+
+Querying inside a massive JSON blob forces a Full Table Scan because standard B-Tree indexes cannot look inside JSON strings.
+If you have 10 million products, searching for `attributes->>'ram' = '16GB'` will be unacceptably slow.
+
+To fix this, PostgreSQL provides the **GIN (Generalized Inverted Index)**.
+A GIN index actually reaches *inside* the JSONB blob, extracts every single key and value, and indexes them individually.
+
+```sql
+-- Create an index on the entire JSON document
+CREATE INDEX idx_product_attributes ON products USING GIN (attributes);
+
+-- Use the specific JSON containment operator (@>) to trigger the index
+SELECT name FROM products 
+WHERE attributes @> '{"ram": "16GB"}';
+```
+With a GIN index, searching inside a schemaless JSON blob in PostgreSQL is often just as fast, or even faster, than searching a dedicated NoSQL database like MongoDB.
+
+## Trade-Offs
+
+If JSONB is so fast and flexible, why not make every table a JSON blob?
+**You lose relational integrity.**
+- You cannot place a Foreign Key constraint inside a JSON blob. If `{"user_id": 5}` is in the JSON, the database cannot prevent User 5 from being deleted.
+- You cannot easily enforce column types. The database cannot stop a developer from inserting `{"price": "free"}` instead of `{"price": 100}`.
+- Updating a single nested value inside a 10MB JSON blob requires the database to rewrite the entire 10MB blob on the hard drive. 
+
+JSONB should only be used for data that is genuinely schemaless and primarily read-only (like product attributes or API request logs). Core business data (Users, Orders, Payments) must always be stored in strict, normalized relational columns.
+
+## Interview Questions
+
+**Q: A developer stores an array of integer IDs in a JSONB column: `liked_post_ids = [1, 2, 5, 9]`. They write a query to find all users who liked Post #5. They create a standard B-Tree index on the column, but the query is still doing a Full Table Scan. Why?**
+**A:** A standard B-Tree index only works on exact equality or ranges (e.g., `<` or `>`). It cannot look *inside* an array. 
+To search inside a JSON array instantly, they must drop the B-Tree index and create a **GIN index**. Furthermore, they must rewrite their query to use the JSON containment operator (`@> '[5]'`) or the existence operator (`? '5'`), otherwise the Query Optimizer will not know how to trigger the GIN index.

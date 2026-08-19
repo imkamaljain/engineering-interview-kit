@@ -1,0 +1,84 @@
+---
+title: "Transactions"
+description: "Grouping queries into atomic units of work."
+importance: "HIGH"
+revisionTime: 3
+category: "SQL"
+subcategory: "Transactions"
+order: 39
+---
+
+## Concept
+
+By default, relational databases operate in **Auto-Commit Mode**. Every single `INSERT` or `UPDATE` you send is treated as its own isolated transaction, instantly committed to the hard drive, and completely irreversible.
+
+If you are transferring $100 from Alice to Bob, you need two `UPDATE` statements. If you use Auto-Commit, and the database crashes between the two statements, Alice loses $100 and Bob gets nothing.
+To prevent this, you manually group the statements into a single **Transaction**.
+
+## The Syntax (TCL - Transaction Control Language)
+
+A transaction creates a temporary, isolated sandbox. You make changes inside the sandbox. Only when you are completely satisfied do you "publish" the sandbox to the real database.
+
+```sql
+-- 1. Start the Sandbox
+BEGIN; -- (or START TRANSACTION;)
+
+-- 2. Execute statements
+UPDATE accounts SET balance = balance - 100 WHERE name = 'Alice';
+UPDATE accounts SET balance = balance + 100 WHERE name = 'Bob';
+
+-- 3. Publish the changes permanently
+COMMIT;
+```
+
+### The Rollback
+
+If something goes wrong inside the sandbox (e.g., Bob's account doesn't exist, or your Node.js application hits an error), you can manually destroy the sandbox, reverting everything back to exactly how it was before the `BEGIN` statement.
+
+```sql
+BEGIN;
+UPDATE accounts SET balance = balance - 100 WHERE name = 'Alice';
+
+-- Uh oh, Node.js realized Bob is banned. Destroy the transaction!
+ROLLBACK;
+```
+Alice's money is perfectly restored. 
+*(Note: If the database server physically crashes or loses network connection before `COMMIT` is called, the database automatically treats it as a `ROLLBACK` when it recovers).*
+
+## Savepoints
+
+Sometimes transactions are massive (e.g., inserting a new User, inserting their 5 Address rows, inserting 3 Config rows). If one specific Address insert fails, you might not want to `ROLLBACK` the entire User creation. 
+
+You can set a **`SAVEPOINT`**. It acts like a video game checkpoint inside the transaction sandbox.
+
+```sql
+BEGIN;
+INSERT INTO users (name) VALUES ('Alice');
+
+-- Create a checkpoint
+SAVEPOINT user_created;
+
+-- This fails because of a typo
+INSERT INTO addresses (zipcode) VALUES ('INVALID_ZIP');
+
+-- Revert back to the checkpoint, saving the User insert!
+ROLLBACK TO SAVEPOINT user_created;
+
+COMMIT;
+```
+
+## Trade-Offs
+
+- **Pros:** Absolute mathematical safety for related operations.
+- **Cons:** **The Long Transaction Problem.** While a transaction is open, the database places physical **Locks** on the rows being modified to prevent other people from touching them. If a developer writes bad Node.js code that starts a transaction, performs an HTTP request to Stripe (which takes 5 seconds), and then commits, they are holding database locks open for 5 seconds. Every other user trying to interact with those rows will freeze, causing a massive backlog that crashes the entire API. **Transactions must be incredibly fast, and never include network calls.**
+
+## Interview Questions
+
+**Q: A developer writes a script to update 10 million rows. They wrap all 10 million `UPDATE` statements inside a single `BEGIN; ... COMMIT;` block. What will happen to the database?**
+**A:** This will cause **Transaction Log Exhaustion** (or massive Bloat in PostgreSQL). 
+To guarantee Atomicity (the ability to `ROLLBACK`), the database must save the "Before" and "After" state of every single modified row into its transaction log or undo space. Saving the state of 10 million rows simultaneously will consume massive amounts of hard drive space and RAM, likely crashing the database or triggering an Out-Of-Memory error. Massive updates should always be batched (e.g., processing and committing 10,000 rows at a time).
+
+**Q: If you run a `TRUNCATE TABLE` command inside a transaction, and then call `ROLLBACK`, does the data come back?**
+**A:** This depends on the database engine.
+- In **PostgreSQL**, DDL commands (like `TRUNCATE`, `CREATE TABLE`, `ALTER TABLE`) are fully transactional. If you truncate a table and then rollback, the data is perfectly restored.
+- In **MySQL (InnoDB)** and Oracle, DDL commands are *non-transactional*. Executing a `TRUNCATE` or `ALTER TABLE` command instantly forces an implicit, irreversible `COMMIT`, destroying your transaction sandbox. A rollback will do nothing.

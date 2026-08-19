@@ -1,0 +1,65 @@
+---
+title: "Graph Databases"
+description: "When the relationships are more important than the data."
+importance: "LOW"
+revisionTime: 2
+category: "SQL"
+subcategory: "SQL vs NoSQL"
+order: 92
+---
+
+## Concept
+
+In a standard SQL database, we use Foreign Keys to link rows together. This works perfectly for simple relationships (A User has an Order).
+
+But what if you are building LinkedIn?
+- Alice knows Bob.
+- Bob knows Charlie.
+- Charlie works at Google.
+- Google is located in California.
+You want to run a query: *"Find all people Alice knows, who know someone else, who works at a company located in California."*
+
+To write this in SQL, you have to execute a 4-level deep `INNER JOIN` traversing a Many-to-Many junction table. If Alice has 500 connections, and each of them has 500 connections, the SQL database has to cross-multiply 250,000 rows in memory. It will take 10 seconds to run.
+
+A **Graph Database** (like **Neo4j**) is explicitly designed to solve this.
+
+## The Architecture (Nodes and Edges)
+
+Graph Databases abandon the concept of Tables and Rows. They use network theory.
+
+1. **Nodes (Vertices):** The actual entities (Alice, Google, California).
+2. **Edges (Relationships):** The physical lines connecting them ("KNOWS", "WORKS_AT", "LOCATED_IN"). 
+
+In SQL, a relationship is a mathematical abstraction calculated at runtime via a `JOIN`.
+In a Graph Database, the relationship is **a physical pointer stored on the hard drive**. 
+
+When you ask Neo4j to find Alice's friends of friends, it doesn't scan massive tables. It simply grabs Alice's node, instantly hops across the physical "KNOWS" pointers to her friends, and hops again. This is called **Index-Free Adjacency**. Traversing a network graph that takes SQL 10 seconds takes Neo4j 5 milliseconds.
+
+## Querying a Graph (Cypher)
+
+Graph databases do not use standard SQL syntax. Neo4j uses a language called **Cypher**, which looks like ASCII art drawing the physical network.
+
+*Query: Find people Alice knows who work at Google.*
+```cypher
+MATCH (alice:Person {name: 'Alice'})-[:KNOWS]->(friend:Person)-[:WORKS_AT]->(company:Company {name: 'Google'})
+RETURN friend.name
+```
+Notice the `()-[]->()` syntax physically drawing the nodes and the directional arrows connecting them.
+
+## Core Use Cases
+
+Graph databases are highly specialized. You should only use them when your application's primary feature relies on extremely deep, highly interconnected data traversing multiple levels.
+1. **Social Networks:** "People you may know" (Friends of friends).
+2. **Recommendation Engines:** "Customers who bought this laptop also bought this mouse."
+3. **Fraud Detection:** Tracing a stolen credit card as it is transferred across 15 different shell company bank accounts in a massive laundering ring.
+
+## Interview Questions
+
+**Q: A developer suggests using Neo4j as the primary database for an E-Commerce site because it can calculate "Recommended Products" instantly. Why might the CTO object?**
+**A:** Because Graph Databases are terrible at standard, flat aggregations.
+If the CTO wants to know: *"What was the total revenue of all orders placed yesterday?"*
+In SQL, this is a blazing fast sequential scan: `SUM(total) WHERE date = yesterday`.
+In a Graph Database, data is scattered as individual nodes across a massive web. Aggregating flat, un-related data points across a graph is computationally inefficient. Most companies use a standard PostgreSQL database as their primary source of truth, and pipe a synced copy of the network data into a secondary Graph Database strictly for the recommendation engine features.
+
+**Q: How does a Graph Database handle Many-to-Many relationships compared to SQL?**
+**A:** In SQL, you are forced to create a third, intermediate "Junction Table" to map the two IDs together. In a Graph Database, Junction Tables do not exist. You simply draw a direct Edge (line) connecting Node A directly to Node B. Furthermore, just like Junction Tables, you can store data directly on the Edge itself (e.g., `[:KNOWS {since: 2015}]`).

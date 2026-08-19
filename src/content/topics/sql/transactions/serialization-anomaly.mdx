@@ -1,0 +1,70 @@
+---
+title: "Serialization Anomaly"
+description: "When perfect snapshots aren't enough."
+importance: "LOW"
+revisionTime: 2
+category: "SQL"
+subcategory: "Transactions"
+order: 44
+---
+
+## Concept
+
+If you use PostgreSQL, you might learn that its `Repeatable Read` level is so advanced that it prevents Dirty Reads, Non-Repeatable Reads, *and* Phantom Reads. 
+So why does PostgreSQL even have a `Serializable` level?
+
+Because of the **Serialization Anomaly** (specifically, **Write Skew**).
+This occurs when two concurrent transactions take a perfect snapshot of the database, evaluate a business rule based on that snapshot, and then modify *different* rows. Because they modified different rows, there are no lock conflicts. Both commit successfully, but the final combination of their data mathematically violates the business rule.
+
+## Mental Model: Write Skew
+
+Imagine a hospital system. The business rule: **There must always be at least 1 doctor on call.**
+Currently, Alice and Bob are both on call.
+
+| Time | Transaction A (Alice) | Transaction B (Bob) |
+| :--- | :--- | :--- |
+| T1 | `BEGIN ISOLATION LEVEL REPEATABLE READ;` | `BEGIN ISOLATION LEVEL REPEATABLE READ;` |
+| T2 | `SELECT COUNT(*) FROM doctors WHERE on_call = true;` -> **Reads 2** | `SELECT COUNT(*) FROM doctors WHERE on_call = true;` -> **Reads 2** |
+| T3 | Alice thinks: "There are 2, so I can go home." | Bob thinks: "There are 2, so I can go home." |
+| T4 | `UPDATE doctors SET on_call = false WHERE name = 'Alice';` | `UPDATE doctors SET on_call = false WHERE name = 'Bob';` |
+| T5 | `COMMIT;` | `COMMIT;` |
+
+**The Bug:** Both transactions commit successfully because Alice updated Alice's row, and Bob updated Bob's row. There was no row-level locking conflict. 
+But the final database state has **0 doctors on call**, violating the core business rule.
+
+## How to Prevent Write Skew
+
+You must elevate the database to true **`Serializable`** isolation.
+
+In `Serializable` mode, PostgreSQL actively monitors the dependencies between transactions. It notices that Transaction A's `UPDATE` was logically dependent on the result of the `SELECT` query, and Transaction B's `UPDATE` altered the result of that exact same `SELECT` query.
+When Transaction B attempts to `COMMIT` at T5, PostgreSQL realizes the math is corrupted, violently aborts Transaction B, and throws a Serialization Error.
+
+## Trade-Offs
+
+True `Serializable` isolation guarantees perfect mathematical correctness. It guarantees that the final state of the database is identical to what it would be if the transactions had run one-by-one in a single-file line.
+
+However, the cost is massive lock contention and transaction aborts. 
+If you use `Serializable`, your Node.js application **must** implement a retry loop.
+```javascript
+async function executeWithRetry(queryFn, maxRetries = 3) {
+    for (let i = 0; i < maxRetries; i++) {
+        try {
+            return await queryFn();
+        } catch (error) {
+            // Check if it's a PostgreSQL Serialization Failure (Code 40001)
+            if (error.code === '40001') {
+                await sleep(Math.random() * 50); // Exponential backoff
+                continue;
+            }
+            throw error;
+        }
+    }
+    throw new Error("Transaction failed after maximum retries.");
+}
+```
+
+## Interview Questions
+
+**Q: You want to prevent the Doctor Write Skew anomaly, but you refuse to use `Serializable` isolation because you don't want to build retry loops. How can you fix it in `Read Committed` mode?**
+**A:** You can use **Explicit Pessimistic Locking** (`FOR UPDATE`) or **Materialized Constraints**.
+- *Pessimistic Locking:* You can't easily lock the concept of "on call doctors". Instead, you could create a `hospital_status` table with a single row containing `total_doctors_on_call = 2`. Both Alice and Bob must run `SELECT total_doctors_on_call FROM hospital_status FOR UPDATE`. Alice acquires the lock. Bob's transaction physically freezes and waits until Alice finishes. Alice decrements it to 1 and commits. Bob unfreezes, reads the new value (1), realizes he cannot leave, and safely aborts his own transaction.

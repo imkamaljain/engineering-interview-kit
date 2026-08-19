@@ -1,0 +1,73 @@
+---
+title: "Materialized Views"
+description: "Caching complex queries as physical tables."
+importance: "MEDIUM"
+revisionTime: 3
+category: "SQL"
+subcategory: "Performance"
+order: 60
+---
+
+## Concept
+
+In standard SQL, you can create a **View**. A View is just a saved SQL query that acts like a virtual table. 
+```sql
+CREATE VIEW active_users AS SELECT * FROM users WHERE status = 'active';
+```
+When you run `SELECT * FROM active_users`, the database secretly unpacks the saved query and executes it live. **Standard Views do not save time or improve performance.** They are purely syntactic sugar to make complex queries easier to read.
+
+If that underlying query joins 10 massive tables and takes 5 minutes to run, the View will take 5 minutes to return data every single time an API hits it.
+
+A **Materialized View** solves this. 
+When you create a Materialized View, the database actually executes the query, takes the results, and saves them permanently to the hard drive as a brand new, physical table. 
+When your API queries the Materialized View, it returns the pre-calculated answers in 1 millisecond.
+
+## How to Implement It (PostgreSQL)
+
+```sql
+-- 1. Create it (This executes the 5-minute query and saves the output)
+CREATE MATERIALIZED VIEW mv_monthly_sales AS
+SELECT month, region, SUM(amount) AS total 
+FROM massive_orders_table
+GROUP BY month, region;
+
+-- 2. Query it (Lightning fast, reads the physical copy)
+SELECT * FROM mv_monthly_sales;
+```
+
+### The Problem: Stale Data
+
+Because a Materialized View is a physical copy of the data, it is permanently frozen in time.
+If a new order is inserted into the `massive_orders_table`, the Materialized View does **not** know about it. The data becomes stale immediately.
+
+To update the data, you must manually execute a refresh command:
+```sql
+REFRESH MATERIALIZED VIEW mv_monthly_sales;
+```
+This forces the database to re-run the massive 5-minute query from scratch and overwrite the physical table. Usually, engineers set up a Cron Job to execute this refresh command every night at 2:00 AM.
+
+## Concurrent Refreshes
+
+If the refresh takes 5 minutes, what happens if a user tries to query the view during those 5 minutes?
+By default, the database locks the view, completely freezing the user's API request until the refresh finishes.
+
+To fix this, modern databases support **Concurrent Refreshes**.
+```sql
+REFRESH MATERIALIZED VIEW CONCURRENTLY mv_monthly_sales;
+```
+This builds the new data in the background. Users continue to see the old, stale data. Once the background process finishes, it hot-swaps the data instantly with zero downtime. *(Note: This requires the materialized view to have a Unique Index on it).*
+
+## Trade-Offs
+
+- **Pros:** Turns unimaginably slow, CPU-destroying analytical queries into instant, sub-millisecond lookups. Allows you to keep your live database highly Normalized (3NF), while generating Denormalized tables specifically for reporting tools.
+- **Cons:** The data is always slightly out of date. Furthermore, running massive `REFRESH` commands during peak business hours can saturate Disk I/O and slow down the primary database.
+
+## Interview Questions
+
+**Q: A developer suggests using a Materialized View to speed up the "User Profile" page on an e-commerce site. Is this a good idea?**
+**A:** **No.** 
+A User Profile page (showing a user's recent orders or updated email address) requires strict real-time data. If a user updates their email, and the profile page queries a Materialized View that only refreshes every hour, the user will think the website is broken. Materialized Views are designed for **OLAP (Analytical)** workloads—like generating a "Top 100 Best Selling Products of the Month" dashboard—where seeing data that is 1 hour old is perfectly acceptable. For real-time OLTP workloads, you must use standard B-Tree indexes or RAM-based caching (like Redis).
+
+**Q: In highly advanced database architectures, developers sometimes use "Incremental Materialized Views" (or Continuous Aggregates in TimescaleDB). What problem does this solve?**
+**A:** A standard `REFRESH MATERIALIZED VIEW` completely deletes the old table and re-calculates the entire history of the company from scratch, even if only 1 new order arrived today. This is incredibly wasteful.
+An Incremental Materialized View intelligently tracks which specific rows in the underlying table changed (often using database triggers or the WAL log). When refreshed, it only calculates the math for the new data and patches the view. This reduces the refresh time from 5 minutes down to 5 milliseconds, allowing views to be refreshed near real-time without crashing the database.

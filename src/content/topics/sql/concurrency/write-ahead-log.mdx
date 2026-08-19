@@ -1,0 +1,49 @@
+---
+title: "Write-Ahead Log (WAL)"
+description: "How databases survive power failures."
+importance: "HIGH"
+revisionTime: 4
+category: "SQL"
+subcategory: "Concurrency"
+order: 69
+---
+
+## Concept
+
+When you execute `UPDATE users SET balance = 50 WHERE id = 1;`, the database does not immediately write the change to the physical table file (the `.ibd` or Heap file) on the hard drive.
+
+Why? Because writing to the main table is a **Random I/O** operation. The database must traverse the B-Tree index, find the exact page on the disk, read the 8KB block into RAM, update it, and write the 8KB block back. If you are executing 10,000 transactions a second, doing 10,000 Random I/O disk jumps per second will completely saturate even an NVMe SSD, bringing the database to a crawl.
+
+Instead, databases achieve both blistering performance and absolute safety using the **Write-Ahead Log (WAL)**.
+
+## How the WAL Works
+
+The WAL (or Redo Log in MySQL) is a simple, append-only file on the hard drive. 
+
+1. **The In-Memory Update:** When you update the balance, the database updates the 8KB page *only in RAM* (the Buffer Pool). The data on the hard drive is still old.
+2. **The Sequential Write:** When you type `COMMIT`, the database takes the raw binary changes (`User 1 changed to 50`) and dumps it to the very end of the WAL file on the hard drive. Because it is appending to the end of a file, this is **Sequential I/O**. It is incredibly fast.
+3. **The Success:** The database returns "Success" to the user. The transaction is fully durable.
+4. **The Checkpoint (Lazy Write):** Every 5 minutes (or when RAM gets full), a background worker leisurely takes all the modified 8KB pages from RAM and finally flushes them to the main table files on the hard drive. 
+
+## Surviving a Crash (Crash Recovery)
+
+What happens if someone unplugs the database server right after Step 3, before the Checkpoint happens?
+The RAM is wiped. The main table file on the hard drive still says the balance is $100. Did the user lose their money?
+
+**No.** When the database boots back up, it realizes it crashed. It immediately opens the WAL file, reads it sequentially from start to finish, and "replays" every single transaction that occurred since the last Checkpoint. It manually updates the main table to $50, perfectly restoring the database to its exact pre-crash state.
+
+## Replication (Streaming the WAL)
+
+The WAL isn't just for crash recovery. It is the absolute foundation of Database Scaling.
+If you have a Primary Database and a Read-Replica Database, how do you keep them synchronized?
+You don't send SQL queries to the replica. The Primary database simply streams its raw WAL file over the network to the Replica in real-time. The Replica constantly replays the WAL binary instructions against its own hard drive, remaining a perfect bit-for-bit clone of the Primary.
+
+## Interview Questions
+
+**Q: In PostgreSQL, there is a setting called `fsync`. If you turn it `off`, write performance instantly increases by 10x. Why shouldn't you do this in production?**
+**A:** `fsync` is the operating system command that mathematically guarantees that the WAL data in the OS cache has been physically flushed to the actual magnetic platters or silicon chips of the hard drive. 
+If you turn it off, PostgreSQL writes the WAL to the OS cache and instantly returns "Success" to the user. If the server loses power a microsecond later, the OS cache is wiped, the WAL is lost, and the committed transaction vanishes into thin air. You have completely destroyed the **Durability** (the 'D' in ACID). It should only be disabled for temporary, disposable databases (like during automated CI/CD testing).
+
+**Q: A DBA notices that the database "freezes" and drops connections for about 10 seconds every 5 minutes. CPU and Disk I/O spike to 100%. What is happening?**
+**A:** This is a **Checkpoint Spike**.
+The background worker waited too long to flush the modified pages from RAM to the main table. It suddenly realized it had 10 Gigabytes of "dirty" RAM pages that it needed to write to the hard drive immediately. It saturated the disk I/O, blocking all normal queries. To fix this, you must tune the database settings (like `checkpoint_completion_target` in PostgreSQL) to force the database to write to the disk slowly and continuously over the 5-minute window, rather than hoarding it all for one massive, blocking dump.

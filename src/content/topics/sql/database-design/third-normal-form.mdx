@@ -1,0 +1,78 @@
+---
+title: "Third Normal Form (3NF)"
+description: "Eliminating transitive dependencies."
+importance: "HIGH"
+revisionTime: 3
+category: "SQL"
+subcategory: "Database Design"
+order: 50
+---
+
+## Concept
+
+A table is in **Third Normal Form (3NF)** if:
+1. It is already in 2NF.
+2. Every non-key column depends *only* on the Primary Key. (There are no **Transitive Dependencies**).
+
+A famous mnemonic for 3NF is:
+*"Every non-key attribute must provide a fact about the key, the whole key, and **nothing but the key**, so help me Codd."* (Edgar F. Codd invented the relational database).
+
+## The Violation
+
+Imagine a tournament database tracking winners.
+
+**UNNORMALIZED (Violates 3NF):**
+| WinnerID (PK) | Name | Country | Country_Continent |
+| :--- | :--- | :--- | :--- |
+| 1 | Alice | Japan | Asia |
+| 2 | Bob | France | Europe |
+| 3 | Charlie | Japan | Asia |
+
+**The Transitive Dependency:**
+- `Name` depends on the `WinnerID` (PK). Good.
+- `Country` depends on the `WinnerID` (PK). Good.
+- `Country_Continent` depends on the `Country`. **BAD.**
+
+`Country_Continent` has nothing to do with the `WinnerID`. It is a fact about the `Country`. Because `Country` is not the Primary Key of this table, this is a Transitive Dependency. (A -> B -> C).
+
+### Why is this bad?
+Duplication. Every time a Japanese player wins, you have to type "Asia" again. If a continent changes its name, you have to update every single player from that continent.
+
+## The Fix
+
+To achieve 3NF, extract the dependent concept into its own lookup table.
+
+**TABLE 1: Winners**
+| WinnerID (PK) | Name | Country_ID (FK) |
+| :--- | :--- | :--- |
+| 1 | Alice | 100 |
+| 2 | Bob | 200 |
+| 3 | Charlie | 100 |
+
+**TABLE 2: Countries**
+| Country_ID (PK) | Country_Name | Continent |
+| :--- | :--- | :--- |
+| 100 | Japan | Asia |
+| 200 | France | Europe |
+
+Now, the fact that Japan is in Asia is stored exactly once.
+
+## The Exception: When NOT to strictly enforce 3NF
+
+In modern web development, strictly adhering to 3NF is usually required, but there are pragmatic exceptions.
+
+If an e-commerce `orders` table contains a `ZipCode` column and a `City` column, it technically violates 3NF (because `City` is a fact about the `ZipCode`, not the `Order`).
+Strict 3NF requires you to create a separate `ZipCodes` lookup table, and join it every time you want to print a shipping label. 
+*In reality*, developers almost never do this. Zip codes and cities rarely change, and the performance cost of executing a `JOIN` on every single shipping label print vastly outweighs the minor disk space saved by normalizing it. It is perfectly acceptable to leave address data unnormalized in the `orders` table.
+
+## Interview Questions
+
+**Q: A table has `Order_ID`, `Item_Price`, `Quantity`, and `Total_Cost`. Does this violate 3NF?**
+**A:** Yes, it violates 3NF because `Total_Cost` is a **Calculated Dependency**. It depends entirely on `Item_Price` and `Quantity`, not on the Primary Key itself. 
+Storing calculated values in a relational table is highly discouraged because it introduces Update Anomalies (if someone updates the `Quantity` but forgets to update the `Total_Cost`, the database is mathematically corrupted). 
+To fix this, `Total_Cost` should be entirely deleted from the table. It should be calculated dynamically on the fly in the `SELECT` statement (`SELECT Quantity * Item_Price AS Total_Cost`).
+
+**Q: Summarize the difference between 2NF and 3NF.**
+**A:** 
+- **2NF** deals with *Composite Primary Keys*. It ensures that a column doesn't rely on only *half* of the primary key.
+- **3NF** deals with *Non-Key Columns*. It ensures that a column doesn't secretly rely on another normal, non-key column in the same table.

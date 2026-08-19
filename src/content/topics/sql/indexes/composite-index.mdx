@@ -1,0 +1,63 @@
+---
+title: "Composite Index"
+description: "Indexing multiple columns simultaneously."
+importance: "HIGH"
+revisionTime: 4
+category: "SQL"
+subcategory: "Indexes"
+order: 31
+---
+
+## Concept
+
+A standard index is built on a single column.
+But what if your application frequently filters on two columns at the exact same time?
+`SELECT * FROM users WHERE last_name = 'Smith' AND first_name = 'John';`
+
+If you create two separate single-column indexes (one on `last_name`, one on `first_name`), the database will typically only use one of them. It will use the `last_name` index to find all the "Smiths" (say, 50,000 people), and then manually scan those 50,000 rows to find "John". 
+
+A **Composite Index** (or Multi-Column Index) is a single B-Tree index that stores multiple columns combined together. It allows the database to instantly find "John Smith" in $O(\log N)$ time.
+
+## Mental Model: The Phone Book
+
+The perfect analogy for a Composite Index is a physical Telephone Book.
+A phone book is a Composite Index on `(last_name, first_name)`.
+
+- **Finding "Smith, John":** Extremely fast. You flip to the "S" section, find "Smith", and scan down to "John".
+- **Finding "Smith, ANY":** Extremely fast. You flip to the "S" section and grab all the Smiths.
+- **Finding "ANY, John":** **Impossible.** You cannot find all the "Johns" in a phone book without reading every single page of the entire book, because the book is fundamentally sorted by last name first.
+
+## The Golden Rule: Leftmost Prefix Rule
+
+The order in which you define the columns in a Composite Index is the single most important decision you will make.
+The index can only be used if your query's `WHERE` clause uses the columns from **Left to Right**, without skipping any.
+
+```sql
+CREATE INDEX idx_name_age ON users(last_name, first_name, age);
+```
+
+**Will the query use the index?**
+| Query | Uses Index? | Reason (Phone Book Analogy) |
+| :--- | :--- | :--- |
+| `WHERE last_name = 'Smith'` | **YES** | You have the first column. |
+| `WHERE last_name = 'Smith' AND first_name = 'John'` | **YES** | You have columns 1 and 2. |
+| `WHERE last_name = 'Smith' AND first_name = 'John' AND age = 30` | **YES** | You have columns 1, 2, and 3. |
+| `WHERE first_name = 'John'` | **NO** | Skipped column 1. Full Table Scan. |
+| `WHERE age = 30` | **NO** | Skipped columns 1 and 2. Full Table Scan. |
+| `WHERE last_name = 'Smith' AND age = 30` | **PARTIAL** | Uses the index to find "Smith", but cannot use the index to find the age (because `first_name` was skipped). |
+
+## Trade-Offs
+
+- **Pros:** Massive performance gains for highly specific, multi-column queries.
+- **Cons:** Size. A Composite Index is physically much larger than a single-column index. Furthermore, maintaining the perfect sorting order of a 3-column composite index puts a heavy write-penalty on the database during `INSERT`s and `UPDATE`s. Avoid adding more than 3 or 4 columns to a composite index.
+
+## Interview Questions
+
+**Q: You are creating a composite index: `CREATE INDEX idx ON users(department, employee_id)`. Does the order matter? Which column should go first?**
+**A:** Yes, the order is critical. You should always put the column with the **Highest Cardinality** (the most unique values) first.
+`employee_id` is highly unique (millions of distinct values). `department` has low cardinality (maybe 10 distinct values). 
+If you put `employee_id` first, the B-Tree instantly narrows the search down to exactly 1 row on the very first hop. If you put `department` first, the B-Tree narrows it down to 100,000 rows on the first hop, forcing it to traverse deeper. *Always lead with the most restrictive filter.*
+
+**Q: A query runs `WHERE last_name = 'Smith' AND first_name = 'John'`. Does it matter what order you write the `WHERE` clause? Will `WHERE first_name = 'John' AND last_name = 'Smith'` break the Leftmost Prefix Rule of the `(last_name, first_name)` composite index?**
+**A:** No, the order in the `WHERE` clause **does not matter at all**. 
+The SQL Query Optimizer is a highly advanced piece of software. It parses your SQL text, sees that you provided both `first_name` and `last_name`, and automatically rewrites the execution plan to match the physical Leftmost Prefix structure of the B-Tree index. The Leftmost Prefix Rule only applies to *which columns are actually present* in the `WHERE` clause, not the order in which you type them.

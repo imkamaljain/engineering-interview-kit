@@ -1,0 +1,74 @@
+---
+title: "Pessimistic Locking"
+description: "Assuming the worst and locking the door."
+importance: "HIGH"
+revisionTime: 4
+category: "SQL"
+subcategory: "Transactions"
+order: 45
+---
+
+## Concept
+
+In a highly concurrent system, two users might try to modify the exact same data at the exact same time. 
+**Pessimistic Locking** takes the approach: *"I assume a collision is going to happen, so I will physically lock the data right now, and force everyone else to wait in line until I am done."*
+
+This is implemented at the database level. It completely prevents race conditions, but it creates a massive bottleneck if thousands of users are trying to access the same data.
+
+## How It Works (`FOR UPDATE`)
+
+In standard SQL, you explicitly acquire a pessimistic lock by appending **`FOR UPDATE`** to a `SELECT` query inside a transaction.
+
+```sql
+BEGIN;
+
+-- 1. Grab the row and place a physical lock on it.
+-- Any other transaction that runs this exact query will completely FREEZE here and wait.
+SELECT balance 
+FROM accounts 
+WHERE user_id = 1 
+FOR UPDATE;
+
+-- 2. Application Logic (Node.js calculates new balance: balance - 50)
+
+-- 3. Update the row
+UPDATE accounts SET balance = 50 WHERE user_id = 1;
+
+-- 4. Commit and RELEASE the lock, allowing the next frozen transaction to proceed.
+COMMIT;
+```
+
+## The "Select For Update" Trap (Deadlocks)
+
+Pessimistic locking is the #1 cause of **Deadlocks** in a relational database.
+
+A Deadlock occurs when two transactions hold locks that the other one needs. They wait for each other infinitely. The database detects this Mexican Standoff, violently kills one of the transactions, and throws an error.
+
+**How to create a Deadlock:**
+- Transaction A locks Row 1.
+- Transaction B locks Row 2.
+- Transaction A tries to lock Row 2 (Freezes and waits for B).
+- Transaction B tries to lock Row 1 (Freezes and waits for A).
+- **DEADLOCK.**
+
+**How to prevent Deadlocks:**
+You must enforce a strict, global ordering rule in your application. If a transaction needs to lock multiple rows, it must *always lock them in alphabetical or numerical order*. If both A and B try to lock Row 1 first, B will simply wait for A to finish, completely preventing the standoff.
+
+## FOR SHARE (Read Locks)
+
+Sometimes you don't want to modify the data, you just want to guarantee that nobody *else* modifies it while you are looking at it.
+
+You use **`FOR SHARE`**.
+- It allows other transactions to also `SELECT ... FOR SHARE`. (Multiple people can read it simultaneously).
+- It completely blocks any transaction attempting to `UPDATE` or `DELETE` the row.
+
+## Interview Questions
+
+**Q: A script is processing 10,000 pending orders. It runs `SELECT * FROM orders WHERE status = 'pending' FOR UPDATE LIMIT 1`. You run 5 instances of this script in parallel (Node.js workers). What happens to performance?**
+**A:** Performance will be catastrophic. 
+Worker 1 locks the very first pending order in the table. Worker 2 runs the exact same query, tries to grab the very first pending order, hits the lock, and completely freezes. Workers 3, 4, and 5 also freeze in a line. You have essentially created a single-threaded application, defeating the entire purpose of having 5 parallel workers.
+
+**Q: How do you fix the parallel worker queue problem using SQL?**
+**A:** You use the **`SKIP LOCKED`** clause (available in PostgreSQL and MySQL 8.0+).
+You write: `SELECT * FROM orders WHERE status = 'pending' FOR UPDATE SKIP LOCKED LIMIT 1`.
+When Worker 2 runs this, the database sees that Worker 1 has locked Row 1. Instead of freezing and waiting, the database instantly skips over Row 1, locks Row 2, and returns it to Worker 2. This allows all 5 workers to concurrently lock and process 5 different rows at maximum speed without ever colliding.

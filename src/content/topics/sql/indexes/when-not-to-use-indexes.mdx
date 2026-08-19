@@ -1,0 +1,52 @@
+---
+title: "When NOT to use Indexes"
+description: "The hidden costs of over-indexing."
+importance: "HIGH"
+revisionTime: 3
+category: "SQL"
+subcategory: "Indexes"
+order: 37
+---
+
+## Concept
+
+A junior developer learns about indexes, realizes they make `SELECT` queries 1,000x faster, and immediately proceeds to put an index on every single column in the database. 
+Within a week, the production database grinds to a halt and the hard drives are completely full.
+
+Indexes are not free magic. They are a strict trade-off: **You sacrifice Write Speed and Disk Space to gain Read Speed.**
+
+## The 5 Rules of When NOT to Index
+
+### 1. Heavily Written Tables (Logs / Telemetry)
+If a table receives 10,000 `INSERT`s per second (like a server log table or an IoT telemetry table), you should have almost zero indexes on it.
+Every single index on a table requires the database to perform a separate, synchronized physical write to the hard drive to update the B-Tree. If you have 5 indexes, every `INSERT` is actually 6 physical disk writes. Indexes will throttle your write throughput and cause massive lock contention.
+
+### 2. Low Cardinality Columns
+Do not put a standard B-Tree index on a boolean column (`is_active`), a gender column, or a status column (`pending/shipped`). Because the values are heavily duplicated across millions of rows, the Query Optimizer will determine that jumping between the index and the hard drive is slower than just reading the disk sequentially. The index will be ignored during reads, but will still incur the massive write-penalty during inserts.
+
+### 3. Small Tables
+If a table only has 500 rows (like a `countries` table or a `user_roles` config table), do not index it (other than the Primary Key). The database can load all 500 rows into RAM and scan them sequentially in a fraction of a millisecond. Traversing a B-Tree for 500 rows is an unnecessary over-optimization.
+
+### 4. Columns frequently heavily updated
+If a column is constantly being modified (e.g., a `view_count` column on a YouTube video, or a `last_login_timestamp`), do not index it unless absolutely critical.
+Updating an indexed column forces the database to delete the old value from the B-Tree and insert the new value into the B-Tree, physically re-balancing the tree and causing disk fragmentation. If the column is not indexed, the database simply updates the value in-place on the heap.
+
+### 5. Queries returning a massive percentage of rows
+If a common report query asks for 40% of the entire table (e.g., `SELECT * FROM orders WHERE created_at > '2010-01-01'`), the database will likely ignore the index. Sequential Full Table scans are significantly faster than executing millions of random Bookmark Lookups via an index. 
+
+## Mental Model: The Index Audit
+
+In a healthy production database, you should actively hunt down and delete useless indexes.
+
+1. **Unused Indexes:** Query the database's internal statistics tables (`pg_stat_user_indexes` in PostgreSQL) to see how many times an index has been used. If an index has been scanned 0 times in the last month, `DROP` it immediately.
+2. **Duplicate/Redundant Indexes:** If you have a composite index on `(last_name, first_name)`, you do NOT need a standalone index on `(last_name)`. The composite index already covers queries for `last_name` perfectly (Leftmost Prefix Rule). The standalone index is completely redundant dead weight.
+
+## Interview Questions
+
+**Q: A team has a massive table that requires heavy read performance, so it has 15 indexes. Every night at 2:00 AM, a background worker performs a batch insert of 1 million new rows. The batch insert takes 2 hours because of the 15 indexes. How do you optimize this nightly job?**
+**A:** You perform an **Index Drop-and-Rebuild**.
+Updating 15 different B-Trees one-by-one for 1 million consecutive row inserts is mathematically catastrophic. 
+To fix this, the script should:
+1. `DROP` all 15 indexes (takes 1 second).
+2. `INSERT` the 1 million rows into the raw, unindexed table (takes 5 seconds because there is zero write-penalty).
+3. `CREATE` all 15 indexes again from scratch. Building an index in bulk on a static table is highly optimized and massively faster than updating it piecemeal. The entire job will finish in minutes instead of hours.

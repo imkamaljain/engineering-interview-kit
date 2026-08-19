@@ -1,0 +1,83 @@
+---
+title: "GROUP BY"
+description: "Smashing rows together based on common values."
+importance: "HIGH"
+revisionTime: 4
+category: "SQL"
+subcategory: "Queries"
+order: 11
+---
+
+## Concept
+
+If you run `SELECT SUM(salary) FROM employees`, the database smashes all 1,000 employees into a single row showing the total payroll for the entire company.
+But what if you want to see the total payroll **for each department separately**? 
+You use the **`GROUP BY`** clause. It tells the database to take the 1,000 rows, split them into buckets based on their `department` name, and then run the `SUM()` function independently on each bucket.
+
+## Mental Model
+
+Imagine a table of 5 employees:
+1. Alice (Engineering, $100)
+2. Bob (Engineering, $100)
+3. Charlie (Sales, $50)
+4. Dave (Sales, $50)
+
+```sql
+SELECT department, SUM(salary) AS dept_payroll
+FROM employees
+GROUP BY department;
+```
+
+**What the database does:**
+1. Looks at the `GROUP BY` column (`department`).
+2. Creates an "Engineering" bucket and a "Sales" bucket.
+3. Throws Alice and Bob into the Engineering bucket. Throws Charlie and Dave into the Sales bucket.
+4. Executes the `SUM()` on the buckets.
+
+**Result:**
+| department | dept_payroll |
+| :--- | :--- |
+| Engineering | 200 |
+| Sales | 100 |
+
+## The Golden Rule of GROUP BY
+
+This is the most common syntax error junior developers make.
+**RULE:** If you use a `GROUP BY` clause, every single column in your `SELECT` statement MUST either be:
+1. Included in the `GROUP BY` clause.
+2. Wrapped inside an Aggregate Function (like `SUM`, `COUNT`, `MAX`).
+
+```sql
+-- CRASH! "name" is not aggregated and not grouped.
+SELECT department, name, SUM(salary) 
+FROM employees 
+GROUP BY department;
+```
+*Why does this crash?* Because the "Engineering" bucket contains both Alice and Bob. The `SUM` is easy ($200). But when the database tries to print the `name` column, it doesn't know whether to print "Alice" or "Bob". It panics and throws an error.
+
+## Grouping by Multiple Columns
+
+You can group by multiple buckets. 
+```sql
+-- Find the average salary for each Role, WITHIN each Department
+SELECT department, role, AVG(salary)
+FROM employees
+GROUP BY department, role;
+```
+This creates granular sub-buckets (e.g., "Engineering - Backend", "Engineering - Frontend").
+
+## Trade-Offs
+
+- **Performance:** `GROUP BY` is an expensive operation. To put rows into buckets, the database must internally sort the data or build a temporary hash table in RAM. If you group by a column with 10 million distinct values, the database will consume massive memory and CPU. 
+- **Optimization:** If you frequently run heavy `GROUP BY` queries on massive tables for dashboards, you should not run them live. You should use an asynchronous cron job to pre-calculate the grouped data and store it in a **Materialized View** or an OLAP Data Warehouse (like Snowflake/Redshift).
+
+## Interview Questions
+
+**Q: You want to find the exact name of the highest-paid employee in each department. You write: `SELECT department, name, MAX(salary) FROM employees GROUP BY department, name`. Does this work?**
+**A:** No, this is a logical failure. By adding `name` to the `GROUP BY` clause, you are creating a separate bucket for every single unique employee name. Instead of finding the max salary per department, you will just get a list of every single employee in the company and their own salary.
+To correctly find the row containing the maximum value per group, you cannot use a simple `GROUP BY`. You must use a **Window Function** (specifically `ROW_NUMBER() OVER (PARTITION BY department ORDER BY salary DESC)`) or a self-join.
+
+**Q: Explain how the database physically executes a `GROUP BY` statement under the hood.**
+**A:** The query optimizer typically chooses one of two strategies:
+1. **Hash Aggregation (Usually faster):** The database scans the table and builds a Hash Table in memory. The hash key is the group column (e.g., `department`), and the value is the running total of the aggregate. It's fast but requires enough RAM to hold the entire hash table.
+2. **Sort Aggregation:** The database physically sorts the rows by the `department` column first. Once sorted, all "Engineering" rows are adjacent on the disk. The database then scans linearly, calculating the sum, and immediately outputs the row when the department name changes to "Sales". This requires less memory but the initial sort operation ($O(N \log N)$) is computationally expensive.

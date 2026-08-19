@@ -1,0 +1,65 @@
+---
+title: "Index Selectivity"
+description: "Why the database sometimes ignores your index."
+importance: "HIGH"
+revisionTime: 3
+category: "SQL"
+subcategory: "Indexes"
+order: 35
+---
+
+## Concept
+
+You created a B-Tree index on a column. You run a `SELECT` query filtering on that exact column. You check the `EXPLAIN` execution plan, and the database says: **"Seq Scan"** (Sequential Full Table Scan). The database completely ignored your index. Why?
+
+This happens because of **Index Selectivity**.
+Selectivity is a mathematical ratio: `(Number of Unique Values) / (Total Number of Rows)`.
+
+An index is only useful if it helps the database *eliminate* the vast majority of the rows. If the database calculates that using the index will return a massive chunk of the table anyway (e.g., more than 20-30% of the rows), it will intentionally ignore the index.
+
+## The Math Behind the Decision
+
+Why would the database prefer a Full Table Scan over an Index?
+Because of **Random vs Sequential Disk I/O**.
+
+Imagine a table with 1,000,000 rows. You query `WHERE gender = 'Male'`.
+Assume 500,000 rows are Male.
+
+**Option A: Use the Index (Random I/O)**
+1. Traverse the B-Tree to find "Male".
+2. The index returns 500,000 pointers.
+3. The database must now jump to the physical hard drive 500,000 separate times (Bookmark Lookups) to fetch the actual rows.
+*Physical Hard Drives (HDDs) are incredibly slow at jumping around randomly.*
+
+**Option B: Full Table Scan (Sequential I/O)**
+1. The database ignores the index entirely.
+2. It goes to the very beginning of the physical table file on the hard drive.
+3. It spins the disk continuously in one smooth, sequential read, loading massive 8KB blocks into RAM and checking them in memory.
+*HDDs are incredibly fast at reading continuous, sequential data.*
+
+The Query Optimizer calculates the math and realizes Option B is actually much faster. It ignores the index.
+
+## High vs Low Selectivity
+
+- **High Selectivity (Good):** A column like `email` or `user_id`. Almost every value is unique. Searching for an email returns 1 row out of 10 million. The index is highly efficient.
+- **Low Selectivity (Bad):** A column like `is_active` (Boolean), `gender`, or `status` (Pending/Shipped/Delivered). Searching for `status = 'Delivered'` might return 90% of the table. The index is useless dead weight.
+
+## How the Database Knows: Table Statistics
+
+How does the Query Optimizer know in advance that "Male" makes up 50% of the table without running the query first?
+Databases run background worker processes (like PostgreSQL's `AutoVacuum` and `ANALYZE`). These workers constantly sample the table data and build mathematical **Histograms** (statistics) about the distribution of data. 
+
+When you submit a query, the Optimizer checks the Histogram in 1 millisecond, estimates how many rows will be returned, and decides whether to use the index or not.
+
+## Interview Questions
+
+**Q: You have a table of 10 million `orders`. You create an index on `status`. 9,999,000 orders are 'Delivered'. Only 1,000 are 'Pending'. Will the database use the index?**
+**A:** It depends entirely on the query!
+If you query `WHERE status = 'Delivered'`, the database checks the statistics, sees it will return 99% of the table, and performs a **Full Table Scan**.
+If you query `WHERE status = 'Pending'`, the database checks the statistics, sees it will return 0.01% of the table (High Selectivity for that specific value), and performs an **Index Scan**.
+This proves that the Optimizer evaluates selectivity dynamically based on the exact literal values passed in the `WHERE` clause.
+
+**Q: A previously lightning-fast query suddenly starts taking 10 seconds. You haven't changed any code or added any indexes. You check the execution plan and see a Full Table Scan. What likely happened, and how do you fix it?**
+**A:** The **Table Statistics became stale**. 
+If you recently inserted or deleted a massive amount of data, the database's internal Histograms might still reflect the old state of the data. The Optimizer is making decisions based on lies, incorrectly assuming the index is no longer selective.
+To fix this instantly, you manually run the `ANALYZE table_name;` command. This forces the database to resample the data, rebuild the Histograms, and suddenly the Optimizer will realize the index is highly selective again and resume using it.

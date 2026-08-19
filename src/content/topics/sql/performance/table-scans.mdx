@@ -1,0 +1,65 @@
+---
+title: "Table Scans (Seq Scan)"
+description: "Reading the entire book to find one word."
+importance: "HIGH"
+revisionTime: 2
+category: "SQL"
+subcategory: "Performance"
+order: 57
+---
+
+## Concept
+
+When you submit a SQL query, the database must retrieve data from the hard drive. 
+A **Full Table Scan** (called a **Seq Scan** in PostgreSQL) occurs when the database starts at the very first byte of the physical table file on the hard drive and sequentially reads every single row until it hits the end of the file.
+
+It ignores all B-Tree indexes. It is brute-force reading.
+
+## Is a Table Scan Always Bad?
+
+Junior developers often think *any* Table Scan is a bug that must be fixed with an index. This is entirely false.
+A Table Scan is a heavily optimized, highly efficient mechanism. Because it reads the hard drive in a continuous, straight line (Sequential I/O), it can stream massive amounts of data into RAM at gigabytes per second.
+
+### When is a Table Scan GOOD?
+1. **Tiny Tables:** If a table only has 500 rows, traversing a complex B-Tree index structure actually requires more CPU cycles than just streaming the tiny 8KB table file into memory. The Query Optimizer will actively choose a Table Scan.
+2. **Low Selectivity Queries:** If you want to calculate the `AVG(salary)` of the entire company, or you run a query that returns 80% of the rows in a massive table, a Table Scan is infinitely faster than an Index Scan. (An Index Scan forces the hard drive head to randomly jump around millions of times).
+3. **Data Warehouses (OLAP):** Analytical databases (like Snowflake or BigQuery) often don't even use traditional indexes. They rely almost exclusively on massive, parallelized Table Scans across columnar storage to crunch billions of rows.
+
+### When is a Table Scan BAD?
+A Table Scan is catastrophic when you are looking for a **needle in a haystack** on a massive table.
+If a table has 100 million rows, and a user logs in with `email = 'alice@mail.com'`, performing a Full Table Scan to find that single row will take several seconds and spike the server's CPU to 100%. If 50 users try to log in simultaneously, the database will crash. This absolutely requires a B-Tree index.
+
+## The Triggers: Why do unwanted Table Scans happen?
+
+If you have a massive table, but you accidentally trigger a Table Scan, your API will time out. 
+The three most common causes are:
+
+### 1. Missing Indexes
+The most obvious reason. The column in the `WHERE` clause simply doesn't have an index.
+
+### 2. Non-SARGable Queries (The Math Trap)
+If you wrap an indexed column in a function, the database can no longer use the B-Tree.
+```sql
+-- BAD: Forces a Full Table Scan
+SELECT * FROM users WHERE YEAR(created_at) = 2023;
+
+-- GOOD: Uses the B-Tree Index perfectly
+SELECT * FROM users WHERE created_at >= '2023-01-01' AND created_at < '2024-01-01';
+```
+
+### 3. The Leading Wildcard
+If you use a `LIKE` query with a wildcard (`%`) at the very beginning of the string, the B-Tree is useless. A B-Tree is sorted alphabetically. If you don't know the first letter of the word you are looking for, you can't use the tree.
+```sql
+-- BAD: Full Table Scan (Looking for anything ending in "smith")
+SELECT * FROM users WHERE last_name LIKE '%smith';
+```
+
+## Interview Questions
+
+**Q: A backend developer notices a query is performing a Full Table Scan on an unindexed `age` column. The table has 10 million rows. They decide to fix it by running: `CREATE INDEX idx_age ON users(age)`. The query still performs a Full Table Scan. Why?**
+**A:** This is likely an issue of **Low Selectivity**. 
+An `age` column typically has very few distinct values (maybe 0 to 100). If the query was `WHERE age > 18`, the database mathematically estimates that it will need to return 80% of the entire 10-million row table. Because returning 8 million rows via random B-Tree jumps is massively slower than just reading the disk sequentially, the Query Optimizer intentionally ignores the new index and sticks with the Full Table Scan. The index creation was a waste of disk space.
+
+**Q: What is a "Filesort" and why is it usually associated with a bad Table Scan?**
+**A:** If you run a query with an `ORDER BY` clause, and the database uses an index, the data comes out perfectly pre-sorted.
+If the database is forced to do a Full Table Scan, the data comes out in random physical hard-drive order. To satisfy the `ORDER BY`, the database must take all the rows, dump them into a temporary file on the disk or in RAM, and perform a massive manual Sort operation. A Filesort on 10 million rows requires massive CPU and memory, and is one of the most expensive operations in SQL.

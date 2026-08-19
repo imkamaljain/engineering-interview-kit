@@ -1,0 +1,94 @@
+---
+title: "Constraints"
+description: "Rules that prevent garbage data from entering your database."
+importance: "HIGH"
+revisionTime: 3
+category: "SQL"
+subcategory: "Fundamentals"
+order: 5
+---
+
+## Concept
+
+In a Node.js application, you write validation logic (like `if (age < 0) throw Error`). However, applications have bugs, and sometimes developers bypass the API and write directly to the database.
+If bad data gets into the database, the system crashes. 
+**SQL Constraints** are hardcoded rules applied directly to the table columns at the storage layer. They act as the final, absolute line of defense. The database will physically reject any `INSERT` or `UPDATE` that violates these rules, completely regardless of what the Node.js application attempts to do.
+
+## The 6 Standard SQL Constraints
+
+### 1. NOT NULL
+Ensures a column cannot be left empty.
+```sql
+CREATE TABLE users (
+    username VARCHAR(50) NOT NULL
+);
+```
+
+### 2. UNIQUE
+Ensures every value in a column is entirely different. (The database silently builds a B-Tree index to enforce this rapidly).
+```sql
+CREATE TABLE users (
+    email VARCHAR(255) UNIQUE
+);
+```
+
+### 3. PRIMARY KEY
+A combination of `NOT NULL` and `UNIQUE`. It uniquely identifies the row.
+```sql
+CREATE TABLE users (
+    id SERIAL PRIMARY KEY
+);
+```
+
+### 4. FOREIGN KEY
+Ensures referential integrity. The value must exist in another table's Primary Key.
+```sql
+CREATE TABLE orders (
+    user_id INT REFERENCES users(id)
+);
+```
+
+### 5. CHECK
+Allows you to write custom boolean logic. The data is only accepted if the condition evaluates to `TRUE`.
+```sql
+CREATE TABLE products (
+    price DECIMAL(10, 2) CHECK (price > 0),
+    discount DECIMAL(10, 2) CHECK (discount < price)
+);
+```
+
+### 6. DEFAULT
+Not technically a restrictive constraint, but provides a fallback value if the `INSERT` statement omits the column.
+```sql
+CREATE TABLE users (
+    status VARCHAR(20) DEFAULT 'pending',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+## Mental Model
+
+Think of constraints as physical bouncers at a nightclub door.
+- **Node.js Validation:** The ticket vendor. They usually check IDs, but sometimes they get distracted and sell a ticket to an underage kid.
+- **SQL Constraints:** The massive bouncer at the physical door. They don't care if you have a ticket. If you are under 21 (`CHECK age >= 21`), they physically throw you out.
+
+## Trade-Offs
+
+- **Pros:** Guarantees absolute data integrity. Eliminates entire classes of bugs in your application code because the database physically refuses to reach an invalid state.
+- **Cons:** Performance. Every time you insert a row, the database must spend CPU cycles evaluating every single constraint. A `UNIQUE` constraint requires the database to pause, query the B-Tree index, and verify the value doesn't exist before saving to disk.
+
+## Interview Questions
+
+**Q: A developer applies a `UNIQUE` constraint to the `email` column of a 100-million row table. A week later, they realize it's slowing down `INSERT` operations too much, so they decide to drop the constraint and handle uniqueness in the Node.js code instead. Why is this a catastrophic mistake?**
+**A:** Because of **Race Conditions**.
+If you handle uniqueness in Node.js:
+1. Thread A checks if `alice@mail.com` exists. (Returns No).
+2. Thread B checks if `alice@mail.com` exists. (Returns No).
+3. Thread A inserts `alice@mail.com`.
+4. Thread B inserts `alice@mail.com`.
+Both threads succeed, and you now have duplicate emails in your database. 
+You *cannot* enforce uniqueness safely in application code without using complex distributed locks. You must rely on the database's `UNIQUE` constraint, which uses atomic locking internally to guarantee mathematical uniqueness under heavy concurrency.
+
+**Q: You want to add a `CHECK (age >= 18)` constraint to an existing `users` table that already contains 5 million rows. What happens when you run the `ALTER TABLE` command?**
+**A:** When you add a new constraint to an existing table, the database must instantly scan all 5 million existing rows to verify that none of them violate the new rule. This will cause a Full Table Scan and lock the table for several minutes, causing downtime. If even a single row has `age = 17`, the entire `ALTER TABLE` command will fail and rollback.
+*(In PostgreSQL, you can add constraints `NOT VALID` to bypass the initial scan, and then `VALIDATE CONSTRAINT` later in the background to prevent locking).*

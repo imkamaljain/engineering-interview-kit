@@ -1,0 +1,69 @@
+---
+title: "Denormalization"
+description: "Intentionally breaking the rules for performance."
+importance: "HIGH"
+revisionTime: 3
+category: "SQL"
+subcategory: "Database Design"
+order: 51
+---
+
+## Concept
+
+Normalization guarantees absolute data integrity. But as your database scales to 100 million rows, you hit a wall: **The JOIN Penalty**.
+If rendering your application's homepage requires traversing 7 different highly-normalized tables using `INNER JOIN`s, the database will consume massive CPU cycles and take seconds to return the data.
+
+**Denormalization** is the deliberate process of adding duplicate data back into your tables. You are intentionally violating 3NF to pre-compute answers, completely avoiding expensive `JOIN`s at read-time.
+
+You are sacrificing **Write Speed** and **Disk Space** to maximize **Read Speed**.
+
+## Real-World Example: The "Like" Counter
+
+Imagine a Twitter clone. It has a `tweets` table and a `likes` table.
+
+**The Normalized Way:**
+To display a tweet and its like count, you must count the rows.
+`SELECT tweets.*, COUNT(likes.id) FROM tweets LEFT JOIN likes ON ...`
+*If a tweet has 1 million likes, the database must physically read and count 1 million rows every single time someone views the tweet.* The server will crash.
+
+**The Denormalized Way:**
+You intentionally add a `like_count` integer column directly to the `tweets` table.
+When someone clicks "Like", you do two things:
+1. `INSERT INTO likes (tweet_id, user_id) VALUES (1, 99);`
+2. `UPDATE tweets SET like_count = like_count + 1 WHERE id = 1;`
+
+Now, when a user views the tweet, there is zero math and zero `JOIN`s. The database simply reads the integer `like_count` instantly.
+*You violated 3NF (calculated dependency), but you saved the server.*
+
+## The Danger of Denormalization
+
+By denormalizing, you re-introduce the **Update Anomaly**.
+In the Twitter example, what happens if the `INSERT` succeeds, but the `UPDATE` fails? The data is corrupted. There are physically 5 rows in the `likes` table, but the `like_count` column says 4. 
+
+To safely denormalize, you must enforce integrity:
+1. **Application Logic:** Wrap both the `INSERT` and the `UPDATE` in a strict SQL **Transaction** (`BEGIN; ... COMMIT;`).
+2. **Database Triggers:** Write a script inside the database that automatically updates the `like_count` whenever a row is inserted into the `likes` table.
+3. **Cron Jobs:** Run an asynchronous background worker every night at 2:00 AM that recalculates all the counts from scratch and fixes any drifts.
+
+## Materialized Views (The Ultimate Denormalization)
+
+If you have a massive, complex analytical query joining 10 tables that takes 5 minutes to run, you don't want to permanently ruin your clean database schema by manually adding redundant columns everywhere.
+
+Instead, you use a **Materialized View**. 
+A Materialized View is a snapshot. You define the complex query, the database runs it *once*, and saves the output as a brand new, flat physical table on the hard drive. 
+When users query the Materialized View, it returns the pre-calculated answers in 1 millisecond. You then set up a trigger to `REFRESH MATERIALIZED VIEW` every hour to keep the data relatively fresh.
+
+## Interview Questions
+
+**Q: A developer suggests denormalizing the database because a specific `JOIN` query is running slow. What should you check BEFORE agreeing to denormalize?**
+**A:** You should never denormalize as a first step. Denormalization adds massive architectural complexity and risks data corruption. 
+Before denormalizing, you must check:
+1. **Indexes:** Are the Foreign Keys properly indexed? A missing B-Tree index is the #1 cause of slow JOINs.
+2. **Query Optimization:** Is the query returning `SELECT *` unnecessarily? Is it using a massive `ORDER BY` that forces a Filesort?
+3. **Caching:** Can the slow query result be cached in Redis? Caching in RAM solves the read-penalty without altering the permanent database schema.
+Only if all these fail (due to massive scale) should you denormalize.
+
+**Q: In highly scalable systems, data is often separated into OLTP (Online Transaction Processing) and OLAP (Online Analytical Processing) databases. How does normalization apply to them?**
+**A:** 
+- **OLTP** databases (the live production database powering the app) are heavily **Normalized** (3NF). This ensures rapid, safe `INSERT`s and `UPDATE`s for thousands of concurrent users.
+- **OLAP** databases (the Data Warehouse used by Data Scientists for reporting) are heavily **Denormalized** (often using a Star Schema). Because Data Scientists run massive aggregations and don't care about updating data, all the tables are pre-joined and flattened to maximize read speed.

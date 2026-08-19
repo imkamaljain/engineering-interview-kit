@@ -1,0 +1,90 @@
+---
+title: "SQL Injection (SQLi)"
+description: "The most famous vulnerability in computer history."
+importance: "HIGH"
+revisionTime: 3
+category: "SQL"
+subcategory: "Performance"
+order: 63
+---
+
+## Concept
+
+**SQL Injection (SQLi)** is a catastrophic security vulnerability that occurs when a web application takes untrusted user input and blindly concatenates it directly into a raw SQL query string.
+
+Because the database receives a single, combined string, it cannot distinguish between the developer's intended SQL commands and the malicious SQL commands injected by the hacker. The database executes the hacker's code with full administrative privileges.
+
+## The Anatomy of a Hack
+
+Imagine a poorly written Node.js login endpoint:
+
+```javascript
+// DANGEROUS CODE
+const username = req.body.username;
+const password = req.body.password;
+
+const query = "SELECT * FROM users WHERE username = '" + username + "' AND password = '" + password + "'";
+const user = await db.execute(query);
+```
+
+### The "Always True" Attack (Authentication Bypass)
+A hacker types the following into the Username box:
+`admin' --`
+
+Node.js concatenates this and sends it to the database:
+`SELECT * FROM users WHERE username = 'admin' --' AND password = '...'`
+
+In SQL, `--` is the comment operator. Everything after it is completely ignored. The query becomes `SELECT * FROM users WHERE username = 'admin'`. The database returns the admin row, and the hacker logs in without ever typing a password.
+
+### The "Union" Attack (Data Exfiltration)
+A hacker types this into a Search box:
+`' UNION SELECT username, password FROM users --`
+
+Node.js concatenates it into the product search query:
+`SELECT id, name FROM products WHERE name = '' UNION SELECT username, password FROM users --'`
+
+The `UNION` operator glues the results of two queries together. The application thinks it's displaying a list of products, but it actually prints the entire database's username and password list directly onto the webpage.
+
+### The "DROP" Attack (Data Destruction)
+Also known as "Little Bobby Tables."
+A hacker types: `'; DROP TABLE users; --`
+
+The query becomes:
+`SELECT * FROM products WHERE name = ''; DROP TABLE users; --'`
+
+The semicolon (`;`) terminates the first query. The database immediately executes the second query, permanently deleting the entire `users` table.
+
+## The Only Acceptable Fix
+
+There is only one mathematically guaranteed way to prevent SQL injection: **Parameterized Queries (Prepared Statements).**
+
+You must completely separate the SQL Code from the Data Payload.
+
+**GOOD CODE:**
+```javascript
+const query = "SELECT * FROM users WHERE username = ? AND password = ?";
+// The database driver sends the data completely separately from the query
+const user = await db.execute(query, [username, password]); 
+```
+
+When you use placeholders (`?` or `$1`), the database compiles the SQL code first. When the data payload arrives, the database treats it as an inert, literal string. If the hacker types `'; DROP TABLE users; --`, the database simply searches the B-Tree index for a user whose literal name is `"; DROP TABLE users; --"`. It finds nothing, and the attack fails harmlessly.
+
+## Interview Questions
+
+**Q: A developer knows about SQL Injection, but they cannot use Prepared Statements because they need to dynamically sort the table based on user input. They write: `const query = "SELECT * FROM users ORDER BY " + req.query.sortColumn;`. How do they secure this?**
+**A:** You cannot use Prepared Statements for column names or SQL keywords. 
+To secure this, the developer **MUST** use a hardcoded **Whitelist**. 
+```javascript
+const allowedColumns = ['name', 'created_at', 'age'];
+let sortCol = 'created_at'; // Default
+if (allowedColumns.includes(req.query.sortColumn)) {
+    sortCol = req.query.sortColumn;
+}
+const query = `SELECT * FROM users ORDER BY ${sortCol}`;
+```
+By strictly checking the user input against an array of allowed values on the server side, it is impossible for malicious code to be concatenated into the query.
+
+**Q: Does encrypting passwords in the database (e.g., using bcrypt) protect against SQL Injection?**
+**A:** **No.** 
+Hashing passwords protects you *after* a database breach (if the hacker steals the database file, they cannot read the passwords). 
+SQL Injection is the mechanism used to perform the breach in the first place. Furthermore, if a hacker uses SQL Injection to execute `UPDATE users SET password_hash = '...' WHERE username = 'admin'`, they can overwrite the hashed password with their own known hash, and log in to the admin account. Only Prepared Statements prevent SQL Injection.

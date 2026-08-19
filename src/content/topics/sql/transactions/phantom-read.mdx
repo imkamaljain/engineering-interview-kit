@@ -1,0 +1,60 @@
+---
+title: "Phantom Read"
+description: "When the database summons ghosts."
+importance: "MEDIUM"
+revisionTime: 3
+category: "SQL"
+subcategory: "Transactions"
+order: 43
+---
+
+## Concept
+
+You elevated your database to `Repeatable Read` to fix Non-Repeatable Reads. The database now takes a frozen snapshot of the rows you are looking at.
+But there is a final, highly elusive anomaly: **The Phantom Read**.
+
+A Phantom Read occurs when Transaction A executes a query that searches for a *range* of rows (or checks for the existence of rows). While Transaction A is processing, Transaction B inserts a brand new row that falls perfectly into that range and commits. When Transaction A runs the query again, a "phantom" row magically appears that wasn't in the snapshot.
+
+## Mental Model
+
+Imagine a script that counts the number of VIP users, and if there are less than 10, it upgrades a normal user to VIP.
+
+| Time | Transaction A (The Script) | Transaction B (Another Admin) |
+| :--- | :--- | :--- |
+| T1 | `BEGIN ISOLATION LEVEL REPEATABLE READ;` | |
+| T2 | `SELECT COUNT(*) FROM users WHERE status = 'VIP';` -> **Reads 9** | |
+| T3 | | `BEGIN;` |
+| T4 | | `INSERT INTO users (name, status) VALUES ('Eve', 'VIP');` |
+| T5 | | `COMMIT;` |
+| T6 | Script thinks: "Great, only 9 VIPs. I will upgrade Bob." | |
+| T7 | `UPDATE users SET status = 'VIP' WHERE name = 'Bob';` | |
+| T8 | `COMMIT;` | |
+
+**The Bug:** The system now has 11 VIPs, breaking the business rule.
+Transaction A's snapshot perfectly froze the existing 9 VIP rows. However, a snapshot cannot freeze a row that *doesn't exist yet*. Transaction B slipped a brand new row into the table. This new row is the Phantom.
+
+## How to Prevent Phantom Reads
+
+To prevent Phantom Reads mathematically, you must elevate the database to the highest possible isolation level: **`Serializable`**.
+- In `Serializable`, the database realizes that Transaction A ran a query depending on the condition `status = 'VIP'`. 
+- The database places a **Range Lock** (or Predicate Lock) on the *entire concept* of VIPs.
+- When Transaction B attempts to insert a new VIP at T4, the database physically blocks the insert and forces Transaction B to wait until Transaction A finishes.
+
+*(Note: PostgreSQL's implementation of MVCC is so robust that its `Repeatable Read` level actually protects against Phantom Reads as well, which technically makes it stronger than the SQL standard requires. However, it still does not protect against Serialization Anomalies, which require true `Serializable` mode).*
+
+## Trade-Offs
+
+Why not use `Serializable` to fix this?
+**Range Locks destroy concurrency.** 
+If a transaction locks an entire condition (`WHERE status = 'VIP'`), it prevents anyone else in the entire world from creating a VIP until the transaction finishes. If you run a report `WHERE created_at > '2023-01-01'` in Serializable mode, you literally lock the entire table and prevent anyone from signing up for your app until the report finishes. This will instantly take down a production system.
+
+## Interview Questions
+
+**Q: Explain the difference between a Non-Repeatable Read and a Phantom Read.**
+**A:** 
+- A **Non-Repeatable Read** involves an *existing* row. You read a row, someone else updates or deletes that specific row, and you read it again and get a different answer. It is fixed by `Repeatable Read` which takes a snapshot of existing rows.
+- A **Phantom Read** involves a *brand new* row. You search for a collection of rows, someone else inserts a new row into that collection, and you see the new ghost row appear. It cannot be fixed by a standard snapshot because you cannot snapshot something that hasn't been created yet. It requires a `Serializable` Range Lock to prevent the insertion from happening.
+
+**Q: In MySQL (InnoDB), the default isolation level is `Repeatable Read`. How does it prevent Phantom Reads without forcing you to use `Serializable` mode?**
+**A:** InnoDB uses a brilliant mechanism called **Next-Key Locking**. 
+When you query a range in `Repeatable Read` (e.g., `WHERE id > 10`), InnoDB doesn't just lock the existing rows it found. It physically locks the "gaps" in the B-Tree index between the rows, and the gap extending to infinity after the last row. If another transaction tries to insert `id = 15`, the B-Tree rejects the insert because the gap itself is locked. This allows InnoDB to prevent Phantom Reads while maintaining the high performance of `Repeatable Read`.

@@ -1,0 +1,61 @@
+---
+title: "Optimistic Locking"
+description: "Assuming everything will be fine, and failing gracefully if it isn't."
+importance: "HIGH"
+revisionTime: 4
+category: "SQL"
+subcategory: "Transactions"
+order: 46
+---
+
+## Concept
+
+Pessimistic Locking uses the database to physically lock rows, which creates bottlenecks and deadlocks.
+**Optimistic Locking** takes the opposite approach: *"I assume a collision is very rare. I won't lock anything. I will just let everyone read and edit the data freely. However, right before I save my changes, I will double-check to make sure nobody else altered the data behind my back."*
+
+Optimistic Locking is not a SQL feature. It is a software engineering pattern implemented in your Node.js application code.
+
+## How It Works (The Version Column)
+
+To implement Optimistic Locking, you must add a `version` (or `updated_at` timestamp) column to your database table.
+
+```sql
+CREATE TABLE products (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255),
+    price DECIMAL(10,2),
+    version INT DEFAULT 1 -- The critical column
+);
+```
+
+### The Workflow
+
+1. **The Read:** Alice visits the product page. Node.js queries the database:
+   `SELECT price, version FROM products WHERE id = 1;`
+   *(Returns: Price $100, Version 1).*
+2. **The Delay:** Alice stares at the screen for 5 minutes deciding if she wants to change the price.
+3. **The Collision:** Meanwhile, Bob visits the same page, changes the price to $150, and saves. The database updates the price and increments the version to 2.
+4. **The Optimistic Save:** Alice finally clicks "Save Price as $90". Node.js sends the `UPDATE` query, but it explicitly includes the `version` Alice originally saw in the `WHERE` clause.
+
+```sql
+UPDATE products 
+SET price = 90, version = version + 1 
+WHERE id = 1 AND version = 1; -- The Optimistic Check!
+```
+
+5. **The Result:** The database attempts to find a row where `id = 1` and `version = 1`. It cannot find it (because Bob changed the version to 2). The database returns `0 rows affected`.
+6. **The Application Logic:** Node.js sees `0 rows affected`. It realizes a collision occurred. It throws an `OptimisticLockException` and tells Alice: *"Sorry, someone else modified this product while you were looking at it. Please refresh the page and try again."*
+
+## Trade-Offs
+
+- **Pros:** Zero database locks. Infinite read scalability. Perfect for web applications where users view data on a screen for a long time (like editing a Wiki page or a CMS form). You cannot hold a Pessimistic Database Lock open for 10 minutes while a user fills out a web form; Optimistic Locking is the only solution.
+- **Cons:** If collisions are highly frequent (e.g., 50 people trying to buy the last concert ticket simultaneously), Optimistic Locking creates a terrible User Experience. 49 people will submit the form, get an error message, and be forced to refresh and type everything again. For highly contested resources, you must use Pessimistic Locking.
+
+## Interview Questions
+
+**Q: A developer implements Optimistic Locking using an `updated_at` timestamp instead of an integer `version` column. They write: `UPDATE products SET price = 90, updated_at = NOW() WHERE id = 1 AND updated_at = '2023-10-31 10:00:00.000'`. Is this safe?**
+**A:** It is generally safe, but an integer `version` is highly preferred. Timestamps are subject to clock precision limits. If the database only stores milliseconds, and two servers update the exact same row within the exact same millisecond, the `updated_at` string will be identical, the collision will not be detected, and data will be overwritten. An integer `version = version + 1` is mathematically absolute and guarantees collision detection.
+
+**Q: You are building a system where users can transfer money between wallets. The system processes 1,000 transactions per second. Should you use Optimistic or Pessimistic Locking?**
+**A:** **Pessimistic Locking.** 
+Financial transfers involve heavy contention on specific rows (like a central corporate account). If you use Optimistic Locking, 999 out of 1,000 transactions will fail the version check and require the Node.js application to enter a continuous, infinite retry loop, wasting massive CPU cycles. Pessimistic Locking (`FOR UPDATE`) correctly queues the transactions in the database, processing them atomically and sequentially without forcing the application layer to thrash.

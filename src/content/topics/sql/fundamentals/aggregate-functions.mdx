@@ -1,0 +1,82 @@
+---
+title: "Aggregate Functions"
+description: "Summarizing massive amounts of data."
+importance: "HIGH"
+revisionTime: 3
+category: "SQL"
+subcategory: "Fundamentals"
+order: 8
+---
+
+## Concept
+
+Databases aren't just for retrieving raw rows; they are incredibly powerful calculators.
+**Aggregate Functions** take multiple rows of data, perform math on them, and return a **single summarized value**. They are the foundation of all analytics and reporting.
+
+## The Core 5 Functions
+
+1. **`COUNT()`:** Counts the number of rows.
+2. **`SUM()`:** Adds up all the values in a numeric column.
+3. **`AVG()`:** Calculates the mathematical average (mean) of a numeric column.
+4. **`MIN()`:** Finds the smallest value.
+5. **`MAX()`:** Finds the largest value.
+
+```sql
+SELECT 
+    COUNT(*) AS total_employees,
+    SUM(salary) AS total_payroll,
+    AVG(salary) AS average_salary,
+    MAX(salary) AS highest_paid
+FROM employees;
+```
+*(This query takes thousands of employee rows and squashes them into exactly ONE row containing four summary numbers).*
+
+## COUNT(*) vs COUNT(column_name)
+
+This is a critical distinction that trips up many developers.
+- **`COUNT(*)`:** Counts the total physical rows in the table, completely regardless of the data inside them.
+- **`COUNT(phone_number)`:** Counts the number of rows where the `phone_number` is **NOT NULL**. If a row has a `NULL` phone number, it is entirely ignored.
+
+### Adding DISTINCT
+You can combine aggregation with `DISTINCT` to find unique counts.
+```sql
+-- How many different unique job titles exist in the company?
+SELECT COUNT(DISTINCT job_title) FROM employees;
+```
+
+## The "Squash" Rule
+
+When you use an aggregate function, the database "squashes" the result into a single row. 
+Because of this, you **cannot** select an aggregate function alongside a normal, un-aggregated column (unless you use a `GROUP BY` clause, covered in the next section).
+
+```sql
+-- CRASH! This will throw a syntax error.
+SELECT name, MAX(salary) FROM employees;
+```
+*Why?* `MAX(salary)` returns exactly 1 row (e.g., $150,000). `name` wants to return 1,000 rows (all the employees). The database physically cannot render a 1,000-row column next to a 1-row column in a neat square table. It errors out.
+
+## Trade-Offs
+
+- **Pros:** Massively faster than fetching 1 million rows into Node.js and running a `reduce()` function. The database executes aggregations heavily optimized in C/C++ directly adjacent to the hard drive, saving massive network bandwidth.
+- **Cons:** Running `SUM()` on a 50-million row table requires the database to physically read all 50 million rows off the disk (Full Table Scan). If done frequently on live production databases, it will severely degrade performance for normal users. (Fix: Pre-calculate aggregations using Materialized Views).
+
+## Interview Questions
+
+**Q: A table has 3 rows with salaries: `100`, `200`, and `NULL`. What is the result of `AVG(salary)`?**
+**A:** The result is **`150`**. 
+Aggregate functions (except `COUNT(*)`) completely ignore `NULL` values. It does not treat `NULL` as `0`. It sums the remaining values (`100 + 200 = 300`) and divides by the count of non-null values (`2`). If you wanted `NULL` to be treated as `0` to lower the average, you must explicitly write `AVG(COALESCE(salary, 0))`, which would result in `100`.
+
+**Q: You want to find the `name` of the employee with the highest salary. You try `SELECT name, MAX(salary) FROM employees`, but it throws a syntax error. How do you correctly write this query?**
+**A:** You cannot mix normal columns with aggregate functions. You must use a **Subquery** or an `ORDER BY` with `LIMIT`.
+
+*Approach 1 (Subquery):*
+```sql
+SELECT name, salary FROM employees 
+WHERE salary = (SELECT MAX(salary) FROM employees);
+```
+
+*Approach 2 (Faster, using Limit):*
+```sql
+SELECT name, salary FROM employees 
+ORDER BY salary DESC LIMIT 1;
+```

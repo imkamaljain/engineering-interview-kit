@@ -1,0 +1,76 @@
+---
+title: "Self Join"
+description: "When a table joins with itself."
+importance: "MEDIUM"
+revisionTime: 3
+category: "SQL"
+subcategory: "Joins"
+order: 27
+---
+
+## Concept
+
+A **Self Join** is not a unique SQL keyword. It is simply a standard `INNER JOIN` or `LEFT JOIN` where the Left table and the Right table happen to be the **exact same physical table**.
+
+You use a Self Join when a table contains hierarchical data (rows that relate to other rows within the same table), or when you need to compare rows within the same table against each other.
+
+## The Golden Rule: Aliases
+
+Because you are querying the exact same table twice, the database will get confused if you write `SELECT employees.name FROM employees JOIN employees`. It doesn't know which "copy" of the table you are referring to.
+You **must** use Table Aliases to give each "copy" a unique name.
+
+## Real-World Usage
+
+### 1. Hierarchical Data (The Org Chart)
+The most classic example is an `employees` table where an employee has a `manager_id`. That `manager_id` is just a Foreign Key pointing right back to the `id` column of the very same `employees` table.
+
+```sql
+-- We treat the table as two entirely separate concepts: "E" and "M"
+SELECT 
+    E.name AS employee_name, 
+    M.name AS manager_name
+FROM employees E
+-- We use a LEFT JOIN just in case the CEO has no manager
+LEFT JOIN employees M 
+  ON E.manager_id = M.id;
+```
+
+### 2. Comparing Rows (Finding Duplicates)
+You can use a Self Join to find rows that share the same data but have different IDs.
+
+*Goal: Find users who share the exact same email address.*
+```sql
+SELECT 
+    A.id AS User1_ID, 
+    B.id AS User2_ID, 
+    A.email
+FROM users A
+INNER JOIN users B 
+  -- They have the exact same email
+  ON A.email = B.email 
+  -- But they are NOT the same physical row
+  AND A.id != B.id;
+```
+
+## Trade-Offs
+
+- **Pros:** Prevents you from having to create unnecessary junction tables when dealing with single-entity hierarchies.
+- **Cons:** Performance can degrade quickly. If you Self Join a massive 10-million row table to find duplicates without proper indexes, you are forcing the database to execute a massive Hash Join against itself, essentially treating the table as if it were 20 million rows. Furthermore, Self Joins only traverse *one level deep*. If you need to traverse an entire tree of managers (Employee -> Manager -> Director -> VP), you cannot use a simple Self Join; you must use a **Recursive CTE**.
+
+## Interview Questions
+
+**Q: You want to find all employees who earn MORE than their direct manager. Write the query using a Self Join.**
+**A:**
+```sql
+SELECT E.name AS employee_name, E.salary, M.name AS manager_name, M.salary
+FROM employees E
+INNER JOIN employees M ON E.manager_id = M.id
+-- The comparison happens in the WHERE clause after the tables are glued together
+WHERE E.salary > M.salary;
+```
+
+**Q: Look at this duplicate-finding query: `SELECT * FROM users A INNER JOIN users B ON A.email = B.email AND A.id != B.id`. If Alice and Bob share the email `test@mail.com`, what will the output look like?**
+**A:** It will return **two** rows, completely mirrored.
+Row 1: User A is Alice, User B is Bob.
+Row 2: User A is Bob, User B is Alice.
+To fix this and only return a single row representing the duplicated pair, you change the ID comparison to a mathematical inequality: `AND A.id < B.id`. This forces the database to only match the pair in one specific direction, cutting the result set in half and removing the mirrors.

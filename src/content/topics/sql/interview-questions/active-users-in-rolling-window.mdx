@@ -1,0 +1,76 @@
+---
+title: "Active Users in Rolling Window"
+description: "The 30-Day Active User metric."
+importance: "MEDIUM"
+revisionTime: 3
+category: "SQL"
+subcategory: "Interview Questions"
+order: 107
+---
+
+## The Question
+
+**"Given a table `user_logins` with columns `user_id` and `login_date`, write a query to calculate the MAU (Monthly Active Users) for every single day. Specifically, for each day, how many distinct users logged in during the 30-day window leading up to that day?"**
+
+This question tests your ability to handle sliding windows and complex `JOIN` logic, as simple Window Functions (`OVER()`) struggle to calculate distinct counts across sliding frames.
+
+## The Trap: Why Window Functions Fail Here
+
+Most candidates immediately try to use a Window Function:
+```sql
+-- THIS WILL CRASH
+COUNT(DISTINCT user_id) OVER (
+    ORDER BY login_date 
+    RANGE BETWEEN INTERVAL '30 days' PRECEDING AND CURRENT ROW
+)
+```
+**Why it fails:** Most major database engines (including PostgreSQL) do not support the `COUNT(DISTINCT ...)` aggregate inside a sliding `OVER()` window. The mathematical overhead of maintaining a sliding hash set of distinct values in memory row-by-row is computationally too expensive.
+
+## The Solution: The Self-Join
+
+To solve this, we must use a **Self-Join** (or a correlated subquery). 
+We join the table to itself, creating an asymmetrical relationship where `t1` represents the current "Anchor Day", and `t2` represents all the logins that occurred within 30 days prior to that Anchor Day.
+
+**Step 1: Get a unique list of all dates**
+We don't want multiple rows for January 1st if multiple people logged in. We just want a clean calendar.
+
+```sql
+WITH UniqueDays AS (
+    SELECT DISTINCT login_date FROM user_logins
+)
+```
+
+**Step 2: The Self-Join for the Rolling Window**
+
+```sql
+SELECT 
+    d.login_date AS current_day,
+    
+    -- Count the unique users from the joined table
+    COUNT(DISTINCT l.user_id) AS rolling_30d_active_users
+    
+FROM UniqueDays d
+-- Join the raw logins table ON the 30-day condition
+LEFT JOIN user_logins l 
+    ON l.login_date <= d.login_date 
+    AND l.login_date > d.login_date - INTERVAL '30 days'
+    
+GROUP BY d.login_date
+ORDER BY d.login_date ASC;
+```
+
+### How it works:
+If `d.login_date` is January 31st, the `LEFT JOIN` grabs every single row from the `user_logins` table that happened between Jan 1st and Jan 31st. 
+The `GROUP BY` squashes them all together, and `COUNT(DISTINCT)` ensures that if Alice logged in 15 times during January, she is only counted once for the Jan 31st MAU metric.
+
+## Follow-Up Questions
+
+### 1. "What happens if there were absolutely 0 logins on January 15th? Will January 15th appear in the final report?"
+**Your Answer:**
+"Because our `UniqueDays` CTE only extracts distinct dates that physically exist in the `user_logins` table, if nobody logged in on Jan 15th, that date won't exist in the CTE. It will be completely skipped in the final report. 
+To fix this and guarantee an unbroken daily report, I would replace the `UniqueDays` CTE with a system-generated calendar table, using a function like PostgreSQL's `generate_series(start_date, end_date, '1 day'::interval)`."
+
+### 2. "This Self-Join is going to be incredibly slow if the table has 100 million rows ($O(N^2)$). How would you optimize this for a real production data warehouse?"
+**Your Answer:**
+"Calculating massive rolling distinct counts on the fly is an anti-pattern in Data Warehousing. 
+To optimize this, I would use an approximation algorithm like **HyperLogLog (HLL)**. I would pre-aggregate the daily logins into HLL sketches and store them in a reporting table. To calculate the 30-day window, the database simply merges the 30 daily HLL sketches together, which is a blazing fast bitwise operation that returns an extremely accurate estimate of the distinct count without ever executing a Self-Join."

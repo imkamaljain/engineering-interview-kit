@@ -1,0 +1,90 @@
+---
+title: "LEAD and LAG"
+description: "Time travel across rows."
+importance: "MEDIUM"
+revisionTime: 3
+category: "SQL"
+subcategory: "Advanced SQL"
+order: 75
+---
+
+## Concept
+
+Standard SQL operates strictly row-by-row. When the database is looking at Row 5, it has absolutely no idea what data is in Row 4 or Row 6.
+If you want to compare today's sales to yesterday's sales, you historically had to execute a massive, complex **Self Join**, joining the table to itself offset by one day.
+
+**`LEAD()`** and **`LAG()`** are Window Functions that completely solve this. They allow you to safely "peek" into the adjacent rows and pull their data directly into your current row.
+
+- **`LAG()`:** Looks backwards (at previous rows).
+- **`LEAD()`:** Looks forwards (at upcoming rows).
+
+## The Basic Syntax
+
+You must always include an `ORDER BY` clause inside the `OVER()` window. The database needs to mathematically know what "previous" and "next" actually mean (e.g., chronological order).
+
+*Goal: Calculate our Daily Revenue Growth (Today's revenue minus Yesterday's).*
+
+```sql
+SELECT 
+    date,
+    daily_revenue,
+    
+    -- Peek at the previous row's revenue
+    LAG(daily_revenue) OVER(ORDER BY date ASC) AS yesterday_revenue,
+    
+    -- Calculate the difference on the fly
+    daily_revenue - LAG(daily_revenue) OVER(ORDER BY date ASC) AS growth
+FROM sales;
+```
+
+**Result:**
+| date | daily_revenue | yesterday_revenue | growth |
+| :--- | :--- | :--- | :--- |
+| Jan 1 | 100 | `NULL` | `NULL` |
+| Jan 2 | 150 | 100 | +50 |
+| Jan 3 | 120 | 150 | -30 |
+
+Notice that the very first row returns `NULL` for `LAG()`. Because it is the first row, there is no "yesterday" to look at.
+
+## Advanced Usage
+
+### 1. Peeking Further
+By default, `LAG()` and `LEAD()` peek exactly 1 row away. You can pass a second parameter to peek 5, 10, or 100 rows away.
+```sql
+-- Compare today's revenue to the revenue exactly 7 days ago
+LAG(daily_revenue, 7) OVER(ORDER BY date ASC)
+```
+
+### 2. Handling the NULLs
+If you try to do math on the `NULL` returned by the very first row, the math will crash. You can provide a 3rd parameter to act as a strict Default Fallback value, completely avoiding the Three-Valued Logic NULL trap.
+```sql
+-- If there is no yesterday, assume yesterday's revenue was $0.
+LAG(daily_revenue, 1, 0) OVER(...)
+```
+
+## Real-World Usage: Sessionization
+
+`LAG()` is heavily used in Data Engineering to calculate **User Sessions**.
+If you have a massive table of billions of clicks from users, how do you group them into 30-minute "Sessions"?
+
+You use `LAG()` partitioned by the `user_id`.
+```sql
+SELECT 
+    user_id,
+    click_time,
+    LAG(click_time) OVER(PARTITION BY user_id ORDER BY click_time ASC) as prev_click
+FROM clicks;
+```
+Now, for every single click, you have the timestamp of their *previous* click sitting right next to it. You simply do `click_time - prev_click`. If the difference is greater than 30 minutes, you know a brand new session has started. You accomplished complex behavioral analytics using a single SQL query.
+
+## Interview Questions
+
+**Q: Can you achieve the exact same result as `LAG()` without using Window Functions?**
+**A:** Yes, by using a **Self Join**. 
+```sql
+SELECT today.date, today.revenue, yesterday.revenue
+FROM sales today
+LEFT JOIN sales yesterday 
+  ON today.date = yesterday.date + INTERVAL '1 day';
+```
+While this works perfectly, it is architecturally inferior. A Self Join forces the database to scan the table twice and execute a complex hash/merge join in memory. `LAG()` scans the table exactly once, holding a tiny sliding window of values in RAM as it iterates down the list. `LAG()` is significantly faster and much easier to read.

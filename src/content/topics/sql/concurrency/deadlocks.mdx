@@ -1,0 +1,63 @@
+---
+title: "Deadlocks"
+description: "The Mexican Standoff of databases."
+importance: "HIGH"
+revisionTime: 4
+category: "SQL"
+subcategory: "Concurrency"
+order: 67
+---
+
+## Concept
+
+A **Deadlock** occurs when two (or more) concurrent transactions each hold a lock on a resource that the other transaction is waiting for. 
+Neither transaction can proceed, and neither transaction is willing to yield. If the database didn't intervene, they would wait in an infinite loop forever.
+
+## Mental Model
+
+Imagine a narrow bridge where only one car can cross at a time.
+- **Car A** enters from the North.
+- **Car B** enters from the South.
+They meet in the absolute middle. Car A cannot move forward because Car B is there. Car B cannot move forward because Car A is there. Neither car has a reverse gear. This is a deadlock.
+
+### The Database Scenario
+
+| Time | Transaction A | Transaction B |
+| :--- | :--- | :--- |
+| T1 | `BEGIN;` | `BEGIN;` |
+| T2 | `UPDATE accounts SET bal=50 WHERE id=1;` *(Locks Row 1)* | `UPDATE accounts SET bal=20 WHERE id=2;` *(Locks Row 2)* |
+| T3 | `UPDATE accounts SET bal=10 WHERE id=2;` *(Freezes, waits for B)* | `UPDATE accounts SET bal=40 WHERE id=1;` *(Freezes, waits for A)* |
+
+At T3, Transaction A is waiting for Row 2 (held by B). Transaction B is waiting for Row 1 (held by A). 
+
+## How the Database Handles It
+
+Databases have an internal background worker called the **Deadlock Detector**.
+It constantly scans the Lock Manager's internal graph for circular dependencies. When it detects a circle (A -> B -> A), it acts violently:
+1. It picks one of the transactions (usually the one that has done the least amount of work).
+2. It abruptly kills that transaction, forcing an automatic `ROLLBACK`, and throws a Deadlock Exception to the Node.js application.
+3. This frees up the locks, allowing the surviving transaction to successfully commit.
+
+## How to Prevent Deadlocks
+
+You cannot completely prevent deadlocks in a massive, highly concurrent system, but you can minimize them to near zero by strictly following **The Ordering Rule**.
+
+If two transactions need to touch the exact same set of rows, they **must** acquire the locks in the exact same order.
+Usually, this means sorting by Primary Key.
+
+**The Fix:**
+If Transaction A and Transaction B both want to modify Accounts 1 and 2, they must both be programmed to lock Account 1 *first*.
+- Transaction A locks Account 1.
+- Transaction B tries to lock Account 1. It freezes.
+- Transaction A locks Account 2. (It succeeds, because B is frozen).
+- Transaction A commits.
+- Transaction B unfreezes, locks Account 1, then locks Account 2, and commits.
+Zero deadlocks. 
+
+## Interview Questions
+
+**Q: A junior developer suggests wrapping the entire SQL transaction in a Javascript `try/catch` block. If a Deadlock Exception occurs, they just print "Error" to the console. Why is this insufficient?**
+**A:** A Deadlock is not a code error; it is an expected reality of highly concurrent systems. When the database violently kills one of the transactions to resolve the deadlock, the user's data (e.g., their payment transfer) is lost. You cannot just print an error and walk away. The Node.js application **must** catch the specific deadlock error code (e.g., `40P01` in PostgreSQL), sleep for 50 milliseconds (Exponential Backoff), and automatically retry the entire transaction from scratch. The user should never know it happened.
+
+**Q: Can a deadlock occur if Transaction A and Transaction B are only executing `SELECT` statements?**
+**A:** **No.** Standard `SELECT` statements (without `FOR UPDATE`) do not acquire Exclusive Write Locks. They acquire Shared Read Locks (or in modern MVCC databases like PostgreSQL, they acquire absolutely no row locks at all, reading a snapshot instead). Multiple transactions can hold Shared Locks on the exact same rows simultaneously without blocking each other. Deadlocks fundamentally require at least one transaction to be attempting an Exclusive (Write) Lock.

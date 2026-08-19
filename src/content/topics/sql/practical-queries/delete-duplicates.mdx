@@ -1,0 +1,91 @@
+---
+title: "Delete Duplicates"
+description: "Surgically removing clones."
+importance: "HIGH"
+revisionTime: 3
+category: "SQL"
+subcategory: "Practical Queries"
+order: 95
+---
+
+## Concept
+
+Finding duplicates is easy. **Deleting** them is hard.
+If there are 3 rows with the exact same email ('bob@mail.com'), and you run `DELETE FROM users WHERE email = 'bob@mail.com'`, the database will delete **all 3 rows**. 
+You have successfully removed the duplicates, but you also deleted the original user.
+
+You must write a query that is surgically precise: It must keep exactly *one* version of the row, and delete the rest. 
+The easiest way to decide which one to keep is usually the `id`. (e.g., Keep the oldest one with the lowest ID, delete the newer clones).
+
+## The Subquery Approach (The Slow Way)
+
+This is the classic, textbook way to solve the problem using a Self-Join or Correlated Subquery logic.
+
+*Goal: Delete duplicate emails, keeping only the row with the lowest ID.*
+
+```sql
+DELETE FROM users
+WHERE id NOT IN (
+    -- Find the lowest ID for every email bucket
+    SELECT MIN(id) 
+    FROM users 
+    GROUP BY email
+);
+```
+*(Note: In MySQL, you cannot delete from a table while selecting from the same table in a direct subquery. You must wrap the subquery in a second, hidden subquery to trick the optimizer into creating a temporary table).*
+
+**Why this is dangerous:** `NOT IN` combined with a massive subquery is notoriously slow and unoptimized in many database engines, often triggering terrible nested-loop performance.
+
+## The Window Function Approach (The Modern Way)
+
+The most elegant and scalable way to delete duplicates relies on the `ROW_NUMBER()` window function.
+
+We assign a sequential number (1, 2, 3) to every row that shares an email address, ordering by ID. 
+The original row gets `row_num = 1`. The clones get `row_num = 2` and `row_num = 3`. 
+Then, we simply delete anything where `row_num > 1`.
+
+```sql
+WITH RankedUsers AS (
+    SELECT 
+        id,
+        ROW_NUMBER() OVER(
+            PARTITION BY email 
+            ORDER BY id ASC
+        ) as row_num
+    FROM users
+)
+-- Delete using the CTE
+DELETE FROM users 
+WHERE id IN (
+    SELECT id FROM RankedUsers WHERE row_num > 1
+);
+```
+*(In PostgreSQL, you can use the `CTID` hidden system column instead of `id` if your table lacks a primary key).*
+
+## The Nuclear Option (The Fastest Way)
+
+If a table is 100 million rows, and 80 million of them are duplicates, running a `DELETE` statement is a terrible idea. Deleting 80 million rows row-by-row will bloat the Transaction Log, spawn 80 million Dead Tuples, and take 6 hours.
+
+When dealing with massive duplication, it is mathematically faster to **build a new table from scratch**.
+
+```sql
+-- 1. Create a brand new table with only the unique rows
+CREATE TABLE users_clean AS
+SELECT DISTINCT ON (email) * 
+FROM users
+ORDER BY email, id ASC;
+
+-- 2. Drop the old polluted table
+DROP TABLE users;
+
+-- 3. Rename the clean table
+ALTER TABLE users_clean RENAME TO users;
+```
+This bypasses the slow row-by-row `DELETE` engine entirely. It streams the data into a brand new file on the hard drive instantly. 
+
+## Interview Questions
+
+**Q: Explain how the `DISTINCT ON` syntax works in PostgreSQL.**
+**A:** Standard `DISTINCT` applies to the entire row (every column must match perfectly). 
+PostgreSQL offers a proprietary, highly powerful feature called `DISTINCT ON (column_name)`. It tells the database: *"Group the results by this specific column, and only return the very first row you encounter for each group."* 
+By combining it with an `ORDER BY` clause, you have explicit control over which row is returned (e.g., `ORDER BY created_at DESC` guarantees the most recent row is the one kept). It is the fastest possible way to deduplicate data in Postgres without writing complex Window Functions.

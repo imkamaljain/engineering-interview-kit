@@ -1,0 +1,58 @@
+---
+title: "Dirty Read"
+description: "Reading data that never existed."
+importance: "MEDIUM"
+revisionTime: 2
+category: "SQL"
+subcategory: "Transactions"
+order: 41
+---
+
+## Concept
+
+A **Dirty Read** is a severe database anomaly where Transaction B is allowed to read a row that has been modified by Transaction A, **before** Transaction A has actually committed the change.
+
+If Transaction A subsequently encounters an error and rolls back its changes, Transaction B is now operating on "phantom" data—data that officially never existed in the database.
+
+## Mental Model
+
+Imagine an e-commerce store with 1 remaining PlayStation 5 in stock.
+
+| Time | Transaction A (The Buyer) | Transaction B (The Inventory UI) |
+| :--- | :--- | :--- |
+| T1 | `BEGIN;` | |
+| T2 | `UPDATE stock = 0 WHERE item = 'PS5';` | |
+| T3 | | `SELECT stock FROM inventory;` -> **Reads 0 (DIRTY READ)** |
+| T4 | | UI displays "OUT OF STOCK" to thousands of users. |
+| T5 | Credit Card is declined. `ROLLBACK;` | |
+| T6 | Stock reverts to 1. | UI still thinks it's 0. Lost sales. |
+
+In this scenario, Transaction B read the "0" while it was still inside Transaction A's isolated sandbox. When Transaction A's sandbox was destroyed (rolled back), the "0" ceased to exist, rendering Transaction B's read completely invalid.
+
+## How to Prevent Dirty Reads
+
+Dirty Reads only occur when the database is explicitly configured to the **`Read Uncommitted`** Isolation Level. 
+This is the lowest, least safe isolation level defined by the SQL standard.
+
+To prevent Dirty Reads, you simply elevate the database isolation level to **`Read Committed`**.
+- In `Read Committed`, when Transaction B executes `SELECT stock`, the database realizes Transaction A holds an uncommitted lock on that row.
+- The database intercepts the query and forces Transaction B to read the *last known officially committed value* (which is 1).
+- Transaction B reads "1", and the UI correctly shows "1 IN STOCK".
+
+## Real-World Usage
+
+Because Dirty Reads are so dangerous for business logic, almost no modern relational database uses `Read Uncommitted` by default.
+- **PostgreSQL:** Completely forbids Dirty Reads. Even if you explicitly type `SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED`, PostgreSQL simply ignores you and runs it as `Read Committed` anyway.
+- **SQL Server & Oracle:** Default to `Read Committed`.
+- **MySQL:** Defaults to `Repeatable Read` (even safer).
+
+### When would you ever want a Dirty Read?
+If Dirty Reads are so bad, why do they exist in the SQL standard?
+**Analytics on massive, live tables.**
+If you have a massive logging table that receives 10,000 inserts a second, running a `COUNT(*)` in `Read Committed` mode forces the database to check the commit status of every single row, requiring massive CPU and potentially blocking writers.
+By intentionally switching to `Read Uncommitted` (often called a `NOLOCK` hint in SQL Server), you tell the database: *"I don't care about perfect accuracy. Just blindly read whatever bytes are on the hard drive as fast as possible, even if they aren't fully committed yet."* This allows massive aggregations to run with zero performance penalty, at the cost of the final count being off by a fraction of a percent.
+
+## Interview Questions
+
+**Q: A developer adds `WITH (NOLOCK)` to every single `SELECT` query in their SQL Server application because they heard it "makes queries faster by avoiding locks." What catastrophic problem are they introducing?**
+**A:** They are systematically forcing **Dirty Reads** across the entire application. While it does bypass read locks (making queries marginally faster), it allows the application to read uncommitted, mid-flight data. This can result in users seeing money that doesn't exist, reading orphaned records whose parent constraints haven't been committed, or making business decisions based on data that gets rolled back a millisecond later. `NOLOCK` should only be used for rough analytics, never for transactional application logic.

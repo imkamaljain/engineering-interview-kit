@@ -1,0 +1,59 @@
+---
+title: "Read/Write Locks"
+description: "The mechanics of Shared vs Exclusive access."
+importance: "MEDIUM"
+revisionTime: 2
+category: "SQL"
+subcategory: "Concurrency"
+order: 70
+---
+
+## Concept
+
+To manage concurrent access without creating absolute bottlenecks, databases implement a dual-locking architecture known as **Read/Write Locks** (or Shared/Exclusive Locks).
+
+The fundamental philosophy is:
+- **Reading data is safe.** Multiple people can read the same book at the same time.
+- **Writing data is dangerous.** If someone is erasing and rewriting a paragraph, nobody else should be looking at the book.
+
+## 1. Shared Locks (Read Locks)
+A Shared Lock is acquired when you want to read a row and ensure that it is not modified by anyone else until you are done.
+- **Syntax:** `SELECT ... FOR SHARE;`
+- **Behavior:** 
+  - If Alice holds a Shared Lock, Bob can also acquire a Shared Lock on the exact same row.
+  - Charlie can also acquire a Shared Lock. (Unlimited concurrent readers).
+  - If Dave tries to `UPDATE` the row, Dave must request an Exclusive Lock. The database will freeze Dave and force him to wait until Alice, Bob, and Charlie all commit and release their Shared Locks.
+
+## 2. Exclusive Locks (Write Locks)
+An Exclusive Lock is acquired when you intend to modify or delete a row.
+- **Syntax:** Automatically acquired by `UPDATE`, `DELETE`, and `INSERT`. Can be explicitly acquired using `SELECT ... FOR UPDATE;`.
+- **Behavior:**
+  - If Alice holds an Exclusive Lock, Bob cannot acquire a Shared Lock.
+  - Bob cannot acquire an Exclusive Lock.
+  - Bob must completely freeze and wait for Alice to commit. It is absolute, exclusive ownership.
+
+## MVCC vs Explicit Locks
+
+*Wait, didn't we say MVCC means "Readers never block Writers"?*
+Yes! In modern databases like PostgreSQL and MySQL InnoDB, standard `SELECT` statements (without the `FOR SHARE` clause) do not acquire Shared Locks at all. They use MVCC to read a snapshot of the data. Because they don't acquire locks, they never block Dave's `UPDATE` statement.
+
+You only ever use explicit `FOR SHARE` or `FOR UPDATE` locks when your specific business logic demands strict serialization (e.g., preventing a financial race condition).
+
+## The Lock Queue
+
+When Dave requests an Exclusive Lock, but Alice holds a Shared Lock, Dave freezes. 
+What happens if Bob comes along and requests another Shared Lock?
+If the database gives Bob the Shared Lock, Dave is pushed further back in line. If readers keep arriving, Dave might suffer from **Lock Starvation** (waiting infinitely).
+To prevent this, modern Lock Managers use strict FIFO (First-In, First-Out) queuing. Once Dave requests the Exclusive Lock, all subsequent requests for Shared Locks are also frozen and queued behind Dave, ensuring Dave eventually gets his turn.
+
+## Interview Questions
+
+**Q: You are building a ticketing system. When a user clicks "Checkout", you want to reserve their seat for 10 minutes. If they don't pay, the seat is released. Should you use a Shared Lock or an Exclusive Lock?**
+**A:** You should use an **Exclusive Lock** (`FOR UPDATE`), or better yet, avoid database locks entirely.
+If you use a Shared Lock, another user could also acquire a Shared Lock on the same seat. Neither user could complete the purchase (because upgrading to an Exclusive lock to finalize the sale would cause a Deadlock as they wait on each other).
+However, holding an Exclusive Database Lock open for 10 minutes while waiting for a user to type their credit card is catastrophic architecture. Database locks should only be held for milliseconds. You should solve this at the Application Layer by adding a `reserved_until` timestamp column to the table, allowing you to "reserve" the seat without holding any active TCP database locks.
+
+**Q: What is the difference between `FOR UPDATE` and `FOR NO KEY UPDATE` in PostgreSQL?**
+**A:** In PostgreSQL, updating a standard column (like `balance`) is considered a weaker operation than updating a Primary Key. 
+- `FOR UPDATE` is the strongest lock. It blocks everything, including other `FOR UPDATE` locks and `FOR SHARE` locks.
+- `FOR NO KEY UPDATE` is a slightly weaker exclusive lock. It blocks other writes, but it allows concurrent `FOR KEY SHARE` locks to exist. This optimization allows Foreign Key constraint checks on other tables to continue executing concurrently, preventing massive locking bottlenecks in highly relational schemas.

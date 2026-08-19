@@ -1,0 +1,61 @@
+---
+title: "Stored Procedures"
+description: "Writing full programs inside the database."
+importance: "MEDIUM"
+revisionTime: 3
+category: "SQL"
+subcategory: "Advanced SQL"
+order: 78
+---
+
+## Concept
+
+Standard SQL is declarative (`SELECT`, `INSERT`, `UPDATE`). It cannot do `if/else` logic, `for` loops, or error handling.
+If you need complex logic, you usually write it in your backend application layer (Node.js, Python, Java).
+
+A **Stored Procedure** allows you to move that complex backend logic *directly into the database server*.
+You write a full procedural program (using a language like PL/pgSQL in PostgreSQL, or T-SQL in SQL Server), save it in the database, and then your Node.js app just executes it via a single command:
+`CALL transfer_funds(account_a, account_b, 500);`
+
+## Why Use Stored Procedures?
+
+### 1. Eliminating Network Latency
+Imagine a nightly batch job that must analyze 10,000 users, check their balance, apply a 5% interest rate if they have a premium account, and insert a log entry for each.
+If you do this in Node.js, you have to download 10,000 rows over the network, run the math in Node, and then send 10,000 `UPDATE` queries back over the network. This takes minutes.
+If you write a Stored Procedure, the logic runs *directly on the database's hard drive*. Zero network overhead. It finishes in milliseconds.
+
+### 2. Transactional Integrity
+Stored Procedures can manage transactions intrinsically. 
+Inside the procedure, you can write:
+```sql
+BEGIN
+  UPDATE ...
+  INSERT ...
+  COMMIT;
+EXCEPTION WHEN OTHERS THEN
+  ROLLBACK;
+END;
+```
+This guarantees that complex multi-step operations either fully succeed or fully fail without relying on the Node.js app to orchestrate the transaction over an unstable network connection.
+
+## Why are they considered an Anti-Pattern today?
+
+In the 1990s, the Database was the center of the universe. "Thick Database" architecture dictated that *all* business logic lived in Stored Procedures.
+
+Today, **"Thin Database"** architecture is the standard.
+Stored Procedures are highly discouraged because:
+1. **Version Control:** It is incredibly difficult to track changes to Stored Procedures in Git. They exist as floating code inside the database.
+2. **Testing:** You cannot easily write automated Unit Tests (Jest, Mocha) for a PL/pgSQL stored procedure.
+3. **Vendor Lock-in:** PL/pgSQL only works in PostgreSQL. T-SQL only works in SQL Server. If you put 10,000 lines of business logic in Stored Procedures, you can never switch database providers. 
+4. **Scaling:** Node.js servers are stateless. If you need more CPU, you just spin up 50 more Node.js Docker containers. The Database is a stateful bottleneck. You want to offload as much CPU work *away* from the database as possible, not add procedural `for` loops into it.
+
+## Interview Questions
+
+**Q: You need to execute a complex financial calculation that touches 10 million rows. Your Node.js server keeps running out of RAM (OOM Crash) when it tries to download the data to do the math. Should you use a Stored Procedure?**
+**A:** Yes, this is the exact correct scenario for a Stored Procedure. 
+While they are an anti-pattern for general business logic, they are the best solution for **Data-Intensive Operations**. If the operation requires crunching data that is too massive to send over the network, bringing the *code to the data* (Stored Procedure) is infinitely more efficient than bringing the *data to the code* (Node.js).
+
+**Q: Explain the difference between a Stored Procedure and a User-Defined Function (UDF).**
+**A:** 
+- A **Function (UDF)** must return a value (like a string, integer, or table). It can be used inline inside a standard SQL query (e.g., `SELECT my_custom_function(salary) FROM users`). It is generally not allowed to manage transactions (`COMMIT`/`ROLLBACK`).
+- A **Stored Procedure** does not have to return anything. It is executed independently via the `CALL` command. It cannot be used inline in a `SELECT` statement. Most importantly, it is fully allowed to manage its own internal transactions and commit partial work.

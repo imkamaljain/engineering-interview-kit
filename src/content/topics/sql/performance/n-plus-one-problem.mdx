@@ -1,0 +1,77 @@
+---
+title: "The N+1 Problem"
+description: "The most common ORM performance killer."
+importance: "HIGH"
+revisionTime: 4
+category: "SQL"
+subcategory: "Performance"
+order: 58
+---
+
+## Concept
+
+The **N+1 Problem** is not technically a SQL bug; it is an architectural flaw in how Backend Application Code (typically an ORM like Prisma, Hibernate, or Active Record) interacts with the database.
+
+It occurs when your application needs to load a list of parent records (e.g., 100 Blog Posts), and then for *each* of those parent records, it needs to load their child records (e.g., the Comments for each post).
+
+Instead of fetching all the data in a single optimized SQL query, the application executes **1 query** to get the parents, and then executes **N separate queries** (one for each parent) in a `for` loop to get the children. 
+
+If you have 100 blog posts, the backend fires **101 separate SQL queries**. 
+
+## The Code (How it happens)
+
+Imagine a Node.js API endpoint using an ORM to fetch a user feed.
+
+```javascript
+// QUERY 1: Fetch 100 recent posts
+const posts = await db.query('SELECT * FROM posts LIMIT 100'); 
+
+for (let post of posts) {
+    // QUERIES 2 through 101: Loop fires a new query for EVERY post
+    post.comments = await db.query('SELECT * FROM comments WHERE post_id = ?', [post.id]);
+}
+return posts;
+```
+
+### Why is this catastrophic?
+**Network Latency.** 
+Executing a SQL query isn't just about disk reads. It involves the Node.js server opening a TCP socket, establishing a protocol, sending the query string over the network, waiting for the database to parse and execute it, and waiting for the data to travel back over the network.
+If the network latency between your API and the Database is just 2 milliseconds, executing 101 queries in a loop introduces **200ms of pure dead network waiting time**, completely crippling your API response speed.
+
+## The Fix: Eager Loading
+
+To fix the N+1 problem, you must tell your ORM to retrieve the parent data and the child data simultaneously in a single network round-trip. This is called **Eager Loading**.
+
+Under the hood, Eager Loading typically executes one of two strategies:
+
+### 1. The SQL JOIN
+The ORM executes a single massive query utilizing a `LEFT JOIN`.
+```sql
+-- 1 Query total
+SELECT posts.*, comments.* 
+FROM posts 
+LEFT JOIN comments ON posts.id = comments.post_id 
+LIMIT 100;
+```
+*(The ORM then receives the massive flat table and parses it into nested Javascript objects in memory).*
+
+### 2. The `IN` Clause (The Two-Query approach)
+Often, massive `JOIN`s duplicate too much data. A more efficient Eager Loading strategy used by modern ORMs (like Prisma) executes exactly two queries.
+```sql
+-- Query 1: Get the 100 posts
+SELECT * FROM posts LIMIT 100;
+
+-- Query 2: Get ALL comments for those specific 100 posts at once
+SELECT * FROM comments WHERE post_id IN (1, 2, 3, 4 ... 100);
+```
+*(The ORM then maps the comments to their respective posts in memory. 2 total queries is infinitely better than 101).*
+
+## Interview Questions
+
+**Q: You are reviewing a pull request for a GraphQL API. The developer wrote a resolver for `comments` that simply queries the database using `post_id`. Why is the Senior Engineer panicking?**
+**A:** Because GraphQL is notoriously vulnerable to the N+1 problem. 
+If a user queries `{ posts { title, comments { body } } }`, the GraphQL engine first resolves the array of posts. Then, for *every single post* in that array, it invokes the `comments` resolver function individually. If there are 50 posts, the resolver fires 50 separate database queries. 
+To fix this in GraphQL, you must use a tool like **Dataloader**, which intercepts the 50 individual requests, batches all the IDs together, and fires a single `SELECT ... WHERE IN (...)` query to the database.
+
+**Q: Is there ever a scenario where Lazy Loading (the N+1 approach) is actually better than Eager Loading?**
+**A:** Yes. If a parent record has thousands of massive child records (e.g., a `users` table linked to a `high_res_photos` table), and the frontend UI only displays the user's name but *might* need the photos if they click a specific button, Eager Loading is a terrible idea. Eagerly executing a massive `JOIN` will load gigabytes of useless photo data into the Node.js server's RAM for no reason. In this case, you should Lazy Load the photos via a separate API call only when explicitly requested by the client.

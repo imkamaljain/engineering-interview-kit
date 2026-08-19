@@ -1,0 +1,77 @@
+---
+title: "Find Duplicates"
+description: "Identifying dirty data."
+importance: "HIGH"
+revisionTime: 2
+category: "SQL"
+subcategory: "Practical Queries"
+order: 94
+---
+
+## Concept
+
+If a database table lacks a `UNIQUE` constraint, poor application logic will inevitably insert duplicate rows. 
+A highly common interview task (and real-world debugging task) is to write a query that finds all the duplicated data in a table.
+
+To solve this, we rely on the `GROUP BY` clause combined with the `HAVING` clause.
+
+## The Query
+
+*Goal: Find all email addresses that appear more than once in the `users` table.*
+
+```sql
+SELECT 
+    email, 
+    COUNT(*) as frequency
+FROM users
+GROUP BY email
+HAVING COUNT(*) > 1;
+```
+
+### How it works:
+1. **`GROUP BY email`:** The database takes all 10 million rows and squashes them into buckets based on the email string. If 3 people have 'alice@mail.com', they are squashed into one bucket.
+2. **`COUNT(*)`:** The database counts how many original rows went into each bucket.
+3. **`HAVING COUNT(*) > 1`:** The `WHERE` clause cannot filter aggregate math. The `HAVING` clause is specifically designed to filter the buckets *after* the math is done. It simply discards any bucket that only contains 1 row (the unique emails), leaving only the duplicates.
+
+## Finding Entire Duplicate Rows
+
+The previous query finds duplicate emails. But what if the entire row (name, email, age) was accidentally inserted twice?
+You simply expand the `GROUP BY` clause to include every column you care about.
+
+```sql
+SELECT 
+    first_name, 
+    last_name, 
+    email, 
+    COUNT(*)
+FROM users
+GROUP BY 
+    first_name, 
+    last_name, 
+    email
+HAVING COUNT(*) > 1;
+```
+This forces the database to find exact matches across all three columns simultaneously. 
+
+## Interview Questions
+
+**Q: You want to see the actual `id` of the duplicate rows so you can investigate them, so you write: `SELECT id, email FROM users GROUP BY email HAVING COUNT(*) > 1;`. The query crashes with a syntax error. Why?**
+**A:** This is the strict mathematical rule of `GROUP BY`.
+If 3 users (IDs 5, 9, and 12) all share the email 'bob@mail.com', the database squashes them into a single row. The single row outputs the email ('bob@mail.com'). But what does it output for the `id`? It cannot magically output an array `[5, 9, 12]` in a standard SQL cell. Because the database doesn't know *which* of the 3 IDs to display, it throws a syntax error. 
+You can only `SELECT` columns that are explicitly in the `GROUP BY` clause, or columns wrapped in aggregate functions (like `MAX(id)`).
+
+**Q: How do you fix the previous query to actually see the original IDs of the duplicates?**
+**A:** You use the aggregation query as a **CTE (Common Table Expression)** to find the bad emails, and then `JOIN` it back to the original table to extract the IDs.
+
+```sql
+WITH DuplicateEmails AS (
+    SELECT email 
+    FROM users 
+    GROUP BY email 
+    HAVING COUNT(*) > 1
+)
+SELECT u.id, u.email 
+FROM users u
+INNER JOIN DuplicateEmails d ON u.email = d.email
+ORDER BY u.email;
+```

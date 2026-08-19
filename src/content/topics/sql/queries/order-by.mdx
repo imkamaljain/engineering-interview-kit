@@ -1,0 +1,79 @@
+---
+title: "ORDER BY"
+description: "Sorting your results."
+importance: "MEDIUM"
+revisionTime: 2
+category: "SQL"
+subcategory: "Queries"
+order: 13
+---
+
+## Concept
+
+By default, relational databases do not guarantee any specific order when returning rows via a `SELECT` statement. They will return the data in the physical order it currently resides on the hard drive (which can change at any time due to row updates and memory page flushes).
+
+If you need data sorted alphabetically, chronologically, or numerically, you must explicitly command the database to do so using the **`ORDER BY`** clause.
+
+## Basic Syntax
+
+The `ORDER BY` clause is almost always the very last statement in a SQL query.
+
+```sql
+-- Sort ascending (A-Z, 0-9). ASC is the default if omitted.
+SELECT * FROM users ORDER BY last_name ASC;
+
+-- Sort descending (Z-A, 9-0).
+SELECT * FROM users ORDER BY created_at DESC;
+```
+
+### Sorting by Multiple Columns
+
+You can sort by multiple columns to act as a tie-breaker.
+```sql
+-- Sort everyone by department alphabetically.
+-- If two people are in the same department, sort them by salary (highest first).
+SELECT name, department, salary 
+FROM employees 
+ORDER BY department ASC, salary DESC;
+```
+
+## The Execution Order
+
+Because `ORDER BY` is executed at the very end of the query (after the `SELECT` clause), it is fully aware of any Aliases you created.
+
+```sql
+SELECT first_name, (salary + bonus) AS total_comp
+FROM employees
+-- This works perfectly!
+ORDER BY total_comp DESC; 
+```
+
+## Trade-Offs: The Filesort Problem
+
+`ORDER BY` is computationally expensive.
+If you ask the database to sort 10 million rows, it cannot fit 10 million rows into RAM. It has to dump the data onto the physical hard drive, perform a complex merge-sort on the disk, and then return it. This is called a **Filesort**, and it will devastate your query performance.
+
+**The Solution: Indexes**
+If you frequently run `ORDER BY created_at DESC`, you must place a **B-Tree Index** on the `created_at` column. 
+A B-Tree index physically stores the data already sorted. When you run the query, the database completely skips the math phase, immediately grabs the pre-sorted data from the B-Tree, and returns it in milliseconds.
+
+## Interview Questions
+
+**Q: A table has a column `status` that contains strings: `pending`, `active`, and `banned`. You want to query the table and sort the results exactly in that order (pending first, active second, banned last). Since this isn't alphabetical, how do you do it?**
+**A:** You can use a `CASE` statement inside the `ORDER BY` clause to assign artificial numeric weights to the strings during the sort phase.
+```sql
+SELECT * FROM users
+ORDER BY CASE status
+    WHEN 'pending' THEN 1
+    WHEN 'active'  THEN 2
+    WHEN 'banned'  THEN 3
+    ELSE 4
+END ASC;
+```
+
+**Q: You have a table with a `score` column. Several rows have a `NULL` score. If you run `ORDER BY score DESC`, where do the `NULL` values appear in the output?**
+**A:** It depends on the database engine, as SQL standards differ.
+- In **PostgreSQL**, `NULL` values are considered "larger" than any other value. So in an `ORDER BY ... DESC` sort, all the `NULL` rows will appear at the very top of the results. 
+- In **MySQL**, `NULL` values are considered "smaller", so they will appear at the very bottom.
+To guarantee cross-database consistency, you should explicitly define the behavior using `NULLS FIRST` or `NULLS LAST`:
+`SELECT * FROM users ORDER BY score DESC NULLS LAST;`

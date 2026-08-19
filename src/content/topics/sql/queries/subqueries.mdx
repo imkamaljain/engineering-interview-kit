@@ -1,0 +1,85 @@
+---
+title: "Subqueries"
+description: "Queries inside of queries."
+importance: "HIGH"
+revisionTime: 4
+category: "SQL"
+subcategory: "Queries"
+order: 17
+---
+
+## Concept
+
+Sometimes you need to use the output of one query as the input for another query. 
+A **Subquery** (or Inner Query) is simply a `SELECT` statement nested inside another SQL statement. 
+
+The most important rule: **The Inner Query executes first.** Its result is then handed off to the Outer Query.
+
+## Mental Model
+
+*Goal: Find all employees who make MORE than the company average.*
+
+```sql
+-- Step 1: You need the average first. (Returns 65000)
+-- SELECT AVG(salary) FROM employees;
+
+-- Step 2: Use that number in the main query.
+SELECT name, salary 
+FROM employees
+WHERE salary > (SELECT AVG(salary) FROM employees);
+```
+
+## Where can you use Subqueries?
+
+### 1. In the `WHERE` Clause (Filtering)
+This is the most common use case.
+```sql
+-- Find departments that have NO employees
+SELECT department_name 
+FROM departments 
+WHERE id NOT IN (SELECT DISTINCT department_id FROM employees);
+```
+
+### 2. In the `FROM` Clause (Derived Tables)
+You can treat the result of a complex subquery as if it were a physical table. You **must** give it an alias.
+```sql
+SELECT avg_payroll.department, avg_payroll.total
+FROM (
+    -- This inner query executes first, creating a temporary table in RAM
+    SELECT department, SUM(salary) AS total 
+    FROM employees 
+    GROUP BY department
+) AS avg_payroll
+WHERE avg_payroll.total > 1000000;
+```
+
+### 3. In the `SELECT` Clause (Scalar Subqueries)
+You can attach data from another table row-by-row.
+*(Warning: This is essentially a Correlated Subquery and is notoriously slow. Covered in the next section).*
+```sql
+SELECT 
+    name, 
+    (SELECT COUNT(*) FROM orders WHERE orders.user_id = users.id) AS total_orders
+FROM users;
+```
+
+## Types of Subqueries
+
+1. **Scalar Subquery:** Returns exactly 1 column and 1 row (a single value, like `65000`). Used with `=`, `>`, `<`.
+2. **Column Subquery:** Returns 1 column but multiple rows (a list, like `[1, 2, 3]`). Used with `IN` or `NOT IN`.
+3. **Row Subquery:** Returns multiple columns but exactly 1 row.
+4. **Table Subquery:** Returns multiple columns and multiple rows. Used in the `FROM` clause.
+
+## Trade-Offs
+
+- **Pros:** They break down complex logic into readable, logical steps. They are intuitive to write.
+- **Cons:** Performance can be unpredictable. Modern query optimizers (like PostgreSQL's) are usually smart enough to magically "flatten" a subquery and rewrite it as a `JOIN` under the hood for maximum performance. However, if written poorly (especially using `IN`), the database might physically execute the inner query, load massive amounts of data into RAM, and then execute the outer query against it, slowing down the system. 
+
+## Interview Questions
+
+**Q: You write `SELECT * FROM users WHERE department_id IN (SELECT id FROM departments)`. A senior engineer tells you to rewrite it using an `INNER JOIN`. Why?**
+**A:** Using an `INNER JOIN` is explicitly declaring the relationship to the database, allowing the Query Optimizer to choose the most efficient path (Hash Join, Merge Join, or Nested Loop). 
+When you use `IN (...)`, especially in older databases (like older versions of MySQL), the database might literally execute the inner query, create an array of IDs in memory, and then perform a painful linear scan of the `users` table, checking the array for every single row. While modern optimizers often fix this automatically, explicitly writing `JOIN` is safer and considered best practice for performance.
+
+**Q: What is a "Derived Table" and what is the strict rule when creating one?**
+**A:** A Derived Table is a subquery placed inside the `FROM` clause. It generates a temporary table in memory for the duration of the query. The strict rule is that **it must be given an Alias**. If you write `FROM (SELECT * FROM users)`, the query will fail with a syntax error. You must append `AS temp_table` at the end, so the outer query has a namespace to reference its columns.

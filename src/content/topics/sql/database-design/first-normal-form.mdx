@@ -1,0 +1,69 @@
+---
+title: "First Normal Form (1NF)"
+description: "The rule of atomic values."
+importance: "MEDIUM"
+revisionTime: 2
+category: "SQL"
+subcategory: "Database Design"
+order: 48
+---
+
+## Concept
+
+A table is in **First Normal Form (1NF)** if it satisfies two strict rules:
+1. Every column must contain **Atomic Values**. (No arrays, no comma-separated lists, no JSON blobs hiding multiple values).
+2. Every row must be unique. (There must be no exact duplicate rows).
+
+## The Violation
+
+Imagine a `users` table where people can have multiple phone numbers.
+
+**UNNORMALIZED:**
+| ID | Name | Phone_Numbers |
+| :--- | :--- | :--- |
+| 1 | Alice | 555-1234, 555-9876 |
+| 2 | Bob | 555-4444 |
+
+This violates 1NF because Alice's `Phone_Numbers` column contains a comma-separated list of multiple values. It is not "Atomic".
+
+### Why is this bad?
+If you want to find the user who owns the phone number `555-9876`, you cannot write a simple `WHERE phone_numbers = '555-9876'`. You are forced to use slow string-matching (`LIKE '%555-9876%'`), which completely bypasses B-Tree indexes and requires a Full Table Scan. 
+Furthermore, you cannot cleanly delete one of Alice's phone numbers without writing complex Javascript string-manipulation code to parse the comma, remove the number, and rewrite the string.
+
+## The Fix
+
+To achieve 1NF, you must extract the repeating group into its own separate table, creating a **One-to-Many** relationship.
+
+**TABLE 1: Users**
+| ID (PK) | Name |
+| :--- | :--- |
+| 1 | Alice |
+| 2 | Bob |
+
+**TABLE 2: User_Phones**
+| User_ID (FK) | Phone_Number |
+| :--- | :--- |
+| 1 | 555-1234 |
+| 1 | 555-9876 |
+| 2 | 555-4444 |
+
+Now, every single cell contains exactly one distinct value. Searching for a phone number is an instant $O(\log N)$ B-Tree lookup.
+
+## The PostgreSQL `JSONB` Exception
+
+Modern database theory has slightly evolved. PostgreSQL introduced the highly advanced `JSONB` (Binary JSON) data type.
+Technically, storing a JSON array like `["555-1234", "555-9876"]` in a single column violates strict 1970s 1NF rules. 
+
+However, because PostgreSQL allows you to build GIN (Generalized Inverted) Indexes *directly on the elements inside the JSON array*, you can query it almost as fast as a normalized table. Many modern developers intentionally violate 1NF by storing arrays in `JSONB` to avoid the performance penalty of `JOIN`ing a separate table, provided the array is small and rarely updated.
+
+## Interview Questions
+
+**Q: A developer stores a user's full name in a single column: `Full_Name = 'John Robert Smith'`. Does this violate First Normal Form?**
+**A:** It depends on the business requirements. 
+If the application only ever displays the name as a single string ("Welcome, John Robert Smith"), then the string is considered an atomic unit, and it passes 1NF.
+However, if the application needs to sort users by their Last Name, or send an email saying "Hello John", the database must parse the string. Because the string contains distinct logical components (First, Middle, Last) that the business logic actively cares about, it is no longer atomic. It violates 1NF and must be split into `first_name`, `middle_name`, and `last_name` columns.
+
+**Q: You want to add a `tags` feature to blog posts (e.g., 'SQL', 'Tech', 'Coding'). A junior developer suggests adding 3 separate columns: `tag1`, `tag2`, and `tag3` to the `posts` table to avoid using a comma-separated list. Does this satisfy 1NF?**
+**A:** While it technically satisfies the strict definition of atomic columns, it is an **Anti-Pattern** (often called "Repeating Groups").
+It creates a rigid schema. What if a post needs 4 tags? You have to run an `ALTER TABLE` to add a new column. Furthermore, finding all posts tagged 'SQL' requires a horrible query: `WHERE tag1 = 'SQL' OR tag2 = 'SQL' OR tag3 = 'SQL'`. 
+To properly normalize this, you must create a separate `post_tags` table, linking Post IDs to Tag strings in individual rows.

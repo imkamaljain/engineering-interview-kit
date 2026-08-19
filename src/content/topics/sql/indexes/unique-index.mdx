@@ -1,0 +1,69 @@
+---
+title: "Unique Index"
+description: "Enforcing absolute data integrity at the storage layer."
+importance: "MEDIUM"
+revisionTime: 2
+category: "SQL"
+subcategory: "Indexes"
+order: 33
+---
+
+## Concept
+
+In standard programming, if you want to ensure a user's email is unique, you might write code like this:
+```javascript
+const user = await db.query('SELECT * FROM users WHERE email = ?', [email]);
+if (user) throw new Error("Email exists!");
+await db.query('INSERT INTO users (email) VALUES (?)', [email]);
+```
+This is called a "Check-Then-Act" pattern. In a highly concurrent web application, this pattern is completely broken due to **Race Conditions**. Two users clicking "Sign Up" at the exact same millisecond will both pass the `if (user)` check before either of them inserts their row. Both rows will be inserted, resulting in duplicate emails.
+
+A **Unique Index** solves this. It is a B-Tree index that structurally forbids duplicate values from entering the hard drive. 
+
+## How It Works
+
+When you create a `UNIQUE` constraint on a column, the database automatically builds a Unique B-Tree Index behind the scenes.
+
+```sql
+-- You can define it during table creation
+CREATE TABLE users (
+    id SERIAL PRIMARY KEY,
+    email VARCHAR(255) UNIQUE
+);
+
+-- Or you can create it manually later
+CREATE UNIQUE INDEX idx_users_email ON users(email);
+```
+
+When an `INSERT` statement arrives, the database probes the B-Tree in $O(\log N)$ time. If the value already exists in the tree, the database instantly rejects the `INSERT` and throws a constraint violation error. Because the database enforces this using internal atomic locks during the B-Tree traversal, it is mathematically impossible to experience a race condition, no matter how many servers hit the database simultaneously.
+
+## Unique Indexes and NULL Values
+
+There is a massive, widely misunderstood quirk regarding Unique Indexes and `NULL` values.
+
+Does a Unique Index allow multiple `NULL` values?
+**Yes.** (In standard SQL, including PostgreSQL and MySQL).
+
+```sql
+INSERT INTO users (email) VALUES (NULL); -- Success
+INSERT INTO users (email) VALUES (NULL); -- Success!
+```
+*Why?* Because of the Three-Valued Logic of SQL. `NULL` means "Unknown". The database asks: *"Is Unknown equal to Unknown?"* The answer is `NULL` (not True). Because they are not demonstrably equal, the database assumes they are distinct unknown values and allows the insertion.
+
+*(Note: Microsoft SQL Server is the major exception to this rule. It treats NULLs as identical and only allows a single NULL value in a Unique Index).*
+
+## Interview Questions
+
+**Q: You want to enforce that a user can only review a specific product exactly one time. How do you enforce this using a Unique Index?**
+**A:** You use a **Composite Unique Index**.
+You cannot put a simple Unique Index on `user_id` (a user can review many products). You cannot put it on `product_id` (a product has many reviews).
+You must create a unique index on the *combination* of both columns.
+```sql
+CREATE UNIQUE INDEX idx_one_review_per_user 
+ON reviews (user_id, product_id);
+```
+Now, if User 1 tries to review Product 99 twice, the database will block the second insertion.
+
+**Q: A developer adds a `UNIQUE` constraint to a column. Later, they manually run `CREATE INDEX` on that exact same column to speed up searches. Why is the DBA angry?**
+**A:** Because they just created a completely redundant, duplicate index. 
+When you declare a `UNIQUE` constraint, the database automatically creates a B-Tree index under the hood to enforce the uniqueness. That B-Tree is perfectly capable of being used for lightning-fast `SELECT` queries. By manually creating a second index on the same column, the developer doubled the disk space and doubled the write-penalty during `INSERT`s for absolutely zero read benefit.

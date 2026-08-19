@@ -1,0 +1,89 @@
+---
+title: "Hierarchical Data (Trees)"
+description: "Who manages the manager's manager?"
+importance: "MEDIUM"
+revisionTime: 3
+category: "SQL"
+subcategory: "Practical Queries"
+order: 103
+---
+
+## Concept
+
+SQL excels at flat tables. It struggles massively with deeply nested trees.
+
+Imagine an `employees` table where every employee has a `manager_id`.
+- Alice is the CEO (Manager ID: NULL).
+- Bob reports to Alice.
+- Charlie reports to Bob.
+
+If you want to print Charlie's entire management chain all the way up to the CEO (Charlie -> Bob -> Alice), you cannot use a simple `JOIN`. You don't know how deep the tree goes. It might be 3 levels deep, or it might be 15 levels deep.
+You need a query that can loop infinitely until it hits the top.
+
+## The Adjacency List (The Schema)
+
+The most common way to store a tree in SQL is the **Adjacency List**. You simply place a Foreign Key on the table that points back to the exact same table (a Self-Referencing Foreign Key).
+
+```sql
+CREATE TABLE employees (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255),
+    -- Points back to employees(id)
+    manager_id INT REFERENCES employees(id) 
+);
+```
+
+## Recursive CTEs (The Query)
+
+To traverse an Adjacency List infinitely, you must use a **Recursive Common Table Expression (CTE)**.
+
+A Recursive CTE has two parts:
+1. **The Anchor:** The starting point (e.g., "Find Charlie").
+2. **The Recursive Step:** The loop that joins the CTE back onto itself, crawling up the tree one level at a time.
+
+*Goal: Find Charlie's entire management chain, all the way to the top.*
+
+```sql
+WITH RECURSIVE ManagementChain AS (
+    -- 1. THE ANCHOR: Start with Charlie
+    SELECT id, name, manager_id, 1 AS depth
+    FROM employees
+    WHERE name = 'Charlie'
+    
+    UNION ALL
+    
+    -- 2. THE RECURSIVE STEP: Loop upwards
+    SELECT e.id, e.name, e.manager_id, mc.depth + 1
+    FROM employees e
+    -- Join the physical table (e) to the CTE itself (mc)
+    INNER JOIN ManagementChain mc ON e.id = mc.manager_id
+)
+-- 3. THE OUTPUT
+SELECT * FROM ManagementChain ORDER BY depth ASC;
+```
+
+**How it executes:**
+1. It runs the Anchor, finds Charlie, and stores him in the CTE.
+2. It takes Charlie's `manager_id` (Bob), runs the Recursive step to find Bob, and adds Bob to the CTE.
+3. It takes Bob's `manager_id` (Alice), runs the step, finds Alice, and adds her to the CTE.
+4. It takes Alice's `manager_id` (NULL). The `INNER JOIN` fails to find a match. The recursion mathematically terminates.
+
+## Alternative Architectures
+
+Recursive CTEs can be slow for massive trees. If you have a read-heavy application (like Reddit comments), you might use alternative architectures:
+
+### 1. Materialized Paths (Path Enumeration)
+Instead of a `manager_id`, you store a string representing the absolute path from the root.
+`path = "1/5/12"` (CEO 1 -> Manager 5 -> Employee 12).
+Finding all descendants of Manager 5 is instantly fast using a B-Tree index: `WHERE path LIKE '1/5/%'`.
+
+### 2. Nested Sets
+A complex mathematical architecture where each node stores a `left_bound` and `right_bound` integer. Finding descendants requires zero recursion and zero `JOIN`s (just a simple `WHERE left BETWEEN x AND y`). It is blazingly fast for reads, but updating the tree requires recalculating the mathematical bounds for half the database, making it terrible for write-heavy apps.
+
+## Interview Questions
+
+**Q: A developer writes a Recursive CTE to map a social network graph (Alice follows Bob, Bob follows Charlie). When they run the query, the database completely freezes, CPU hits 100%, and the query never finishes. What happened?**
+**A:** They created an **Infinite Loop (Cyclic Graph)**.
+If Alice follows Bob, Bob follows Charlie, and *Charlie follows Alice*, the network forms a closed circle. The Recursive CTE starts at Alice, hops to Bob, hops to Charlie, hops back to Alice, and continues infinitely. 
+To prevent this, you must explicitly track the path you have taken using an array, and stop the recursion if you encounter an ID you have already seen:
+`WHERE e.id != ALL(mc.visited_ids_array)`.

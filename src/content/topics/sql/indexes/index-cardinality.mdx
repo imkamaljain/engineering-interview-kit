@@ -1,0 +1,64 @@
+---
+title: "Index Cardinality"
+description: "The uniqueness of your data."
+importance: "MEDIUM"
+revisionTime: 2
+category: "SQL"
+subcategory: "Indexes"
+order: 36
+---
+
+## Concept
+
+**Cardinality** is a mathematical term that simply means "the number of unique values in a set."
+In databases, it refers to how many distinct values exist in a specific column.
+
+Cardinality is closely related to *Selectivity*, but they are not exactly the same thing.
+- **Selectivity** is a ratio used by the query optimizer for a specific query (`Unique Values / Total Rows`).
+- **Cardinality** is an absolute number describing the column itself.
+
+## Types of Cardinality
+
+### 1. High Cardinality
+A column where almost every single row has a completely different value.
+- Examples: `user_id`, `email`, `social_security_number`, `phone_number`.
+- **Database Impact:** These are the absolute best candidates for B-Tree indexes. Searching for a high-cardinality value guarantees the database will instantly narrow the search down to 1 or 2 rows.
+
+### 2. Normal Cardinality
+A column with a wide spread of values, with some duplication.
+- Examples: `first_name`, `last_name`, `city`, `date_of_birth`.
+- **Database Impact:** Good candidates for indexing, especially if used frequently in `WHERE` clauses.
+
+### 3. Low Cardinality
+A column with very few unique values, repeated massively across millions of rows.
+- Examples: `is_active` (True/False - Cardinality of 2), `gender`, `order_status` (Pending/Shipped/Delivered - Cardinality of 3).
+- **Database Impact:** Terrible candidates for standard B-Tree indexes. The database will likely ignore the index entirely and perform a Full Table Scan (as discussed in the Selectivity section).
+
+## Cardinality and Composite Indexes
+
+Understanding cardinality is absolutely critical when designing **Composite Indexes** (indexes spanning multiple columns).
+
+**The Rule:** When creating a Composite Index, you must always place the column with the **Highest Cardinality FIRST**.
+
+*Example:* You want an index to speed up: `WHERE department = 'Sales' AND employee_id = 9928;`
+- `department` has a Cardinality of 10.
+- `employee_id` has a Cardinality of 100,000.
+
+**Bad Index:** `CREATE INDEX idx ON employees (department, employee_id)`
+If the database traverses this B-Tree, the very first hop lands on the "Sales" bucket. But that bucket contains 10,000 employees. The database must now scan through 10,000 index nodes to find ID 9928.
+
+**Good Index:** `CREATE INDEX idx ON employees (employee_id, department)`
+If the database traverses this B-Tree, the very first hop lands on ID 9928. It narrowed the search space down to exactly 1 row instantly. The second column (`department`) is almost entirely irrelevant at this point, providing maximum efficiency.
+
+## Interview Questions
+
+**Q: In highly specialized analytical databases (Data Warehouses), developers sometimes create indexes on Low Cardinality columns like `gender`. Standard B-Trees are terrible for this. What specialized index structure is used instead?**
+**A:** A **Bitmap Index**.
+Instead of building a massive tree of pointers, a Bitmap Index builds a simple binary array (a string of 1s and 0s) for each distinct value.
+For a table of 5 people:
+- `Male Bitmap`: `[1, 0, 1, 0, 0]`
+- `Female Bitmap`: `[0, 1, 0, 1, 1]`
+
+When you query `WHERE gender = 'Female'`, the database doesn't traverse a tree; it just looks at the Female bitmap and instantly knows rows 2, 4, and 5 match. 
+Furthermore, databases can perform blistering fast bitwise `AND`/`OR` operations on these bitmaps to resolve complex queries instantly. 
+*(Note: Bitmap indexes are notoriously terrible for write-heavy transactional databases because updating a single row requires locking the entire bitmap array, but they are phenomenal for read-only analytical databases).*

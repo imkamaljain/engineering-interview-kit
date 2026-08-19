@@ -1,0 +1,85 @@
+---
+title: "WHERE"
+description: "Filtering rows based on conditions."
+importance: "HIGH"
+revisionTime: 3
+category: "SQL"
+subcategory: "Queries"
+order: 10
+---
+
+## Concept
+
+If you run `SELECT * FROM users`, the database will return every single row in the table. If the table has 100 million rows, your application will crash trying to download them all.
+The **`WHERE`** clause acts as a filter. The database evaluates the `WHERE` condition against every row. If the condition evaluates to `TRUE`, the row is included in the final result. If `FALSE` or `NULL`, the row is discarded.
+
+## Common Operators
+
+You can use standard mathematical and logical operators.
+
+| Operator | Meaning | Example |
+| :--- | :--- | :--- |
+| `=` | Equal to | `WHERE status = 'active'` |
+| `!=` or `<>` | Not equal to | `WHERE status != 'banned'` |
+| `>`, `<` | Greater/Less than | `WHERE age > 18` |
+| `AND`, `OR` | Logical operators | `WHERE age > 18 AND status = 'active'` |
+| `IN` | Matches a list | `WHERE role IN ('admin', 'moderator')` |
+| `BETWEEN`| Inclusive range | `WHERE salary BETWEEN 50000 AND 100000` |
+
+## Advanced Filtering
+
+### 1. Pattern Matching (`LIKE`)
+Use `LIKE` for partial string matching. 
+- `%` represents zero, one, or multiple characters.
+- `_` represents exactly one single character.
+
+```sql
+-- Finds 'Alice', 'Al', 'Albert'
+SELECT * FROM users WHERE name LIKE 'Al%';
+
+-- Finds 'cat', 'bat', 'hat', but NOT 'chat'
+SELECT * FROM words WHERE text LIKE '_at';
+```
+*(Note: `LIKE` is case-sensitive in PostgreSQL. Use `ILIKE` for case-insensitive matching).*
+
+### 2. Handling NULLs (`IS NULL`)
+As discussed in the NULL fundamentals, you cannot use `= NULL`.
+```sql
+SELECT * FROM users WHERE phone_number IS NOT NULL;
+```
+
+## The Execution Order
+
+**CRITICAL RULE:** The `WHERE` clause executes *before* the `SELECT` clause.
+
+Because of this, you cannot use an alias defined in the `SELECT` clause inside the `WHERE` clause.
+
+```sql
+-- CRASH! Column "annual_salary" does not exist yet.
+SELECT name, (salary * 12) AS annual_salary 
+FROM employees 
+WHERE annual_salary > 100000;
+
+-- CORRECT: You must repeat the math.
+SELECT name, (salary * 12) AS annual_salary 
+FROM employees 
+WHERE (salary * 12) > 100000;
+```
+
+## Trade-Offs: Sargable vs Non-Sargable Queries
+
+A `WHERE` clause dictates whether the database can use a **B-Tree Index** to instantly find the rows, or if it must perform a painfully slow **Full Table Scan**.
+A query is **SARGable** (Search ARGument ABLE) if it can use an index.
+
+- **SARGable (Fast - Uses Index):** `WHERE age = 25`
+- **SARGable (Fast - Uses Index):** `WHERE name LIKE 'Al%'` (The database can use the index because the string starts with a known letter).
+
+- **Non-SARGable (Slow - Full Table Scan):** `WHERE name LIKE '%smith'` (Because the string starts with a wildcard, the database must read every single row in the table to check the ending).
+- **Non-SARGable (Slow - Full Table Scan):** `WHERE YEAR(created_at) = 2023` (Wrapping a column in a function instantly destroys the database's ability to use the index. It must run the function on every single row).
+
+## Interview Questions
+
+**Q: A developer writes: `SELECT * FROM users WHERE age * 2 > 50`. The `age` column has a B-Tree index, but the query takes 5 seconds because it performs a Full Table Scan. How do you rewrite this to make it execute in 2 milliseconds?**
+**A:** This is a classic Non-SARGable query. By performing math on the `age` column itself (`age * 2`), the database cannot use the index. It must retrieve every single row, multiply the age by 2 in memory, and then check if it's greater than 50.
+To fix this, you must move the math to the *other side* of the operator, leaving the indexed column completely isolated.
+**Rewrite:** `SELECT * FROM users WHERE age > 25`. Now the database can instantly jump to the `25` node in the B-Tree index.

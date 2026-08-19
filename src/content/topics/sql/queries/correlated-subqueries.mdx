@@ -1,0 +1,86 @@
+---
+title: "Correlated Subqueries"
+description: "The performance killer of SQL."
+importance: "HIGH"
+revisionTime: 4
+category: "SQL"
+subcategory: "Queries"
+order: 18
+---
+
+## Concept
+
+In a normal subquery, the inner query executes **exactly once**, generates a result, and passes it to the outer query.
+A **Correlated Subquery** is a subquery that references a column from the *outer* query. Because it relies on the outer query's data, it cannot run just once. It must be re-executed from scratch **for every single row** in the outer query.
+
+It is effectively a massive `for` loop inside the database. It is incredibly dangerous for performance.
+
+## Mental Model
+
+*Goal: Find employees whose salary is higher than the average salary **of their specific department**.*
+
+```sql
+SELECT outer_emp.name, outer_emp.salary, outer_emp.department
+FROM employees outer_emp
+WHERE outer_emp.salary > (
+    -- This inner query executes REPEATEDLY
+    SELECT AVG(salary) 
+    FROM employees inner_emp 
+    WHERE inner_emp.department = outer_emp.department -- The Correlation!
+);
+```
+
+**How the database executes this:**
+1. Looks at Row 1 (Alice in Engineering).
+2. Executes the inner query: `SELECT AVG(salary) ... WHERE department = 'Engineering'`. (Cost: Scans Engineering).
+3. Compares Alice's salary to the result.
+4. Looks at Row 2 (Bob in Engineering).
+5. Executes the inner query *again*: `SELECT AVG(salary) ... WHERE department = 'Engineering'`. (Cost: Scans Engineering *again*).
+
+If you have 100,000 employees, the database executes that inner query **100,000 times**. This is an $O(N^2)$ operation and will destroy your server CPU.
+
+## EXISTS and NOT EXISTS
+
+While correlated subqueries in the `WHERE` clause using math are terrible, they are the standard, highly-optimized way to check for **existence**.
+
+If you want to find users who have placed at least one order, you use `EXISTS`.
+
+```sql
+SELECT name FROM users u
+WHERE EXISTS (
+    SELECT 1 FROM orders o WHERE o.user_id = u.id
+);
+```
+*Why is this fast?* The moment the database finds *even one* matching order for a user, it instantly stops searching the `orders` table and returns `TRUE` for that user. It is highly optimized.
+
+## How to Fix Bad Correlated Subqueries
+
+If you see a correlated subquery performing mathematical aggregations (`AVG`, `SUM`, `MAX`), you must rewrite it using a `JOIN` or a **Window Function**.
+
+**The Fix (Using a JOIN with a Derived Table):**
+```sql
+-- Step 1: Calculate ALL averages EXACTLY ONCE
+SELECT e.name, e.salary, e.department
+FROM employees e
+INNER JOIN (
+    SELECT department, AVG(salary) AS avg_sal
+    FROM employees
+    GROUP BY department
+) AS dept_averages
+-- Step 2: Join them
+ON e.department = dept_averages.department
+-- Step 3: Filter
+WHERE e.salary > dept_averages.avg_sal;
+```
+This reduces the execution time from 5 minutes down to 20 milliseconds.
+
+## Interview Questions
+
+**Q: Explain the difference between a Correlated Subquery and an Uncorrelated Subquery.**
+**A:** An **Uncorrelated Subquery** is entirely independent of the outer query. It can be highlighted, executed by itself in the terminal, and it will return a valid result. The database executes it exactly once.
+A **Correlated Subquery** depends on a variable passed in from the outer query. If you highlight it and execute it by itself, it will crash with a `column does not exist` error. The database is forced to execute it repeatedly, once for every row returned by the outer query.
+
+**Q: When checking if data exists in another table, you can use `IN` or `EXISTS`. Which is better? `WHERE id IN (SELECT user_id FROM orders)` or `WHERE EXISTS (SELECT 1 FROM orders WHERE user_id = u.id)`?**
+**A:** `EXISTS` is almost always better and faster.
+`IN` forces the database to fully execute the subquery, load the entire massive array of IDs into RAM, and then check against that array. (It also fails catastrophically if the array contains `NULL` values).
+`EXISTS` does not load anything into RAM. It simply probes the B-Tree index of the child table. The instant it finds a single match, it immediately stops probing and returns `TRUE` (Short-circuit evaluation), making it extremely efficient for large datasets.

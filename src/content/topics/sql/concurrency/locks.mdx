@@ -1,0 +1,71 @@
+---
+title: "Database Locks"
+description: "How databases prevent chaos during concurrent access."
+importance: "HIGH"
+revisionTime: 4
+category: "SQL"
+subcategory: "Concurrency"
+order: 66
+---
+
+## Concept
+
+If a database allowed two people to update the exact same row at the exact same millisecond, the hard drive would be corrupted with intertwined bytes. 
+To prevent this, relational databases use **Locks**. 
+
+A Lock is a mathematical flag that a transaction places on a piece of data (a row, a page, or an entire table). When a lock is active, the database mathematically forbids any other transaction from modifying that specific piece of data until the first transaction finishes and releases the lock.
+
+## Types of Locks
+
+There are two primary categories of locks in a relational database.
+
+### 1. Shared Locks (Read Locks)
+Used when you just want to *look* at the data, but you want to guarantee that nobody deletes it while you are looking at it.
+- **Rule:** Multiple transactions can hold a Shared Lock on the exact same row simultaneously. (Many people can read it at once).
+- **Rule:** If a Shared Lock exists, no one is allowed to acquire an Exclusive Lock. (No one can write to it).
+
+### 2. Exclusive Locks (Write Locks)
+Used when you are actively `UPDATE`ing, `DELETE`ing, or `INSERT`ing data.
+- **Rule:** Only *one* transaction can hold an Exclusive Lock at a time.
+- **Rule:** If an Exclusive Lock exists, no one else can acquire a Shared Lock or an Exclusive Lock. (Everyone else must completely freeze and wait).
+
+## Implicit vs Explicit Locks
+
+### Implicit Locks (Automatic)
+You don't usually have to think about locks. When you type `UPDATE users SET age = 25 WHERE id = 1`, the database automatically and instantly acquires an Exclusive Lock on Row 1, updates it, and holds the lock until the transaction `COMMIT`s.
+
+### Explicit Locks (Manual)
+Sometimes you need to lock a row *before* you update it, to prevent race conditions during complex calculations in your Node.js app.
+You do this using the `FOR UPDATE` (Exclusive) or `FOR SHARE` (Shared) clauses at the end of a `SELECT` query.
+
+```sql
+BEGIN;
+-- Explicitly lock the row so no one else can touch it
+SELECT balance FROM accounts WHERE id = 1 FOR UPDATE;
+
+-- (Node.js does some math for 2 seconds)
+
+UPDATE accounts SET balance = 50 WHERE id = 1;
+COMMIT; -- The lock is finally released here
+```
+
+## Trade-Offs: Lock Contention
+
+Locks are the absolute enemy of scale. 
+If 1,000 users try to buy the exact same concert ticket at the exact same millisecond, the database must process them one at a time. User 1 gets the lock. Users 2 through 1,000 completely freeze.
+This is called **Lock Contention**. It causes CPU spikes, API timeouts, and massive queue backlogs. 
+
+To maximize concurrency, you must:
+1. Keep transactions as short as mathematically possible.
+2. Never make external HTTP calls (to Stripe, AWS, etc.) while holding an open database transaction.
+3. Lock rows at the very last possible millisecond.
+
+## Interview Questions
+
+**Q: A junior developer writes a cron job that runs `UPDATE users SET status = 'inactive' WHERE last_login < '2020-01-01'`. The query takes 5 minutes to run. During those 5 minutes, the entire website goes offline and nobody can log in. Why?**
+**A:** Because of **Lock Escalation**. 
+The query was supposed to lock the specific old rows (Row-Level Locking). However, because it was updating millions of rows at once, the database ran out of RAM to track millions of individual tiny row locks. To save memory, the database automatically escalated the locks, deleting the row locks and replacing them with a single, massive **Table-Level Exclusive Lock**. This locked the entire `users` table, instantly freezing every single user trying to log in or update their profile. 
+To fix this, massive updates must be batched using `LIMIT 1000` to prevent the database from triggering lock escalation.
+
+**Q: Is it possible for two different transactions to hold an Exclusive Lock on the exact same row at the exact same time?**
+**A:** **No.** This is a mathematical impossibility in a relational database. An Exclusive Lock is mutually exclusive by definition. The database's Lock Manager guarantees that the second transaction will either freeze and wait (if a timeout is configured) or instantly fail with an error.

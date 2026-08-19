@@ -1,0 +1,78 @@
+---
+title: "Recursive CTEs"
+description: "Navigating trees and hierarchies in SQL."
+importance: "MEDIUM"
+revisionTime: 4
+category: "SQL"
+subcategory: "Queries"
+order: 20
+---
+
+## Concept
+
+Relational Databases are great at flat tables. They are notoriously terrible at **Hierarchical Data** (Trees, Graphs, Org Charts, Reddit comment threads).
+If an Employee has a Manager, and that Manager has a Director, and that Director has a VP, how do you write a single SQL query that fetches an employee and recursively traverses the entire chain of command all the way to the CEO?
+
+You use a **Recursive CTE**. It is a CTE that continually references *itself* in a loop until a condition is met.
+
+## The Data Structure (Adjacency List)
+
+To build a tree in SQL, a table must have a Foreign Key that points to its own Primary Key.
+
+| id | name    | manager_id |
+| :--| :------ | :--------- |
+| 1  | Alice   | NULL       | (The CEO)
+| 2  | Bob     | 1          | (Reports to Alice)
+| 3  | Charlie | 2          | (Reports to Bob)
+
+## How It Works: The Two Parts
+
+A Recursive CTE requires exactly two `SELECT` statements glued together with a `UNION ALL`.
+1. **The Anchor Member:** The starting point (e.g., Grab Charlie). It runs exactly once.
+2. **The Recursive Member:** The loop. It executes repeatedly, taking the output of the previous loop and using it to find the next level up. It stops when it returns 0 rows.
+
+## The Code
+
+*Goal: Print Charlie's entire chain of command up to the CEO.*
+
+```sql
+WITH RECURSIVE org_chart AS (
+    -- 1. THE ANCHOR: Start with Charlie
+    SELECT id, name, manager_id, 1 AS depth
+    FROM employees
+    WHERE name = 'Charlie'
+    
+    UNION ALL
+    
+    -- 2. THE RECURSIVE LOOP: Join the CTE back to the employees table
+    SELECT e.id, e.name, e.manager_id, oc.depth + 1
+    FROM employees e
+    INNER JOIN org_chart oc ON e.id = oc.manager_id
+    -- (Finds the row where Employee ID matches Charlie's Manager ID)
+)
+
+-- 3. Execute the accumulated results
+SELECT * FROM org_chart ORDER BY depth ASC;
+```
+
+**Execution Trace:**
+- **Loop 0 (Anchor):** Finds Charlie (Manager ID: 2).
+- **Loop 1:** Joins to Employee table. Finds Employee 2 (Bob). Bob's Manager ID is 1.
+- **Loop 2:** Joins to Employee table. Finds Employee 1 (Alice). Alice's Manager ID is `NULL`.
+- **Loop 3:** Joins to Employee table. Looks for Employee `NULL`. Finds nothing (0 rows). The recursion terminates.
+
+## Trade-Offs
+
+- **Pros:** It is the only standard SQL way to traverse an unknown depth of hierarchical data. Without it, you would have to fetch the entire table into a Node.js server and traverse it in memory, or run an N+1 nightmare of repeated `SELECT` queries from the backend.
+- **Cons:** It is inherently slow. Because it executes row by row in a loop, the database cannot easily optimize it using parallel execution. 
+
+## Interview Questions
+
+**Q: Your Recursive CTE accidentally enters an Infinite Loop. Why did this happen, and how do you protect the database?**
+**A:** This happens if your data contains a **Cycle** (a circular reference). For example, Employee A manages B, B manages C, and due to a data entry error, C manages A. The loop will never terminate, consume all RAM, and crash the server.
+*Protection:* In modern PostgreSQL, you can use the `CYCLE` clause (`CYCLE id SET is_cycle USING path`) which automatically detects if an ID appears twice in the traversal path and kills the loop. Alternatively, you can add a manual depth limiter in the WHERE clause of the recursive member (`WHERE depth < 100`).
+
+**Q: A developer says "Recursive CTEs are too slow for our Reddit comment tree. We should migrate the database to Neo4j (a Graph Database)." Is there a way to make hierarchical queries blazing fast in PostgreSQL without leaving SQL?**
+**A:** Yes, by changing the database schema. The Adjacency List (`manager_id`) requires recursion. Instead, you can use the **Materialized Path** pattern (often implemented via the `LTREE` extension in PostgreSQL). 
+You store a string column representing the exact path: `root.engineering.backend.charlie`. 
+To find everyone under engineering, you simply run an indexed B-Tree query: `WHERE path <@ 'root.engineering'`. It returns the entire tree in 1 millisecond flat, completely eliminating the need for expensive Recursive CTEs, at the cost of making updates slightly harder.

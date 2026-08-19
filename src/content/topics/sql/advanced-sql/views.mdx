@@ -1,0 +1,70 @@
+---
+title: "Views"
+description: "Virtual tables for security and simplicity."
+importance: "MEDIUM"
+revisionTime: 2
+category: "SQL"
+subcategory: "Advanced SQL"
+order: 76
+---
+
+## Concept
+
+As a database grows, queries become monstrous. An application might rely on a 50-line query containing 6 `JOIN`s, 3 `CTE`s, and complex `CASE` logic just to generate a standard User Profile.
+If multiple different Node.js microservices all need to fetch User Profiles, copying and pasting that 50-line query across your entire codebase is a nightmare for maintainability.
+
+A **View** is a saved SQL query that acts exactly like a physical table. You save the 50-line query inside the database once, and give it a name. 
+Applications can then simply `SELECT * FROM view_name`.
+
+## The Rule of Virtual Tables
+
+A standard View **does not store data**. It takes up 0 bytes on the hard drive. 
+It is simply a macro. When you execute `SELECT * FROM active_users`, the database secretly unfolds the macro and executes the underlying 50-line `SELECT` statement live, in real-time. 
+*(If you want to permanently save the result to the hard drive to speed up performance, you must use a Materialized View).*
+
+## Syntax
+
+```sql
+-- Create the View once
+CREATE VIEW active_europe_users AS
+SELECT u.id, u.name, p.bio 
+FROM users u
+INNER JOIN profiles p ON u.id = p.user_id
+WHERE u.status = 'active' AND u.region = 'Europe';
+
+-- Use it like a normal table anywhere in your code
+SELECT * FROM active_europe_users ORDER BY name ASC;
+```
+
+## Real-World Usage
+
+### 1. Code Reusability (DRY)
+As mentioned, it prevents you from scattering 50-line SQL queries across your application code. If the database schema changes, you only update the View definition in the database, and the Node.js application continues to work flawlessly without needing a redeploy.
+
+### 2. Security (Row and Column Level Isolation)
+Imagine you hire a third-party marketing agency. They need to analyze your users, so they ask for SQL access.
+You absolutely cannot give them access to the `users` table, because it contains `password_hash` and `social_security_number`. 
+Instead, you create a View:
+```sql
+CREATE VIEW marketing_users AS 
+SELECT id, email, created_at FROM users;
+```
+You grant the marketing agency SQL access *only* to the `marketing_users` View. They can query it freely, but the database physically blocks them from ever seeing the passwords. 
+
+## Updatable Views
+
+Can you run an `UPDATE` or `INSERT` statement against a View?
+**Sometimes.**
+If the View is extremely simple (e.g., `SELECT * FROM users WHERE status = 'active'`), modern databases (like PostgreSQL) allow you to run `INSERT INTO view_name`. The database will automatically pass the insert straight through the View and apply it to the underlying `users` table.
+However, if the View contains **any** complexity (`JOIN`, `GROUP BY`, `DISTINCT`, `LIMIT`), the database physically cannot map an `UPDATE` statement backwards through the math. The View becomes strictly **Read-Only**.
+
+## Interview Questions
+
+**Q: A developer creates a View containing a massive, 10-table join. They write `SELECT * FROM massive_view WHERE user_id = 5`. Will the database execute the entire massive 10-table join for all 1 million users, and *then* filter for User 5?**
+**A:** No. The SQL Query Optimizer is incredibly smart. 
+When it unfolds the View macro, it doesn't execute the View blindly. It takes your outer `WHERE user_id = 5` condition and "pushes it down" deep into the underlying View's execution plan. The optimizer uses the B-Tree index on `user_id` instantly, ensuring that the 10-table join is only mathematically executed for that exact specific row. Views generally do not inherently harm performance compared to writing the raw query.
+
+**Q: Explain the difference between a View and a CTE (Common Table Expression).**
+**A:** 
+- A **CTE** (`WITH temp AS (...)`) is ephemeral. It only exists in RAM for the exact millisecond that specific query is running. The moment the query finishes, the CTE is completely destroyed.
+- A **View** is permanent metadata. It is saved in the database's internal schema dictionary. It persists across server reboots and can be queried by hundreds of different users and applications simultaneously forever.

@@ -1,0 +1,52 @@
+---
+title: "ACID Properties"
+description: "The mathematical guarantee that your database won't lose money."
+importance: "HIGH"
+revisionTime: 4
+category: "SQL"
+subcategory: "Transactions"
+order: 38
+---
+
+## Concept
+
+If you are building Twitter, and a "Like" fails to save to the database, nobody cares.
+If you are building a Bank, and a $100 transfer fails halfway through, someone loses $100 and you get sued.
+
+Relational databases (like PostgreSQL and MySQL) were explicitly designed for financial systems. To guarantee absolute data integrity even if the server catches on fire and loses power mid-calculation, they enforce the **ACID** properties.
+
+## The 4 Pillars of ACID
+
+### 1. Atomicity (The "All or Nothing" Rule)
+A transaction often consists of multiple SQL statements (e.g., Subtract $100 from Alice, Add $100 to Bob). 
+Atomicity guarantees that these multiple steps are treated as a single, indivisible "atom". 
+If step 1 succeeds, but the database crashes during step 2, the database will automatically **Rollback** (undo) step 1 when it reboots. It is mathematically impossible for a transaction to only partially complete.
+
+### 2. Consistency (The "No Garbage Data" Rule)
+Consistency ensures that a transaction can only bring the database from one valid state to another valid state. 
+It strictly enforces all rules, constraints (like `UNIQUE` or `FOREIGN KEY`), and triggers. If a transaction attempts to insert a string into an `INT` column, or insert an order for a user that doesn't exist, the entire transaction violently aborts. The database refuses to accept corruption.
+
+### 3. Isolation (The "Invisible" Rule)
+In a high-traffic app, Alice and Bob might both try to withdraw the last $100 from an ATM at the exact same millisecond. 
+Isolation ensures that concurrent transactions behave *as if they were executing sequentially* (one after another in a single-file line). While Alice's transaction is actively processing, her intermediate changes are completely invisible to Bob. Bob cannot see the $100 disappear until Alice's transaction is 100% finished and committed.
+
+### 4. Durability (The "Permanent" Rule)
+If the database says "Success," the data is safe forever. 
+Durability guarantees that once a transaction is committed, it will survive a catastrophic power failure immediately afterward. The database achieves this by writing the data to a physical file on the hard drive called the **Write-Ahead Log (WAL)** *before* it returns the "Success" message to the user. Even if the server loses power a microsecond later, it will read the WAL upon reboot and perfectly restore the data.
+
+## Trade-Offs: ACID vs NoSQL
+
+The strict enforcement of ACID properties requires massive computational overhead.
+- Maintaining **Atomicity** and **Isolation** requires the database to lock rows, which creates a bottleneck. Only one person can update a specific row at a time.
+- Maintaining **Durability** requires synchronous physical writes to a spinning hard drive (the WAL) before returning an HTTP response, limiting the maximum Write Throughput of the server.
+
+This is why massive applications (like Facebook or Uber) often offload non-critical data to **NoSQL** databases (like Cassandra or MongoDB). NoSQL databases generally sacrifice strict ACID guarantees in favor of **Eventual Consistency** (BASE properties), allowing them to process 100x more writes per second by keeping data in RAM and bypassing strict locking.
+
+## Interview Questions
+
+**Q: A developer claims their Node.js code guarantees Atomicity because they wrote: `await db.query(withdraw); await db.query(deposit);`. Why are they wrong?**
+**A:** This code executes two entirely separate, isolated SQL transactions. If the `withdraw` query succeeds, and the Node.js server crashes (or the network drops) before the `deposit` query executes, the database has absolutely no idea that the two queries were supposed to be related. The money is permanently destroyed. To achieve Atomicity, the developer must wrap both queries inside explicit `BEGIN;` and `COMMIT;` SQL statements, forcing the database engine itself to manage the "All or Nothing" rollback.
+
+**Q: Explain how the Write-Ahead Log (WAL) provides Durability without crippling performance.**
+**A:** Writing data directly into the complex B-Tree structures of a massive database file is very slow (Random I/O). If the database forced you to wait for this during a commit, the system would be unusable. 
+Instead, the database uses a **Write-Ahead Log**. The WAL is an append-only, sequential file. When you commit, the database just dumps the raw bytes to the very end of the WAL file (Sequential I/O, which is lightning fast) and returns "Success". A background worker leisurely updates the actual slow B-Trees in memory and flushes them to disk later. If the power fails, the B-Trees are corrupted, but upon reboot, the database simply replays the sequential WAL file from start to finish, perfectly rebuilding the B-Trees.

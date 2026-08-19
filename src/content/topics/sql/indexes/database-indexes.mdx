@@ -1,0 +1,75 @@
+---
+title: "Database Indexes"
+description: "How databases find data instantly."
+importance: "HIGH"
+revisionTime: 4
+category: "SQL"
+subcategory: "Indexes"
+order: 28
+---
+
+## Concept
+
+Imagine you walk into a library with 10 million books and you want to find *Harry Potter*. 
+If the books are thrown on the floor completely at random, you have to read the cover of every single book until you find it. This is called a **Full Table Scan**. It is $O(N)$ time complexity and will crash a production database under heavy load.
+
+A **Database Index** is like the card catalog at the front of the library. It is a separate, highly-organized data structure (usually a B-Tree) that physically stores a sorted copy of a specific column, along with a pointer (the hard drive sector address) to the actual row of data.
+
+When you query an indexed column, the database jumps into the sorted index, finds the value in $O(\log N)$ time, follows the pointer directly to the hard drive, and grabs the row in milliseconds.
+
+## Mental Model
+
+```mermaid
+flowchart LR
+    subgraph The Index (Sorted in RAM/Disk)
+        direction TB
+        A["1. Alice -> Pointer A"]
+        B["2. Bob -> Pointer B"]
+        C["3. Charlie -> Pointer C"]
+    end
+    
+    subgraph The Actual Table (Randomly on Hard Drive)
+        direction TB
+        R1["Row 99: Charlie, age 40, ..."]
+        R2["Row 1: Alice, age 25, ..."]
+        R3["Row 55: Bob, age 30, ..."]
+    end
+    
+    A -.-> R2
+    B -.-> R3
+    C -.-> R1
+```
+
+## Basic Syntax
+
+When you create a `PRIMARY KEY` or `UNIQUE` constraint, the database automatically creates a hidden index for you. For all other columns that you frequently search or filter by, you must create the index manually.
+
+```sql
+-- Create a basic B-Tree index on the email column
+CREATE INDEX idx_users_email ON users(email);
+
+-- Drop an index if it is no longer used
+DROP INDEX idx_users_email;
+```
+
+## Trade-Offs: The Double-Edged Sword
+
+If indexes make queries 1,000x faster, why don't we just index every single column in the table?
+
+Because indexes absolutely destroy **Write Performance**.
+
+When you execute an `INSERT`, `UPDATE`, or `DELETE` statement, the database doesn't just write the row to the main table. It must pause, go to the `idx_users_email` file, physically split the B-Tree open, and insert the new sorted value. 
+If a table has 20 columns, and you placed an index on all 20 columns, a single `INSERT` statement forces the database to write to the hard drive **21 times** (1 for the table, 20 for the indexes). This will cause massive locking and Disk I/O bottlenecks.
+
+**The Golden Rule:** Indexes drastically speed up READS, but drastically slow down WRITES. You must only index columns that are heavily used in `WHERE`, `JOIN`, or `ORDER BY` clauses.
+
+## Interview Questions
+
+**Q: A developer adds an index to the `status` column of the `orders` table. The column only contains three possible values: `PENDING`, `SHIPPED`, and `DELIVERED`. A month later, the DBA deletes the index. Why?**
+**A:** Because of **Low Cardinality**. 
+An index is only useful if it helps the database quickly eliminate the vast majority of rows. If a table has 10 million rows, and you query `WHERE status = 'SHIPPED'`, the index still points to 3.3 million rows. The database's query optimizer will mathematically determine that bouncing between the index and the hard drive 3.3 million times is actually slower than just reading the entire table straight off the disk (a Full Table Scan). The index is therefore ignored by the database, but it still slows down every single `INSERT` operation. It is pure dead weight.
+
+**Q: How do you know if your query is actually using the index you created?**
+**A:** You prepend the word **`EXPLAIN`** to your query.
+`EXPLAIN SELECT * FROM users WHERE email = 'test@mail.com';`
+This returns the database's internal Execution Plan. If you see the words `Seq Scan` (Sequential Scan), the database is ignoring your index. If you see `Index Scan` or `Index Only Scan`, the database successfully used the index.

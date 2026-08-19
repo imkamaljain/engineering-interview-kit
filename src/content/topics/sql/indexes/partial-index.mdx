@@ -1,0 +1,74 @@
+---
+title: "Partial Index"
+description: "Indexing only the data you care about."
+importance: "MEDIUM"
+revisionTime: 3
+category: "SQL"
+subcategory: "Indexes"
+order: 34
+---
+
+## Concept
+
+If a table has 10 million rows, a standard B-Tree index will contain 10 million pointers. This consumes massive disk space and slows down every single `INSERT` on the table.
+But what if you only ever search for a tiny, specific subset of those rows?
+
+A **Partial Index** (or Filtered Index) is a B-Tree that only indexes rows that match a specific `WHERE` clause. It allows you to create incredibly small, lightning-fast indexes that only track the data you actually care about.
+
+## Mental Model
+
+Imagine an `orders` table with 10 million rows.
+- 9,900,000 orders have `status = 'delivered'`.
+- 100,000 orders have `status = 'pending'`.
+
+You have a backend worker that constantly polls the database: `SELECT * FROM orders WHERE status = 'pending'`.
+If you create a standard index on `status`, the database builds a massive 10-million row B-Tree. 
+If you create a **Partial Index**, the database builds a tiny 100,000-row B-Tree that entirely ignores the delivered orders.
+
+## Syntax & Examples
+
+You simply add a `WHERE` clause to the `CREATE INDEX` statement.
+
+```sql
+-- Standard Index (Massive, slow to update)
+CREATE INDEX idx_orders_status ON orders(status);
+
+-- Partial Index (Tiny, lightning fast)
+CREATE INDEX idx_orders_pending ON orders(status) 
+WHERE status = 'pending';
+```
+
+## Real-World Use Cases
+
+### 1. Polling Queues
+As demonstrated above, if you use a SQL table as a makeshift message queue (processing `pending` items and marking them `completed`), a Partial Index ensures your workers can instantly find the pending items without the database having to maintain a massive index of the millions of already completed historical items.
+
+### 2. Soft Deletes
+If your application uses "Soft Deletes" (you never actually delete rows, you just set `deleted_at = NOW()`), every query in your application will look like `WHERE deleted_at IS NULL`.
+You can create Partial Indexes on your other columns that completely ignore deleted rows, keeping your active indexes small and fast.
+
+```sql
+-- An email index that completely ignores deleted users
+CREATE INDEX idx_active_users_email ON users(email) 
+WHERE deleted_at IS NULL;
+```
+
+### 3. Conditional Uniqueness
+You want to ensure a user can only have one "Active" subscription at a time, but they can have an unlimited number of "Canceled" subscriptions in their history.
+A standard Unique Index on `(user_id, status)` would prevent them from having two canceled subscriptions.
+A Partial Unique Index solves this perfectly:
+
+```sql
+CREATE UNIQUE INDEX idx_one_active_sub ON subscriptions(user_id) 
+WHERE status = 'active';
+```
+
+## Trade-Offs
+
+- **Pros:** Massive space savings. Drastically faster `INSERT`/`UPDATE` performance because the database doesn't have to update the index unless the row matches the filter condition.
+- **Cons:** Very brittle. The query optimizer will *only* use the Partial Index if your `SELECT` query's `WHERE` clause exactly matches or mathematically implies the index's `WHERE` clause. If a developer writes a slightly different query, the database will ignore the Partial Index and perform a Full Table Scan.
+
+## Interview Questions
+
+**Q: You have a Partial Index: `CREATE INDEX idx_pending ON orders(created_at) WHERE status = 'pending'`. A developer writes: `SELECT * FROM orders WHERE created_at > '2023-01-01'`. Will the database use the index?**
+**A:** **No.** The query does not include `WHERE status = 'pending'`. Because the Partial Index physically does not contain any data for orders that are 'delivered' or 'shipped', the database cannot use it to answer a generic question about all orders. It must ignore the index and perform a Full Table Scan. To use a Partial Index, the query must explicitly restrict its search space to match the index's filter.

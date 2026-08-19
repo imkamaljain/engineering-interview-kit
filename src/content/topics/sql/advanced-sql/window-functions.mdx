@@ -1,0 +1,90 @@
+---
+title: "Window Functions"
+description: "Performing math across rows without squashing them."
+importance: "HIGH"
+revisionTime: 4
+category: "SQL"
+subcategory: "Advanced SQL"
+order: 73
+---
+
+## Concept
+
+In the Fundamentals section, we learned that Aggregate Functions (`SUM`, `AVG`, `MAX`) take thousands of rows and "squash" them into a single summary row. If you try to select a normal column alongside an aggregate function, the query crashes.
+
+**Window Functions** are the magical solution to this.
+A Window Function performs an aggregate-like calculation across a set of rows, **but it does not squash the rows**. It calculates the answer and simply appends it as a new column to the existing, un-squashed rows.
+
+## The Basic Syntax (`OVER`)
+
+The `OVER()` clause is what transforms a normal aggregate function into a Window Function.
+
+*Goal: Show every employee's name and salary, but also show the total payroll of the entire company right next to them.*
+
+```sql
+SELECT 
+    name, 
+    salary,
+    -- The OVER() clause tells SUM to act as a Window Function
+    SUM(salary) OVER() AS company_total_payroll
+FROM employees;
+```
+
+**Result:**
+| name | salary | company_total_payroll |
+| :--- | :--- | :--- |
+| Alice | 100 | 250 |
+| Bob | 100 | 250 |
+| Charlie | 50 | 250 |
+
+We successfully mixed individual row data (`name`) with aggregated mathematical data (`250`) without crashing the database and without using slow Subqueries.
+
+## The Partitioning Rule (`PARTITION BY`)
+
+The `OVER()` clause by itself calculates the math over the entire table.
+But what if you want to calculate the math for specific groups? You use `PARTITION BY`. It is the exact equivalent of `GROUP BY`, but for Window Functions.
+
+*Goal: Show the employee's salary, and the average salary **of their specific department**.*
+
+```sql
+SELECT 
+    name, 
+    department,
+    salary,
+    AVG(salary) OVER(PARTITION BY department) AS dept_average
+FROM employees;
+```
+
+**Result:**
+| name | department | salary | dept_average |
+| :--- | :--- | :--- | :--- |
+| Alice | Engineering | 100 | 100 |
+| Bob | Engineering | 100 | 100 |
+| Charlie | Sales | 50 | 75 |
+| Dave | Sales | 100 | 75 |
+
+## The Sorting Rule (`ORDER BY`)
+
+If you add an `ORDER BY` clause inside the `OVER()` window, the math fundamentally changes. It no longer calculates a static aggregate. It calculates a **Running Total** (or cumulative aggregate) row-by-row.
+
+*Goal: Show the chronological, running total of our daily revenue.*
+
+```sql
+SELECT 
+    date,
+    daily_revenue,
+    SUM(daily_revenue) OVER(ORDER BY date ASC) AS cumulative_revenue
+FROM sales;
+```
+
+## Interview Questions
+
+**Q: A developer writes `SELECT name, SUM(salary) OVER() FROM employees WHERE SUM(salary) OVER() > 1000000;`. The database throws a syntax error. Why?**
+**A:** Window Functions are executed mathematically at the absolute end of the query lifecycle (during the `SELECT` phase, just before `ORDER BY`). 
+Because the `WHERE` clause is executed at the very beginning of the query (before rows are even evaluated), it is physically impossible to use a Window Function inside a `WHERE` clause. 
+To filter based on the result of a Window Function, you must wrap the entire query inside a **Common Table Expression (CTE)** or a Subquery, and apply the `WHERE` filter on the outside.
+
+**Q: Explain how `GROUP BY` and `PARTITION BY` differ architecturally.**
+**A:** 
+- `GROUP BY` physically destroys the individual rows. It takes 1,000 employees, smashes them into 5 department buckets, and outputs exactly 5 rows.
+- `PARTITION BY` (inside a Window Function) preserves the individual rows. It takes 1,000 employees, secretly calculates the math for the 5 departments in the background, and outputs all 1,000 original rows, just with the new mathematical answer tacked onto the end of each row.

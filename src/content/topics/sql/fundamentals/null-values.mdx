@@ -1,0 +1,99 @@
+---
+title: "NULL Values"
+description: "The billion-dollar mistake in database design."
+importance: "HIGH"
+revisionTime: 4
+category: "SQL"
+subcategory: "Fundamentals"
+order: 6
+---
+
+## Concept
+
+In SQL, `NULL` does not mean zero (`0`). It does not mean an empty string (`""`). 
+`NULL` means **"Unknown"** or **"Missing"**. 
+Because it represents an unknown state, it behaves bizarrely when you apply mathematical or logical operators to it. Understanding `NULL` is the source of 90% of SQL debugging headaches.
+
+## The Three-Valued Logic
+
+In standard programming languages (like Javascript), boolean logic has two states: `TRUE` or `FALSE`.
+SQL operates on **Three-Valued Logic**: `TRUE`, `FALSE`, or `NULL` (Unknown).
+
+If you ask SQL: *"Is 5 greater than Unknown?"*
+The answer is not True or False. The answer is **Unknown** (`NULL`).
+
+```sql
+-- All of these return NULL, NOT True/False!
+SELECT 5 > NULL;      -- Returns NULL
+SELECT 5 = NULL;      -- Returns NULL
+SELECT NULL = NULL;   -- Returns NULL (Unknown is not equal to Unknown)
+```
+
+## How to Check for NULL
+
+Because `NULL = NULL` evaluates to `NULL` (which acts as False in a `WHERE` clause), you **cannot** use the equals sign to find null values. You must use the special `IS` operator.
+
+```sql
+-- BAD CODE: Returns 0 rows, even if nulls exist!
+SELECT * FROM users WHERE phone_number = NULL;
+
+-- GOOD CODE: Returns the correct rows
+SELECT * FROM users WHERE phone_number IS NULL;
+SELECT * FROM users WHERE phone_number IS NOT NULL;
+```
+
+## NULL in Math and String Concatenation
+
+If you perform math or concatenation with a `NULL` value, the `NULL` acts like a black hole and instantly destroys the entire calculation.
+
+```sql
+-- Math
+SELECT 10 + 5 + NULL; -- Returns NULL
+
+-- String Concatenation (PostgreSQL)
+SELECT 'Hello ' || NULL || 'World'; -- Returns NULL
+```
+
+To fix this, you must use the **`COALESCE`** function. It takes a list of arguments and returns the first one that is NOT NULL.
+
+```sql
+-- If bonus is NULL, it falls back to 0.
+SELECT salary + COALESCE(bonus, 0) FROM employees;
+```
+
+## NULL in Aggregate Functions
+
+Aggregate functions (`SUM`, `AVG`, `COUNT`) completely ignore `NULL` values. This can heavily skew your results.
+
+| ID | Name | Score |
+| :--- | :--- | :--- |
+| 1 | Alice | 100 |
+| 2 | Bob | 0 |
+| 3 | Charlie| NULL |
+
+```sql
+SELECT COUNT(*) FROM users;       -- Returns 3 (Counts total rows)
+SELECT COUNT(score) FROM users;   -- Returns 2 (Ignores Charlie's NULL)
+SELECT AVG(score) FROM users;     -- Returns 50. (100 + 0 = 100 / 2 users). 
+                                  -- It does NOT divide by 3!
+```
+
+## Trade-Offs
+
+- **Pros:** Allows you to explicitly model missing data (e.g., a user hasn't provided their phone number yet, which is structurally different from providing an empty string).
+- **Cons:** **The `NOT IN` Trap.** Using `NULL` makes queries incredibly fragile and prone to silent failures.
+
+## Interview Questions
+
+**Q: Explain the catastrophic "NOT IN Trap" involving NULLs.**
+**A:** Imagine you want to find all employees who are NOT managers. You write:
+`SELECT * FROM employees WHERE id NOT IN (SELECT manager_id FROM departments);`
+If the `departments` table contains even a single row where `manager_id` is `NULL`, the subquery returns a list like `(1, 2, NULL)`.
+The database evaluates `id NOT IN (1, 2, NULL)` as `id != 1 AND id != 2 AND id != NULL`.
+Because `id != NULL` evaluates to `NULL` (Unknown), the entire `AND` chain evaluates to Unknown. The query will silently return **0 rows**, completely failing without throwing an error.
+**Fix:** You must filter out NULLs explicitly: `NOT IN (SELECT manager_id FROM departments WHERE manager_id IS NOT NULL)`, or use `NOT EXISTS` which handles NULLs correctly.
+
+**Q: Why do many Database Administrators enforce a strict `NOT NULL` constraint with a default value on almost every column, instead of allowing NULLs?**
+**A:** 
+1. **Predictability:** It forces the application code to explicitly handle data states, rather than relying on the Three-Valued Logic black hole that causes bugs.
+2. **Performance:** Depending on the database engine, storing `NULL` requires a separate hidden bitmap on the physical hard drive page to track which columns are null. Furthermore, B-Tree indexes handle `NULL` values inefficiently (some databases refuse to index `NULL` values entirely). Using `NOT NULL DEFAULT ''` simplifies the physical storage and guarantees index utilization.

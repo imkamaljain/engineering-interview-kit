@@ -1,0 +1,74 @@
+---
+title: "SQL Joins"
+description: "Combining data across multiple tables."
+importance: "HIGH"
+revisionTime: 3
+category: "SQL"
+subcategory: "Joins"
+order: 21
+---
+
+## Concept
+
+In a normalized relational database, data is deliberately split into multiple separate tables to avoid duplication. 
+For example, you have a `users` table containing names, and an `orders` table containing purchase amounts. If you want to know "Which user bought a $500 laptop?", you cannot find the answer in a single table.
+
+A **JOIN** is an operation that horizontally links rows from two or more tables together based on a related column between them (usually a Primary Key to Foreign Key relationship).
+
+## Mental Model: The Venn Diagram
+
+The easiest way to understand JOINs is using Venn Diagrams. Imagine Table A is the Left circle, and Table B is the Right circle.
+
+- **INNER JOIN:** Only the overlapping intersection. (Users who *have* placed orders).
+- **LEFT JOIN:** The entire Left circle, plus the overlap. (ALL users, regardless of whether they placed an order or not).
+- **RIGHT JOIN:** The entire Right circle, plus the overlap. (ALL orders, regardless of whether they have a user or not).
+- **FULL OUTER JOIN:** Both entire circles. (Everything, everywhere).
+
+## The Basic Syntax
+
+Every JOIN follows the same structural pattern:
+
+```sql
+SELECT columns 
+FROM LeftTable
+[TYPE] JOIN RightTable 
+  ON LeftTable.foreign_key = RightTable.primary_key;
+```
+
+**Example:**
+```sql
+SELECT users.name, orders.amount 
+FROM users 
+INNER JOIN orders 
+  ON users.id = orders.user_id;
+```
+
+## How the Database Executes a JOIN
+
+When you write a JOIN, you are telling the database *what* you want. The database's internal **Query Optimizer** decides *how* to physically execute it on the hard drive. It typically chooses one of three algorithms:
+
+1. **Nested Loop Join:** 
+   - *How it works:* It acts like a massive `for` loop. For every single row in Table A, it scans Table B looking for a match.
+   - *When it's used:* When joining very small tables, or when using non-equality conditions (`>`). $O(N \times M)$ time.
+2. **Hash Join:** 
+   - *How it works:* It takes the smaller table, scans it completely, and builds an in-memory Hash Table using the join column as the key. Then it scans the larger table, instantly hashing and probing the in-memory Hash Table for matches.
+   - *When it's used:* The standard choice for joining massive, unsorted tables. Requires significant RAM. $O(N + M)$ time.
+3. **Merge Join (Sort-Merge Join):**
+   - *How it works:* It physically sorts both tables by the join column first. Once sorted, it simply zips them together using two pointers, scanning down the list.
+   - *When it's used:* When both tables are already perfectly sorted (e.g., you are joining on columns that have B-Tree Indexes). Extremely fast and memory efficient.
+
+## Trade-Offs
+
+- **Pros:** It is the foundational superpower of Relational Databases. It allows you to store data efficiently (Normalized) while reconstructing complex, nested data structures on the fly.
+- **Cons:** **The Cartesian Explosion.** If you write a `JOIN` without an `ON` clause, or with a severely flawed `ON` clause, the database will multiply every row in Table A by every row in Table B. If both tables have 1 million rows, the database will attempt to create a temporary table in RAM with 1 Trillion rows, instantly crashing the server.
+
+## Interview Questions
+
+**Q: A developer needs to join the `users` table (100 million rows) to the `orders` table (500 million rows). Both tables are partitioned across 10 different database servers (Sharding). How do you execute this JOIN?**
+**A:** You **cannot** execute a standard SQL JOIN across distributed shards because the database engine does not have access to the data sitting on a different physical server's hard drive. 
+To join distributed data, you must perform an **Application-Level Join**. Your Node.js server queries Shard 1 for the Users. It then takes those User IDs, sends a massive `SELECT * FROM orders WHERE user_id IN (...)` query to Shard 2, brings both datasets into the Node.js server's RAM, and manually merges them using Javascript. This is why highly relational data should generally not be sharded.
+
+**Q: What is the difference between `WHERE` and `ON` when filtering in a `LEFT JOIN`?**
+**A:** This is a classic trap.
+- **`ON` clause:** Determines *which rows get joined together*. If the condition fails in a `LEFT JOIN`, the row from the Left Table is *still kept in the output*, but the right side simply becomes `NULL`.
+- **`WHERE` clause:** Filters the *final result set* after the JOIN is completely finished. If you put a condition here (e.g., `WHERE orders.amount > 100`), and the order amount was `NULL` because it failed the join, the `WHERE` clause evaluates to False and completely deletes the Left Table's row from the final output, accidentally turning your `LEFT JOIN` into an `INNER JOIN`.

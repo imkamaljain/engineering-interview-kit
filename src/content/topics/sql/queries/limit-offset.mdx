@@ -1,0 +1,76 @@
+---
+title: "LIMIT & OFFSET"
+description: "Fetching data in chunks."
+importance: "MEDIUM"
+revisionTime: 2
+category: "SQL"
+subcategory: "Queries"
+order: 15
+---
+
+## Concept
+
+If a table has 10 million rows, returning all of them at once will crash your Node.js application (Out of Memory) and freeze the database network connection.
+To prevent this, you use **`LIMIT`** to restrict the maximum number of rows returned, and **`OFFSET`** to skip a specific number of rows before beginning to return data. 
+Together, they form the foundation of traditional **Pagination**.
+
+## Basic Syntax
+
+The `LIMIT` and `OFFSET` clauses are always the absolute last commands in a SQL query, coming even after `ORDER BY`.
+
+```sql
+-- Give me exactly 10 rows
+SELECT * FROM users LIMIT 10;
+
+-- Skip the first 50 rows, then give me exactly 10 rows (Page 6)
+SELECT * FROM users LIMIT 10 OFFSET 50;
+```
+
+### The Unwritten Rule: Always use ORDER BY
+If you use `LIMIT`, you **must** use `ORDER BY`.
+If you don't, the database will return whatever 10 rows it happens to find first on the hard drive. If you run the query twice, you might get 10 entirely different rows. To guarantee consistent pagination, you must sort the data.
+
+```sql
+SELECT * FROM users 
+ORDER BY created_at DESC 
+LIMIT 10 OFFSET 50;
+```
+
+## Trade-Offs: The Deep Pagination Problem
+
+Traditional `OFFSET` pagination is mathematically flawed and fails at scale.
+
+If a user clicks to Page 10,000 of a massive dataset, the backend generates this query:
+`SELECT * FROM users ORDER BY created_at DESC LIMIT 10 OFFSET 100000;`
+
+**What the database physically does:**
+1. Sorts the table by `created_at`.
+2. Reads Row 1 from the hard drive. Discards it.
+3. Reads Row 2 from the hard drive. Discards it.
+4. It manually reads and discards 100,000 rows.
+5. It finally reads and returns rows 100,001 to 100,010.
+
+*This is $O(N)$ time complexity.* As the user clicks deeper into the pages, the query takes exponentially longer. At 10 million rows, the database will time out.
+
+## Real-World Usage: Keyset Pagination (Cursor Pagination)
+
+To solve the Deep Pagination Problem, modern applications (like Twitter and Facebook feeds) completely abandon `OFFSET`. Instead, they use **Keyset Pagination**.
+
+The client app remembers the exact ID of the *last* item they saw on the screen (e.g., `id = 95`).
+When they request the next page, they pass that ID to the backend.
+
+```sql
+-- The FAST way to paginate
+SELECT * FROM users 
+WHERE id > 95 
+ORDER BY id ASC 
+LIMIT 10;
+```
+Because `id` is a B-Tree Index, the database instantly jumps directly to node 95 in the tree ($O(\log N)$ time) and grabs the next 10 items. It doesn't have to read and discard anything. This remains lightning fast even if there are a billion rows.
+
+## Interview Questions
+
+**Q: In a generic `LIMIT/OFFSET` query, what happens if new data is inserted while the user is actively clicking through the pages?**
+**A:** This causes the **Data Drift** bug. 
+If the user is on Page 1 (Items 1-10), and someone suddenly inserts a new item at the top of the table, everything shifts down by 1. 
+When the user clicks Page 2 (OFFSET 10), they will see Item 10 again, because Item 10 was pushed into the 11th position. This results in users seeing duplicate items, or entirely missing items. Cursor-based (Keyset) pagination prevents this bug entirely, because it asks for items strictly *after* a specific anchor point, rather than relying on brittle mathematical offsets.

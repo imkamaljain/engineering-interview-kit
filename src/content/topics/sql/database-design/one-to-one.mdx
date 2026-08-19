@@ -1,0 +1,61 @@
+---
+title: "One-to-One (1:1)"
+description: "Splitting a single entity across two tables."
+importance: "LOW"
+revisionTime: 2
+category: "SQL"
+subcategory: "Database Design"
+order: 52
+---
+
+## Concept
+
+A **One-to-One (1:1)** relationship exists when exactly one row in Table A is linked to exactly one row in Table B, and vice-versa.
+
+In strict database theory, if two tables have a true 1:1 relationship, they should almost always just be merged into a single table. Because of this, explicit 1:1 relationships are rare. However, they are occasionally used for specific architectural or security reasons.
+
+## How to Implement It
+
+You implement a 1:1 relationship by placing a `UNIQUE` constraint on the Foreign Key.
+
+```sql
+CREATE TABLE users (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255)
+);
+
+CREATE TABLE user_profiles (
+    id SERIAL PRIMARY KEY,
+    -- The Foreign Key points to users
+    user_id INT REFERENCES users(id),
+    bio TEXT,
+    -- The UNIQUE constraint makes it mathematically impossible 
+    -- for a user to have more than one profile.
+    UNIQUE(user_id) 
+);
+```
+
+## When SHOULD you use a 1:1 Relationship?
+
+If you can just merge the tables, why use a 1:1 relationship?
+
+### 1. Vertical Partitioning (Performance)
+Imagine a `users` table with 50 columns. 5 of those columns are tiny strings (`name`, `email`) used on every single page of your app. The other 45 columns are massive JSON blobs of user preferences, rarely-used biographies, and heavy profile images.
+If you keep them in one table, the database has to load massive, bloated rows into RAM just to check a user's email during login.
+By splitting the heavy columns into a separate `user_preferences` table via a 1:1 relationship, you keep the primary `users` table incredibly lean and fast for 99% of your queries.
+
+### 2. Security & Compliance (PCI/HIPAA)
+If you are storing highly sensitive data (like a Social Security Number or a Credit Card token), you do not want it sitting in the main `users` table where a junior developer might accidentally `SELECT *` and log it to the console.
+You place the sensitive data in a separate `user_secure_data` table (1:1), place extremely strict row-level security policies on it, and require explicit, audited `JOIN`s to access it.
+
+### 3. Circumventing Database Limits
+Older databases often had a hard limit on the physical width of a single row (e.g., PostgreSQL rows cannot easily exceed 8KB without triggering slower "TOAST" storage). If your table design legitimately requires 300 columns, you are forced to split it into `users_part_1` and `users_part_2` using a 1:1 relationship just to fit it on the hard drive.
+
+## Interview Questions
+
+**Q: In a 1:1 relationship between `users` and `user_profiles`, which table should hold the Foreign Key?**
+**A:** The table that is "Optional" or dependent should hold the Foreign Key. 
+A user can exist without a profile, but a profile cannot exist without a user. Therefore, the `user_profiles` table should hold the `user_id` Foreign Key. If you put `profile_id` on the `users` table, you would have millions of `NULL` values for users who haven't set up a profile yet.
+
+**Q: A developer creates a 1:1 relationship but forgets to add the `UNIQUE` constraint on the Foreign Key. What happens?**
+**A:** The database mathematically degenerates into a **One-to-Many (1:N)** relationship. Because there is no `UNIQUE` constraint, nothing stops the application from inserting 5 different rows into the `user_profiles` table that all point to the exact same `user_id`. When the backend attempts to fetch "the" user profile, it will unexpectedly receive an array of 5 profiles, likely crashing the application.
