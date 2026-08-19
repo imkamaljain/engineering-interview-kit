@@ -1,0 +1,69 @@
+---
+title: "Error Handling"
+description: "Best practices for handling operational and programmer errors in Node.js."
+importance: "HIGH"
+revisionTime: 4
+category: "Node.js"
+subcategory: "Errors"
+order: 34
+---
+
+## TL;DR
+
+Proper error handling in Node.js prevents the server from crashing unexpectedly and ensures clients receive meaningful HTTP status codes. Errors are typically divided into **Operational Errors** (expected, like "File not found") and **Programmer Errors** (unexpected bugs, like reading property of undefined).
+
+## Mental Model
+
+```mermaid
+flowchart TD
+    Error["Error Occurs"]
+    Type{"Is it Operational\nor Programmer?"}
+    
+    Type -->|Operational\n(e.g., DB Timeout)| Catch["Try/Catch or .catch()"]
+    Catch --> Log["Log the warning"]
+    Log --> Respond["Return HTTP 500 / 400"]
+    
+    Type -->|Programmer\n(e.g., TypeError)| Crash["Crash the App!"]
+    Crash --> Restart["Process Manager (PM2)\nrestarts the app"]
+```
+
+## How It Works
+
+1.  **Synchronous Code**: Handled using standard `try...catch` blocks.
+2.  **Asynchronous (Callbacks)**: Handled using the Error-First callback pattern (`if (err) return cb(err)`).
+3.  **Asynchronous (Promises)**: Handled using `.catch()` or `try...catch` combined with `async/await`.
+
+You should define a custom `AppError` class to distinguish your expected operational errors from random Node.js/V8 crashes.
+
+## Example
+
+```javascript
+// Custom Error Class
+class AppError extends Error {
+  constructor(message, statusCode) {
+    super(message);
+    this.statusCode = statusCode;
+    this.isOperational = true; // Marks this as an expected error
+    Error.captureStackTrace(this, this.constructor);
+  }
+}
+
+// In an Express Route
+app.get('/user/:id', async (req, res, next) => {
+  try {
+    const user = await db.getUser(req.params.id);
+    if (!user) throw new AppError('User not found', 404);
+    res.json(user);
+  } catch (err) {
+    next(err); // Pass to global error handler
+  }
+});
+```
+
+## Common Interview Questions
+
+### Should you ever swallow errors?
+No. An empty `catch(e) {}` block (swallowing) makes debugging impossible. At the very least, log the error.
+
+### How do you handle errors centrally in Express?
+You create a middleware function with exactly **four arguments** `(err, req, res, next)`. Express recognizes this specific signature as the global error handler. All errors passed to `next(err)` will end up here, allowing you to format a consistent JSON response.

@@ -1,0 +1,76 @@
+---
+title: "GraphQL vs REST"
+description: "Why Facebook reinvented data fetching."
+importance: "HIGH"
+revisionTime: 5
+category: "System Design"
+subcategory: "API & Architecture"
+order: 56
+---
+
+## Concept
+
+REST is great, but it has a fundamental flaw: the Server dictates exactly what the Client gets. 
+If a mobile app only needs a user's `name` to render a header, it calls `GET /users/123`. The REST API returns the `name`, but also the `email`, `address`, `credit_card_hash`, and 50 other fields. This wastes massive amounts of mobile bandwidth.
+**GraphQL** flips the paradigm. The Server defines what data is *available*, but the Client explicitly requests *only* what it needs.
+
+## Mental Model
+
+```mermaid
+flowchart LR
+    subgraph REST (Under/Over-fetching)
+        Client1[Client] -->|1. GET /users/1| API1[REST API]
+        API1 -.->|Returns 50 User fields| Client1
+        Client1 -->|2. GET /users/1/posts| API1
+        API1 -.->|Returns 50 Posts| Client1
+        Note1["Requires multiple network trips to assemble a page."]
+    end
+
+    subgraph GraphQL (Precision)
+        Client2[Client] -->|1. POST { user(1){ name, posts{ title } } }| API2[GraphQL API]
+        API2 -.->|Returns exactly name and titles| Client2
+        Note2["One single network trip. Exact data payload."]
+    end
+```
+
+## The 3 Core GraphQL Concepts
+
+1. **The Schema (Strong Typing):** The server defines a strict graph of types.
+   ```graphql
+   type User { id: ID!, name: String!, posts: [Post!]! }
+   type Post { id: ID!, title: String! }
+   ```
+2. **Queries (Reads):** The client sends a nested JSON-like structure to ask for data.
+   ```graphql
+   query { user(id: "1") { name, posts { title } } }
+   ```
+3. **Mutations (Writes):** The client sends a command to alter data (similar to POST/PUT in REST).
+   ```graphql
+   mutation { createPost(userId: "1", title: "Hello") { id } }
+   ```
+
+## Trade-Offs
+
+**Pros of GraphQL:**
+- **No Over-fetching:** Saves massive bandwidth, especially for mobile users on 3G networks.
+- **No Under-fetching:** You can fetch a User, their Posts, and the Comments on those posts in *one single network request*. In REST, this might require 15 separate `GET` requests.
+- **Excellent Developer Experience:** Tools like GraphiQL automatically generate interactive documentation and autocomplete for the frontend team based on the backend schema.
+
+**Cons of GraphQL:**
+- **The N+1 Query Problem:** Because resolvers are nested, fetching 10 Users and their Posts can accidentally trigger 1 database query for the users, and 10 separate queries for the posts (11 queries total). (Fixed by using Facebook's `DataLoader` utility to batch queries).
+- **Caching is a Nightmare:** In REST, `GET /users/1` can be cached seamlessly by Cloudflare or standard CDNs. In GraphQL, everything is a `POST /graphql` request with a massive, unique body. Standard CDNs cannot cache this. You have to implement complex Application-level caching.
+
+## Real-World Usage
+
+- **Facebook:** Invented GraphQL to solve the problem of rendering complex mobile news feeds efficiently.
+- **GitHub:** Migrated their public API from REST (v3) to GraphQL (v4) because third-party developers were making thousands of REST calls to calculate simple repository statistics.
+
+## Interview Questions
+
+**Q: In REST, we use HTTP status codes (like 404 Not Found) to handle errors. How does GraphQL handle errors?**
+**A:** GraphQL almost always returns an **HTTP 200 OK**, even if the query completely failed! Instead of using HTTP status codes, GraphQL returns a JSON payload containing an `errors` array alongside the `data` object. The frontend must parse the JSON and inspect the `errors` array to determine what went wrong. This breaks traditional HTTP monitoring tools.
+
+**Q: A malicious user sends a GraphQL query that asks for a User, their Posts, the Author of those Posts, the Posts of that Author... infinitely nesting the query. This will crash your database. How do you prevent this?**
+**A:** This is a classic GraphQL DoS attack. You must implement two defenses on your GraphQL server:
+1. **Query Depth Limiting:** Reject any query that nests deeper than 5 or 6 levels.
+2. **Query Complexity Analysis (Cost Limiting):** Assign a "cost" to fields. A scalar like `name` costs 1 point. A connection like `posts` costs 10 points. If the total cost of the incoming query exceeds a maximum threshold (e.g., 1000 points), reject it before executing any resolvers.

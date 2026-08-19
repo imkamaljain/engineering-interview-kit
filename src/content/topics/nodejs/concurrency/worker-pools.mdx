@@ -1,0 +1,70 @@
+---
+title: "Worker Pools"
+description: "Managing a pool of worker threads efficiently to avoid startup overhead."
+importance: "HIGH"
+revisionTime: 4
+category: "Node.js"
+subcategory: "Concurrency"
+order: 27
+---
+
+## TL;DR
+
+A **Worker Pool** is a design pattern where a fixed number of worker threads are created upfront and kept alive. Tasks are sent to a queue, and idle workers pick up tasks from the queue. This avoids the massive performance penalty of repeatedly spinning up and destroying V8 engine instances.
+
+## Mental Model
+
+```mermaid
+flowchart TD
+    App["Node.js Main Thread"]
+    TaskQueue["Task Queue"]
+    
+    subgraph Worker Pool (Fixed Size)
+        W1["Worker 1 (Idle)"]
+        W2["Worker 2 (Busy)"]
+        W3["Worker 3 (Idle)"]
+    end
+
+    App -->|Submits task| TaskQueue
+    TaskQueue -->|Dispatches| W1
+    TaskQueue -->|Dispatches| W3
+```
+
+## How It Works
+
+Creating a new thread with `worker_threads` is expensive because it requires allocating memory and instantiating a new V8 JavaScript engine. 
+
+If you create a new thread for every incoming HTTP request that needs CPU work, your server will slow down and crash. Instead:
+1. Initialize a pool of workers (e.g., 4 threads) on startup.
+2. When a request needs CPU work, push the data to a queue.
+3. The pool manager sends the data to an idle worker via `postMessage`.
+4. When the worker finishes, it sends the result back and becomes idle, ready for the next task.
+
+## Example
+
+*Writing a robust worker pool from scratch is complex. In production, you should use established libraries like `piscina` or `workerpool`.*
+
+```javascript
+// Using the popular 'piscina' library
+const Piscina = require('piscina');
+const path = require('path');
+
+// Initialize the pool once
+const pool = new Piscina({
+  filename: path.resolve(__dirname, 'heavy-math-worker.js')
+});
+
+async function handleRequest(req, res) {
+    // Submits the task to the queue and waits for an available worker
+    const result = await pool.run({ a: 10, b: 20 });
+    res.send(`Result: ${result}`);
+}
+```
+
+## Common Interview Questions
+
+### Why not just create a new Worker Thread on the fly?
+Bootstrapping a new V8 isolate takes tens of milliseconds and significant memory. Doing this inside a highly concurrent endpoint will result in extreme memory consumption and high latency. Worker pools amortize this cost by reusing threads.
+
+### How do you determine the optimal size of a worker pool?
+For CPU-bound tasks, the pool size should generally match the number of physical CPU cores available (e.g., `os.cpus().length`). Making the pool larger than the number of cores causes the OS to context-switch between threads, degrading performance.

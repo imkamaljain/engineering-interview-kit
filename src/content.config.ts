@@ -9,6 +9,8 @@ const topics = defineCollection({
     importance: z.enum(['HIGH', 'MEDIUM', 'LOW']).default('MEDIUM'),
     revisionTime: z.number().default(3), // minutes
     category: z.string(),
+      subcategory: z.string().optional(),
+      order: z.number().optional(),
   }),
 });
 

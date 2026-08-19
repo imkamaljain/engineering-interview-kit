@@ -1,0 +1,67 @@
+---
+title: "Database Replication"
+description: "Duplicating data across servers for availability and read scaling."
+importance: "HIGH"
+revisionTime: 4
+category: "System Design"
+subcategory: "Databases"
+order: 17
+---
+
+## Concept
+
+If your entire application relies on a single database server, you have a massive Single Point of Failure (SPOF). **Replication** solves this by keeping identical copies of your database on multiple servers. It provides High Availability (failover if the main DB dies) and allows you to scale read-heavy workloads.
+
+## Mental Model: Primary-Replica Architecture
+
+```mermaid
+flowchart TD
+    App[App Servers]
+    
+    subgraph Database Cluster
+        Primary[(Primary DB\nWrites & Reads)]
+        Replica1[(Replica 1\nReads Only)]
+        Replica2[(Replica 2\nReads Only)]
+    end
+    
+    App -->|Write (INSERT/UPDATE)| Primary
+    App -.->|Read (SELECT)| Replica1
+    App -.->|Read (SELECT)| Replica2
+    
+    Primary -->|Async Replication Stream| Replica1
+    Primary -->|Async Replication Stream| Replica2
+```
+
+## How It Works
+
+**Primary-Replica (Master-Slave):**
+- You have one Primary node. It is the ONLY node allowed to accept Writes (`INSERT`, `UPDATE`, `DELETE`).
+- You have multiple Replica nodes. They are strictly Read-Only.
+- When data is written to the Primary, it streams a log of the changes to the Replicas, which apply the changes to their own disks.
+- **Failover:** If the Primary crashes, a monitoring tool instantly promotes one of the Replicas to become the new Primary, and the system stays online.
+
+**Synchronous vs Asynchronous Replication:**
+- **Async (Default):** Primary saves the data, replies "Success" to the user, and *then* sends it to the Replicas. It's very fast, but if the Primary crashes before sending the data, the data is lost forever.
+- **Sync:** Primary saves the data, sends it to the Replicas, and *waits* for them to confirm they saved it before replying to the user. It guarantees no data loss, but is extremely slow.
+
+## Trade-Offs
+
+- **Pros:** Massive boost to Read throughput. You can add 10 replicas to handle a massive spike in read traffic. Excellent disaster recovery.
+- **Cons:** It does NOT help with Write throughput (all writes still bottleneck at the single Primary). It introduces **Replication Lag**.
+
+## Real-World Usage
+
+- **Read-Heavy Apps:** Apps like Twitter or Reddit have a 100:1 Read-to-Write ratio. A single Primary handles all the new posts, while dozens of Replicas handle the millions of users reading the posts.
+- **Multi-Region Deployments:** You put the Primary in the US, and Read-Replicas in Europe and Asia. European users query their local replica for 10ms latency instead of traveling across the ocean.
+
+## Interview Questions
+
+**Q: A user creates a new account. They are immediately redirected to their profile page, but they get a "User Not Found" error. If they refresh the page 2 seconds later, their profile appears. What is happening?**
+**A:** This is the classic **Replication Lag** problem in an Asynchronous setup.
+1. The App Server sent the `INSERT` to the Primary Database.
+2. The user was redirected, and the App Server sent a `SELECT` query to a Read-Replica.
+3. Because replication takes a few milliseconds/seconds, the data had not reached the Replica yet. It returned nothing.
+**Fix:** Implement "Read-After-Write Consistency". Force the App Server to read from the *Primary* database for the first 5 seconds after a user performs a write action, before falling back to querying Replicas.
+
+**Q: Explain Active-Active (Multi-Master) Replication and why it is so difficult.**
+**A:** In Multi-Master, *all* nodes can accept Writes simultaneously. It solves the write-bottleneck problem, but introduces horrific conflict resolution issues. If User A updates their name to "Alice" on Node 1, and User B updates the same account to "Bob" on Node 2 at the exact same millisecond, the databases will replicate the conflicting data to each other. Resolving these collisions requires complex Vector Clocks (like in DynamoDB) or CRDTs, and is notoriously hard to get right in relational databases.

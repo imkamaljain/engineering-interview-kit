@@ -1,0 +1,84 @@
+---
+title: "Error Wrapping"
+description: "Adding context to errors while preserving the original cause."
+importance: "HIGH"
+revisionTime: 3
+category: "Go"
+subcategory: "Errors"
+order: 27
+---
+
+## TL;DR
+
+When you receive an error from a database call and want to return it up the stack, you shouldn't just return it directly (it lacks context). You also shouldn't convert it to a string (it destroys the original type). Instead, you **Wrap** the error using `fmt.Errorf("context: %w", err)`. This adds your custom message while keeping the original error completely intact inside it.
+
+## Mental Model
+
+```mermaid
+flowchart TD
+    DBError["sql.ErrNoRows\n(Original)"]
+    
+    Wrap1["fmt.Errorf('fetch user: %w', err)"]
+    Wrap2["fmt.Errorf('login failed: %w', err)"]
+    
+    DBError -->|Wrapped inside| Wrap1
+    Wrap1 -->|Wrapped inside| Wrap2
+    
+    Note right of Wrap2: The error is now a nested onion:\n"login failed: fetch user: sql: no rows in result set"
+```
+
+## How It Works
+
+Introduced in Go 1.13, error wrapping creates a linked list of errors (an "onion"). 
+The `%w` verb inside `fmt.Errorf` is the magic key. It creates a special error struct that holds:
+1. The new formatted string.
+2. A pointer to the original error.
+
+This allows higher levels of the application to "unwrap" the onion and inspect the root cause.
+
+## Example
+
+```go
+package main
+
+import (
+	"errors"
+	"fmt"
+)
+
+// The base, original error
+var ErrDatabaseTimeout = errors.New("database connection timed out")
+
+func fetchUserFromDB() error {
+    // We get a low-level error from the DB
+	err := ErrDatabaseTimeout 
+	
+	// We wrap it to add context: "What were we doing when it failed?"
+	return fmt.Errorf("failed to fetch user: %w", err)
+}
+
+func handleLogin() error {
+	err := fetchUserFromDB()
+	if err != nil {
+	    // We wrap it again at the business logic layer
+		return fmt.Errorf("login process aborted: %w", err)
+	}
+	return nil
+}
+
+func main() {
+	err := handleLogin()
+	
+	// Prints the full "stack trace" of context:
+	// login process aborted: failed to fetch user: database connection timed out
+	fmt.Println(err)
+}
+```
+
+## Common Interview Questions
+
+### Should I wrap every error?
+Usually, yes. Wrapping provides an invaluable audit trail in your logs. However, be careful not to wrap errors that contain sensitive information (like API keys or user passwords) if that error is going to be returned directly to an external HTTP client.
+
+### How do I unwrap an error manually?
+You can use the `errors.Unwrap(err)` function. If the error was wrapped using `%w`, it returns the inner error. If it wasn't wrapped, it returns `nil`. However, 99% of the time, you don't unwrap manually; you use `errors.Is()` or `errors.As()` to let the standard library unwrap and check the onion for you.

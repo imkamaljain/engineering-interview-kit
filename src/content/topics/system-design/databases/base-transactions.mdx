@@ -1,0 +1,58 @@
+---
+title: "BASE Transactions"
+description: "Trading absolute correctness for massive scalability."
+importance: "MEDIUM"
+revisionTime: 3
+category: "System Design"
+subcategory: "Databases"
+order: 21
+---
+
+## Concept
+
+In distributed NoSQL systems, scaling across hundreds of servers makes strict ACID transactions nearly impossible without destroying performance (see the CAP Theorem). Instead, these systems embrace the **BASE** philosophy: Basically Available, Soft state, Eventual consistency.
+
+## The 3 Pillars of BASE
+
+### 1. Basically Available
+The system guarantees availability (uptime). If a user requests data, the system will respond. Even if part of the database cluster crashes, or there is a network partition, the system will continue to function and accept writes.
+
+### 2. Soft State
+Unlike ACID databases where data must perfectly adhere to strict schemas and rules at all times, the state of a BASE system is "soft". It is allowed to be temporarily inaccurate or out of sync across different nodes. The state of the system can change over time even without input, as background replication processes run.
+
+### 3. Eventual Consistency
+The system does not guarantee that every node has the exact same data right now. However, it *does* guarantee that if no new writes are made to the system, eventually (usually within milliseconds), all nodes will catch up, sync together, and become perfectly consistent.
+
+## Mental Model: The Twitter Like Button
+
+```mermaid
+flowchart LR
+    User[User Clicks Like] --> NodeA[Node A (US East)\nLikes: 101]
+    
+    NodeA -.->|Async Replication\n(Eventually...)| NodeB[Node B (Europe)\nLikes: 101]
+    
+    UserEU[European User] --> NodeB
+    Note1["If UserEU requests data\nbefore replication finishes,\nthey see 100 Likes. That's fine!"]
+```
+
+## Trade-Offs
+
+- **Pros:** Massive horizontal scalability, high availability, incredibly fast write speeds (because nodes don't have to wait to synchronize with each other before acknowledging a write).
+- **Cons:** Developers must write complex code to handle data conflicts. If Node A and Node B both accept a write at the same time, the system will eventually have to figure out which one "wins" (usually via Last-Write-Wins timestamps). You cannot use BASE for financial systems.
+
+## Real-World Usage
+
+- **Amazon Shopping Cart:** If Amazon's database goes down, you can still add items to your cart. Amazon saves it to a backup node. You might temporarily see items disappear and reappear if you refresh the page and hit a different node (Soft State), but Amazon prefers this slightly confusing UX over preventing you from shopping (Basically Available). Eventually, the nodes merge the carts together (Eventual Consistency).
+- **Cassandra / DynamoDB:** These NoSQL databases are built entirely around the BASE philosophy.
+
+## Interview Questions
+
+**Q: Can you achieve ACID transactions in a Microservices architecture where each service has its own database?**
+**A:** It is extremely difficult. The classic solution is the **Two-Phase Commit (2PC)**, where a central coordinator locks the databases of both services, prepares the writes, and then commits them together. However, 2PC is slow, blocks resources, and introduces a Single Point of Failure.
+The modern industry standard is to abandon ACID across microservices and use the **Saga Pattern** instead, which relies on BASE principles. In a Saga, Service A commits locally, then sends an event to Service B. If Service B fails, it sends an event back to Service A to run a "Compensating Transaction" (an undo operation). It is eventually consistent.
+
+**Q: How do BASE databases resolve data conflicts if two users update the same record on two different disconnected nodes?**
+**A:** There are several strategies:
+1. **Last-Write-Wins (LWW):** The database relies on NTP (Network Time Protocol) clocks. The write with the newest timestamp overwrites the older one. (Warning: Clock drift between servers can cause data loss).
+2. **Vector Clocks:** The database keeps track of version histories. If it detects a branching conflict, it returns *both* versions to the application layer and forces the developer to write custom code to merge them (this is what DynamoDB and Riak do).
+3. **CRDTs (Conflict-Free Replicated Data Types):** Advanced mathematical data structures that automatically merge concurrent updates without conflicts (used in collaborative editors like Figma or Google Docs).

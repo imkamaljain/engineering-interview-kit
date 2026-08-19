@@ -1,0 +1,48 @@
+---
+title: "CORS (Cross-Origin Resource Sharing)"
+description: "The browser's most misunderstood security feature."
+importance: "MEDIUM"
+revisionTime: 3
+category: "System Design"
+subcategory: "Security"
+order: 64
+---
+
+## Concept
+
+CORS is the cause of endless developer frustration, but it exists to stop a devastating attack.
+By default, web browsers enforce the **Same-Origin Policy (SOP)**. If a Javascript script loaded from `https://my-app.com` attempts to make an AJAX `fetch()` call to `https://api.my-app.com`, the browser looks at the two URLs. Because the subdomains are different, they are considered different "Origins". For security, the browser steps in and outright blocks the Javascript from reading the response.
+**CORS (Cross-Origin Resource Sharing)** is a mechanism that allows the backend Server to explicitly tell the Browser: "It is okay to bypass the Same-Origin Policy. I trust `my-app.com`."
+
+## The Attack CORS Prevents
+
+Why does the browser block this? Imagine you are logged into your bank account (`chase.com`). The bank uses cookies to keep your session active.
+1. You open a new tab and visit a malicious website (`evil-hacker.com`).
+2. The hacker's website contains hidden Javascript that executes `fetch('https://chase.com/api/transfer-money')`.
+3. Because you are currently logged into the bank in another tab, your browser automatically attaches your authentication cookies to the hacker's HTTP request!
+4. The bank receives the request, sees your valid cookie, and transfers the money. 
+
+This is a **Cross-Site Request Forgery (CSRF)** style attack. By enforcing the Same-Origin Policy, the browser prevents `evil-hacker.com` from accessing data or making authenticated requests to `chase.com`.
+
+## How CORS Works: The Preflight Request
+
+When your React app at `my-app.com` tries to POST data to your API at `api.my-app.com`, the browser intervenes:
+
+1. **The Preflight:** Before sending the actual POST request, the browser sends a tiny, invisible HTTP `OPTIONS` request to the API. It essentially asks, "Hey API, I am Javascript from `my-app.com`. Will you allow me to make a POST request?"
+2. **The Server Response:** Your backend API (which you configured with a CORS middleware) receives the `OPTIONS` request. It responds with specific HTTP Headers:
+   - `Access-Control-Allow-Origin: https://my-app.com` (I trust this domain).
+   - `Access-Control-Allow-Methods: GET, POST` (I allow these actions).
+3. **The Actual Request:** The browser reads the headers, confirms permission, and *then* sends the actual POST request containing the data.
+
+## Server-to-Server Bypasses CORS
+
+**Crucial System Design concept:** CORS is strictly a *Browser* security feature.
+If your Node.js server makes an HTTP request to the Stripe API, CORS does not exist. There is no Preflight. CORS only applies when Javascript executing inside a user's web browser attempts to make a network request.
+
+## Interview Questions
+
+**Q: You deploy your React app to Vercel, and your Node API to Heroku. You start getting CORS errors in the browser console. To fix it quickly, you configure the API to return `Access-Control-Allow-Origin: *`. Why is this a massive security vulnerability?**
+**A:** Using the wildcard `*` tells the browser, "Allow any website on the internet to read my API data." While this fixes your React app, it also allows `evil-hacker.com` to make Javascript requests to your API. Furthermore, if you use the wildcard, modern browsers will explicitly refuse to send Authentication Cookies or Credentials with the request. To be secure, your API must explicitly list the exact domains it trusts (e.g., `Access-Control-Allow-Origin: https://my-production-app.com`).
+
+**Q: A mobile app (iOS/Android) makes HTTP requests to your API. Do you need to configure CORS on your server to support the mobile app?**
+**A:** **No.** Native mobile applications (written in Swift or Kotlin) do not run inside a Web Browser context. They use low-level HTTP networking libraries. Because there is no Web Browser enforcing the Same-Origin Policy, the concept of CORS does not exist for mobile apps. The mobile app will communicate directly with the API regardless of what CORS headers the server sends.

@@ -1,0 +1,64 @@
+---
+title: "Graceful Degradation"
+description: "Failing without the user noticing."
+importance: "MEDIUM"
+revisionTime: 4
+category: "System Design"
+subcategory: "Reliability"
+order: 69
+---
+
+## Concept
+
+When you build a complex web page, it likely relies on dozens of microservices. If one of those non-critical microservices (like the "Recommended Products" engine) crashes, the entire page should not return an HTTP 500 Error. 
+**Graceful Degradation** is the architectural principle that an application should continue to function—even with reduced functionality—when parts of the system fail.
+
+## Mental Model
+
+```mermaid
+flowchart TD
+    subgraph Non-Graceful (Catastrophic)
+        App1[E-Commerce App] -->|Fails!| Rec1[Recommendation API]
+        App1 -.->|Entire App Crashes| User1[User sees 'HTTP 500']
+    end
+
+    subgraph Graceful Degradation
+        App2[E-Commerce App] -->|Fails!| Rec2[Recommendation API]
+        App2 -.->|Catches Error| Fallback[Fallback Logic:\nReturn Hardcoded Top 10]
+        Fallback --> User2[User sees functional page\n(They don't know it's broken)]
+    end
+```
+
+## How It Works
+
+Graceful degradation is a combination of backend infrastructure and frontend UI design.
+
+**1. Backend Fallbacks (Circuit Breakers):**
+When the API Gateway or App Server detects that a downstream service is dead (usually via a Circuit Breaker), it executes a fallback function instead of throwing an exception.
+- *Example:* If the dynamic `Pricing Service` is offline, the fallback function queries a static, cached database of prices from 1 hour ago. The user might see slightly stale prices, but they can still buy the item.
+
+**2. Frontend UI/UX Design:**
+The frontend must be designed to handle missing data payloads gracefully.
+- *Example:* If Netflix's backend fails to return the user's customized "Continue Watching" list, the React application simply hides that entire horizontal row from the DOM. It does not show a spinning loading wheel forever, and it does not show a red error alert. It just renders the rest of the page.
+
+## Core vs Peripheral Features
+
+To implement this, you must strictly categorize your microservices:
+- **Core (Critical):** Auth Service, Payment Service, Checkout Service. If these fail, you *must* show a hard error. You cannot gracefully degrade a credit card charge.
+- **Peripheral (Non-Critical):** Search Auto-complete, Product Recommendations, Avatar Image rendering, Read-Receipts in chat. If these fail, hide them or use generic defaults.
+
+## Real-World Usage
+
+- **Amazon:** If their personalized recommendation engine goes down, they replace it with a generic "Top Sellers in your Region" list. This maintains revenue flow even during an outage.
+- **Video Streaming:** YouTube and Netflix aggressively use graceful degradation for video quality. If your network bandwidth drops, the video player doesn't pause and crash; it gracefully degrades the resolution from 4K down to 480p to keep the stream playing.
+
+## Interview Questions
+
+**Q: A user tries to submit an order. The Payment API is currently returning HTTP 503 (Service Unavailable) due to load shedding. How can you gracefully degrade this interaction instead of showing an error?**
+**A:** Instead of rejecting the order, you can degrade from a **Synchronous to an Asynchronous** workflow. 
+The backend can accept the order, save it to the database with a status of `PENDING_PAYMENT`, and return a 200 OK to the user with a message: *"Your order has been received! We will email you your receipt shortly."* 
+Behind the scenes, the backend drops a message into a Retry Queue. When the Payment API comes back online 10 minutes later, a background worker processes the payment and sends the email. You saved the sale.
+
+**Q: Why is GraphQL particularly well-suited for Graceful Degradation on the frontend?**
+**A:** In REST, if an endpoint crashes, the entire HTTP request fails with a 500 error. 
+In GraphQL, the server can experience **Partial Failures**. If a query asks for `User.name` and `User.recommendations`, and the recommendation microservice is down, the GraphQL server will still successfully return the `name`, and simply place a `null` value for the `recommendations`, appending an error to the `errors` array. The frontend React component can easily render the name and just skip the recommendations section.

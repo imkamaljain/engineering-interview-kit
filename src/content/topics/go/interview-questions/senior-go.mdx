@@ -1,0 +1,48 @@
+---
+title: "Senior Go Developer Interview"
+description: "What interviewers look for in a Senior Go Engineer."
+importance: "HIGH"
+revisionTime: 5
+category: "Go"
+subcategory: "Interview Questions"
+order: 68
+---
+
+## TL;DR
+
+Passing a Senior Go interview is rarely about knowing obscure syntax. It is about proving you understand **Concurrency tradeoffs, Memory management (Stack vs Heap), and architectural idioms** (like interface design and dependency injection).
+
+## Core Themes to Master
+
+### 1. Concurrency isn't just "goroutines and channels"
+Juniors think channels are the answer to everything. Seniors know that `sync.Mutex` is often faster, safer, and easier to read. 
+- Be prepared to discuss **when to use Mutexes vs. Channels**. (Hint: Mutexes for protecting shared state like maps/structs; Channels for transferring ownership of data or coordinating workflows).
+- Understand **Goroutine Leaks**. If you launch a goroutine that blocks on a channel that nobody ever reads from, it stays in memory forever. 
+
+### 2. The memory allocator (Escape Analysis)
+You will almost certainly be asked about pointers.
+- Don't say "Pointers are faster because they don't copy data."
+- Say: "Passing by value keeps small structs on the stack, which is zero-allocation. Passing by pointer often forces the variable to escape to the heap, which increases Garbage Collection pressure. I default to pass-by-value unless the struct is massive or requires mutation."
+
+### 3. Interface Segregation
+"Accept interfaces, return structs."
+If you are designing an API client, do not define a massive interface with 50 methods. Define small, 1-method interfaces (`io.Reader`, `io.Writer`). Let the consumer of your code define the interface they actually need.
+
+### 4. Error Handling Philosophy
+Be prepared to defend Go's verbose `if err != nil` pattern. 
+- Explain how it forces developers to treat errors as normal state values rather than catastrophic exceptions.
+- Understand how to use `fmt.Errorf("%w", err)` to wrap errors for auditing, and `errors.Is`/`errors.As` to unwrap them.
+
+## Common System Design "Go" Questions
+
+### "How would you design an application to process 1 million background jobs from a queue?"
+**Red Flag Answer:** "I will just spin up `go processJob()` for every single message. Goroutines are cheap!" 
+*(Reality: Spawning 1 million goroutines simultaneously will spike your memory to 2GB instantly, and crash your Postgres database because you will try to open 1 million DB connections at the same time).*
+
+**Senior Answer:** "I would implement a **Worker Pool**. I'll create a single buffered channel of jobs. I'll spawn a fixed number of worker goroutines (e.g., 50), which read from that channel in a `for range` loop. This controls concurrency, caps memory usage, and protects downstream services like databases from being DDOSed by our own app."
+
+### "We have a global map being read by 10,000 requests per second. How do you prevent Data Races?"
+**Junior Answer:** "Wrap the map in a `sync.Mutex`."
+*(Reality: 10,000 goroutines fighting for an exclusive lock will cause massive latency spikes).*
+
+**Senior Answer:** "Since it is heavily read-heavy, I would use a `sync.RWMutex`. This allows thousands of goroutines to read the map simultaneously without blocking each other, and only locks exclusively during the rare write operations. If performance is still an issue, I might look at `sync.Map` for true lock-free reads, or sharding the map into 16 smaller maps with 16 separate mutexes to reduce lock contention."

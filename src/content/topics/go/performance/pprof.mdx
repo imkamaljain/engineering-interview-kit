@@ -1,0 +1,87 @@
+---
+title: "net/http/pprof"
+description: "Live profiling for running web servers."
+importance: "HIGH"
+revisionTime: 4
+category: "Go"
+subcategory: "Performance"
+order: 47
+---
+
+## TL;DR
+
+If you are running a long-lived Go web server, you can import the `net/http/pprof` package to magically expose a suite of live profiling endpoints. You can use these endpoints to download a 30-second CPU profile snapshot or inspect real-time memory usage without taking the server offline.
+
+## Mental Model
+
+```mermaid
+flowchart LR
+    Browser["Dev Laptop\n(go tool pprof http://...)"]
+    
+    Server["Production Server"]
+    
+    Browser -->|GET /debug/pprof/profile?seconds=30| Server
+    
+    Server -->|Samples CPU for 30s| Server
+    Server -->|Returns binary data| Browser
+    
+    Note right of Server: Server continues handling\nnormal user traffic!
+```
+
+## How It Works
+
+By importing `_ "net/http/pprof"`, Go automatically registers several magic routes to the `http.DefaultServeMux`.
+
+- `/debug/pprof/profile`: Runs a 30-second CPU profile and downloads the result.
+- `/debug/pprof/heap`: Downloads a snapshot of current memory allocations.
+- `/debug/pprof/goroutine?debug=1`: Prints a plaintext list of all currently running goroutines and exactly what line of code they are stuck on.
+- `/debug/pprof/trace?seconds=5`: Generates an execution trace.
+
+## Example
+
+```go
+package main
+
+import (
+	"fmt"
+	"net/http"
+
+	// The magic import! It registers the routes to DefaultServeMux
+	_ "net/http/pprof"
+)
+
+func main() {
+    // A standard application route
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("Hello World"))
+	})
+
+	fmt.Println("Server starting on :8080")
+	fmt.Println("Profiling available at http://localhost:8080/debug/pprof/")
+	
+	// Start the server using the DefaultServeMux
+	if err := http.ListenAndServe(":8080", nil); err != nil {
+		panic(err)
+	}
+}
+```
+
+**To view the data:**
+Run this in your terminal to download a 30-second CPU profile and instantly open a web-based interactive UI to explore the Flame Graph:
+`go tool pprof -http=:8081 http://localhost:8080/debug/pprof/profile?seconds=30`
+
+## Common Interview Questions
+
+### What is the massive security risk of `net/http/pprof`?
+Because it automatically attaches to the global `http.DefaultServeMux`, if you expose your default router to the public internet, **anyone** can access your pprof endpoints. This leaks sensitive internal source code paths and allows attackers to trigger CPU profiles endlessly, causing a Denial of Service (DoS) attack.
+
+### How do I secure the pprof endpoints?
+Never expose `DefaultServeMux` to the internet. Create a custom `http.ServeMux` for your public API, and run a second, completely separate HTTP server on a different port (e.g., `:9090`) just for internal metrics and profiling, restricted by firewall rules or a VPN.
+```go
+// Public API
+publicMux := http.NewServeMux()
+go http.ListenAndServe(":8080", publicMux)
+
+// Private internal metrics
+go http.ListenAndServe("localhost:9090", nil) // 'nil' uses DefaultServeMux
+```

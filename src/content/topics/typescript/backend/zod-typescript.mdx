@@ -1,0 +1,82 @@
+---
+title: "Zod & TypeScript"
+description: "The industry standard for syncing compile-time types with runtime validation."
+importance: "HIGH"
+revisionTime: 5
+category: "TypeScript"
+subcategory: "Backend"
+order: 50
+---
+
+## TL;DR
+
+**Zod** is a TypeScript-first schema declaration and validation library. It solves the biggest problem in TS backend development: keeping your TypeScript `interfaces` synchronized with your runtime validation logic. With Zod, you define the schema once, and it automatically infers the TS type for you.
+
+## Mental Model
+
+```mermaid
+flowchart TD
+    ZodSchema["const UserSchema = z.object({ name: z.string() })"]
+    
+    Runtime["Runtime Validation\nUserSchema.parse(req.body)"]
+    CompileTime["Compile Time Type\ntype User = z.infer<typeof UserSchema>"]
+    
+    ZodSchema --> Runtime
+    ZodSchema --> CompileTime
+    
+    Note right of ZodSchema: Define once!\nSingle Source of Truth
+```
+
+## How It Works
+
+If you use standard validation libraries (like Joi), you have to write an `interface User { ... }` and a separate `Joi.object({ ... })`. When requirements change, you have to update both. If you forget to update one, you get insidious bugs.
+
+Zod flips this. You **do not write interfaces**. You only write the Zod schema. Then, you use `z.infer<>` to let TypeScript generate the type out of the schema mathematically.
+
+## Example
+
+```typescript
+import { z } from "zod";
+
+// 1. Define the Runtime Schema (Single Source of Truth)
+const CreateUserSchema = z.object({
+    username: z.string().min(3).max(20),
+    email: z.string().email(),
+    age: z.number().int().positive().optional(),
+});
+
+// 2. Automatically generate the TypeScript Type!
+// Evaluates exactly to: { username: string; email: string; age?: number | undefined }
+type CreateUserDTO = z.infer<typeof CreateUserSchema>;
+
+
+app.post("/users", (req, res) => {
+    try {
+        // 3. Validate at Runtime
+        // If req.body is bad, .parse() throws a ZodError (caught below)
+        // If it is good, it returns the data, strictly typed as CreateUserDTO!
+        const validData = CreateUserSchema.parse(req.body);
+        
+        // TS knows validData.email is a valid string here.
+        saveUser(validData);
+
+        res.status(201).send("Success");
+    } catch (error) {
+        if (error instanceof z.ZodError) {
+            // Zod provides incredibly detailed error messages
+            res.status(400).json(error.issues);
+        }
+    }
+});
+```
+
+## Common Interview Questions
+
+### What is the difference between `Zod` and `class-validator`?
+`class-validator` relies on TypeScript decorators and classes (`@IsString()`). It is heavily used in frameworks like NestJS. However, decorators are experimentally implemented and can be slow. 
+Zod relies on functional programming and generics. It works perfectly with any framework, supports complex conditional logic much easier than decorators, and is the preferred choice for modern stacks like tRPC and Next.js.
+
+### How do you handle Zod schemas for database models where the ID is generated later?
+Use Zod's `.omit()` or `.pick()` methods! You define one giant `UserSchema` containing all fields (including `id`), and for your creation endpoint, you generate a smaller schema:
+`const CreateUserSchema = UserSchema.omit({ id: true, createdAt: true });`
+This perfectly mirrors the built-in TS `Omit` utility, but at runtime!

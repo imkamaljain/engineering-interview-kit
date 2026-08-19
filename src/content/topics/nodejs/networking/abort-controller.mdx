@@ -1,0 +1,81 @@
+---
+title: "AbortController"
+description: "How to cancel ongoing asynchronous operations like network requests."
+importance: "HIGH"
+revisionTime: 3
+category: "Node.js"
+subcategory: "Networking"
+order: 23
+---
+
+## TL;DR
+
+The **`AbortController`** interface provides a standardized way to abort one or more web requests or asynchronous tasks. It generates an `AbortSignal` object that you pass into async APIs (like `fetch` or `http.request`), allowing you to cancel them later.
+
+## Mental Model
+
+```mermaid
+flowchart LR
+    App["Node.js App"]
+    Controller["AbortController"]
+    Signal["AbortSignal"]
+    Request["Async Task (e.g., fetch)"]
+
+    App -->|Creates| Controller
+    Controller -->|Provides| Signal
+    App -->|Passes Signal| Request
+    
+    App -->|Calls .abort()| Controller
+    Controller -->|Emits 'abort'| Signal
+    Signal -.->|Cancels| Request
+```
+
+## How It Works
+
+1.  Instantiate a `new AbortController()`.
+2.  Extract its `signal` property (`controller.signal`).
+3.  Pass the `signal` as an option to an async function that supports it (like `fetch`, `setTimeout`, or `fs.readFile`).
+4.  Call `controller.abort()` when you want to cancel the operation. The operation will immediately throw an `AbortError`.
+
+## Example
+
+```javascript
+const controller = new AbortController();
+const signal = controller.signal;
+
+// 1. Start a fetch request, passing the signal
+fetch('https://slow-api.example.com/data', { signal })
+  .then(res => res.json())
+  .then(data => console.log(data))
+  .catch(err => {
+    if (err.name === 'AbortError') {
+      console.log('Request was successfully cancelled!');
+    } else {
+      console.error('Other error:', err);
+    }
+  });
+
+// 2. Abort the request if it takes longer than 1 second
+setTimeout(() => {
+  controller.abort();
+}, 1000);
+```
+
+## Common Interview Questions
+
+### Can you use AbortController with your own custom Promises?
+Yes. You can listen for the `'abort'` event on the signal object inside your promise wrapper.
+```javascript
+function myCustomAsync(signal) {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) return reject(new Error('Aborted'));
+    
+    signal.addEventListener('abort', () => reject(new Error('Aborted')));
+    
+    // ... do work ...
+  });
+}
+```
+
+### Why not just ignore the result of a Promise instead of aborting it?
+If you just ignore the result, the underlying operation (like a network request or a heavy database query) continues running in the background, consuming CPU, memory, and network bandwidth. `AbortController` stops the actual underlying work.

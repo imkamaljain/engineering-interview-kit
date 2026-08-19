@@ -1,0 +1,83 @@
+---
+title: "Mocking & Stubbing"
+description: "Faking dependencies in tests to isolate the code being tested."
+importance: "MEDIUM"
+revisionTime: 4
+category: "Node.js"
+subcategory: "Testing"
+order: 47
+---
+
+## TL;DR
+
+**Mocking** is the practice of replacing a real function, class, or module with a fake one during a test. This allows you to test your logic in complete isolation without making actual network requests, sending real emails, or modifying a real database.
+
+## Mental Model
+
+```mermaid
+flowchart LR
+    Test["Unit Test"]
+    Logic["Business Logic\n(e.g., checkoutCart)"]
+    RealStripe["Real Stripe API\n(Charges money!)"]
+    MockStripe["Mock Stripe Module\n(Returns fake success)"]
+
+    Test --> Logic
+    Logic -.->|Original code| RealStripe
+    
+    Logic -->|During test (Intercepted)| MockStripe
+    MockStripe -->|Fake JSON| Logic
+```
+
+## How It Works
+
+*   **Stub**: A fake function that just returns a hardcoded value so the test can proceed.
+*   **Spy**: A fake function that records how many times it was called, and with what arguments.
+*   **Mock**: A combination of both; you dictate what it returns *and* you assert that it was called correctly by your code.
+
+In Node.js, `jest.mock()` is the industry standard for intercepting `require()` or `import` calls and replacing the entire module with fakes.
+
+## Example
+
+```javascript
+// payment.js
+const axios = require('axios');
+
+async function chargeUser(userId, amount) {
+    // We do NOT want to execute this in a unit test!
+    const response = await axios.post('https://api.stripe.com/charge', { userId, amount });
+    return response.data.status === 'succeeded';
+}
+module.exports = { chargeUser };
+
+// payment.test.js
+const { chargeUser } = require('./payment');
+const axios = require('axios'); // We import it to mock it
+
+// 1. Tell Jest to replace the real axios with a mock
+jest.mock('axios');
+
+test('should successfully charge a user', async () => {
+    // 2. Arrange: Tell the mock what to return when called
+    axios.post.mockResolvedValue({ data: { status: 'succeeded' } });
+
+    // 3. Act
+    const result = await chargeUser(1, 100);
+
+    // 4. Assert
+    expect(result).toBe(true);
+    
+    // Assert the mock was called with the right data!
+    expect(axios.post).toHaveBeenCalledWith(
+        'https://api.stripe.com/charge', 
+        { userId: 1, amount: 100 }
+    );
+});
+```
+
+## Common Interview Questions
+
+### What is the danger of over-mocking?
+If you mock everything, your test no longer reflects reality. You might write a mock that returns a perfectly formatted JSON object, but the real API changed its schema. Your tests will pass (giving you false confidence), but production will crash. 
+
+### How is Mocking different from monkey-patching?
+Monkey-patching is manually overriding a function at runtime (`axios.post = myFakeFunction`). Mocking libraries (like Jest or Sinon) handle this elegantly by automatically restoring the original function after the test completes, ensuring tests don't leak state and pollute each other.

@@ -1,0 +1,56 @@
+---
+title: "RabbitMQ vs Kafka"
+description: "Choosing the right event broker."
+importance: "HIGH"
+revisionTime: 5
+category: "System Design"
+subcategory: "Messaging"
+order: 45
+---
+
+## Concept
+
+When designing an asynchronous, event-driven system, you must choose a Message Broker. The two industry heavyweights are **RabbitMQ** and **Apache Kafka**. While they are often compared, they are fundamentally different pieces of software designed for completely different paradigms.
+- **RabbitMQ is a Smart Broker with Dumb Consumers.**
+- **Kafka is a Dumb Broker with Smart Consumers.**
+
+## Mental Model
+
+| Feature | RabbitMQ (Message Broker) | Apache Kafka (Event Streaming Platform) |
+| :--- | :--- | :--- |
+| **Primary Paradigm** | Point-to-Point Message Queueing | Massive Pub/Sub Log Streaming |
+| **Message Deletion** | Deletes message instantly after ACK | Never deletes (keeps a permanent log) |
+| **Routing** | Highly complex routing rules (Exchanges) | Very simple (just append to a topic) |
+| **Throughput** | 50,000+ messages per sec | Millions+ messages per sec |
+| **Ordering** | Not guaranteed | Guaranteed within a specific Partition |
+
+## RabbitMQ (The Smart Broker)
+
+RabbitMQ focuses on complex routing and safe task delivery.
+- **How it works:** The broker is highly intelligent. A Publisher sends a message to an "Exchange", and the Exchange uses complex routing keys to figure out exactly which Queues should receive it. 
+- **Consumer State:** The Broker keeps track of everything. It knows exactly which Consumer is processing which message. When a Consumer sends an Acknowledgement (ACK), the Broker permanently deletes the message from its RAM/Disk.
+- **Use Case:** Background task processing (sending emails, generating PDFs), microservice communication where complex routing is required.
+
+## Apache Kafka (The Immutable Log)
+
+Kafka was built by LinkedIn specifically to handle massive scale. It is not a traditional queue; it is a distributed, append-only log file.
+- **How it works:** A Publisher appends an event (e.g., "User clicked a button") to the end of a highly optimized text file on disk (a Topic). That's it. The Broker does no routing.
+- **Consumer State:** Kafka does NOT track which Consumer processed what. It does NOT delete messages after they are read. Messages stay on disk for a configured retention period (e.g., 7 days).
+- **The Offset:** The Consumer is responsible for remembering its own progress. The Consumer maintains a pointer (an "Offset") indicating the line number in the log it last read.
+- **Use Case:** Big Data pipelines, real-time analytics, event sourcing, activity tracking, where you need to ingest millions of events per second and potentially "replay" the log from the beginning if a service crashes.
+
+## Trade-Offs & Real-World Usage
+
+- If you want a worker to pull a task, do it, and delete it forever -> Use **RabbitMQ**.
+- If you are building an Event-Sourced architecture where every single action in the entire company must be recorded in an immutable ledger so data scientists can analyze it later -> Use **Kafka**.
+- **Complexity:** Kafka is incredibly difficult to host and manage yourself (requiring Zookeeper/KRaft clusters). RabbitMQ is much simpler.
+
+## Interview Questions
+
+**Q: In RabbitMQ, if a Consumer crashes while processing a message, the message is put back in the queue. How does Kafka handle a Consumer crash?**
+**A:** In Kafka, a Consumer reads a message, processes it, and then explicitly commits its new "Offset" number back to Kafka (saying "I have finished up to line 50"). If the Consumer crashes *before* committing the offset, it reboots, asks Kafka "Where was I?", and Kafka tells it "You were at line 49." The Consumer will simply pull line 50 again and re-process the message.
+
+**Q: A critical new bug in Production caused your Payment Service to incorrectly process 10,000 orders over the last 3 hours. You fix the bug. If you used RabbitMQ, can you easily fix the broken orders? What if you used Kafka?**
+**A:** 
+- If you used **RabbitMQ**, the messages are permanently gone. Once the buggy service sent an ACK, RabbitMQ deleted them. You must write a custom script to query the database and manually fix the bad states.
+- If you used **Kafka**, fixing this is trivial. Because Kafka retains the full log of events on disk for 7 days, you simply deploy the fixed Payment Service, reset its "Offset" pointer backwards by 3 hours, and let it instantly "replay" the 10,000 events through the correct logic. This ability to "time travel" is Kafka's greatest superpower.

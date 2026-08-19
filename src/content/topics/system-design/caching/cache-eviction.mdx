@@ -1,0 +1,50 @@
+---
+title: "Cache Eviction Policies"
+description: "How to decide what to delete when RAM is full."
+importance: "MEDIUM"
+revisionTime: 3
+category: "System Design"
+subcategory: "Caching"
+order: 26
+---
+
+## Concept
+
+RAM is incredibly fast but highly limited. A typical database might hold 10 Terabytes of data, while your Redis cache might only have 64 Gigabytes of RAM. Eventually, the cache will become 100% full. When a new item needs to be cached, the system must choose an existing item to delete to make room. The rules governing this choice are called **Eviction Policies**.
+
+## The Primary Policies
+
+### 1. LRU (Least Recently Used)
+- **How it works:** Deletes the item that hasn't been accessed for the longest amount of time.
+- **Use Case:** This is the absolute standard, default algorithm for almost all caches. If a user hasn't looked at an old tweet in 3 years, it is the safest thing to delete.
+- **How it's implemented:** Usually via a Doubly Linked List paired with a Hash Map. When an item is accessed, it is moved to the "head" of the list. When the cache is full, the item at the "tail" is deleted in $O(1)$ time.
+
+### 2. LFU (Least Frequently Used)
+- **How it works:** Tracks a counter of how many times an item was accessed. Deletes the item with the lowest total count.
+- **Use Case:** Better than LRU for items that have sustained, long-term popularity. 
+- **The Flaw:** If a news article goes viral for exactly 1 day, it gets 5 million hits. A month later, no one cares about it anymore. However, because its LFU counter is 5 million, the cache will refuse to delete it, keeping useless stale data in memory while evicting newer articles. (Advanced caches use LFU with "aging" to fix this).
+
+### 3. FIFO (First In, First Out)
+- **How it works:** A simple queue. The item that was added to the cache first is the first to be deleted, regardless of how often it is being accessed right now.
+- **Use Case:** Rarely used for data caching, but sometimes used for simple buffer management or logging queues where data strictly expires sequentially.
+
+### 4. Random Replacement
+- **How it works:** Randomly selects a key and deletes it.
+- **Use Case:** Requires zero overhead to track metadata (no linked lists, no counters). If your data access pattern is completely unpredictable, Random is sometimes just as effective as LRU but uses less CPU/Memory.
+
+## TTL (Time To Live)
+
+Eviction happens when the cache is *full*. **TTL (Time To Live)** happens regardless of capacity.
+When you save data to a cache, you attach a TTL (e.g., 3600 seconds). After 1 hour, the cache automatically deletes the key. 
+TTL is a business-logic tool used to guarantee data doesn't become permanently stale. Eviction is an infrastructure tool used to prevent the server from running out of memory and crashing.
+
+## Interview Questions
+
+**Q: Explain how you would implement an LRU Cache from scratch in an interview.**
+**A:** An LRU cache requires $O(1)$ time for both reading and writing. 
+1. I would use a **Hash Map** to store the keys and point to the nodes, providing $O(1)$ lookups.
+2. I would use a **Doubly Linked List** to track the order of usage. 
+When an item is accessed, I look it up in the Hash Map, remove that node from its current position in the Linked List, and append it to the front (head) of the list. When the cache hits capacity, I simply remove the node at the tail of the Linked List and delete its key from the Hash Map.
+
+**Q: Redis is configured to use the `allkeys-lru` eviction policy. What happens if you try to `SET` a new key but the RAM is 100% full?**
+**A:** Because the eviction policy is active, Redis will instantly identify the Least Recently Used keys, delete them from RAM, and then successfully insert your new key. If the policy was set to `noeviction` (the default in some versions), Redis would instead return an Out Of Memory (OOM) error and crash your application's write attempts.

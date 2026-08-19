@@ -1,0 +1,50 @@
+---
+title: "HyperLogLog"
+description: "Counting unique items using probability."
+importance: "MEDIUM"
+revisionTime: 4
+category: "System Design"
+subcategory: "Distributed Data Structures"
+order: 83
+---
+
+## Concept
+
+Imagine you are building Reddit, and you want to display the number of *Unique Users* who visited a specific post today.
+If a post gets 100 million views, but many users visit the post multiple times, you must track every single user ID to avoid double-counting. Storing 100 million unique strings (`"user_id"`) in a `HashSet` will consume gigabytes of RAM per post.
+**HyperLogLog (HLL)** is a probabilistic algorithm that estimates the number of unique items in a massive dataset using an impossibly small amount of memory (typically 12 Kilobytes).
+
+## Mental Model
+
+HyperLogLog relies on the mathematical probability of hashing.
+Imagine flipping a coin. Getting a "Heads" is a 50% chance. Getting "Heads" 5 times in a row is rare (3%). Getting "Heads" 20 times in a row is astronomically rare (0.00009%).
+If I tell you I flipped a coin and got 20 "Heads" in a row, you can statistically guess that I must have been flipping that coin *millions* of times to finally hit that rare streak.
+
+HyperLogLog applies this to binary hashes.
+When you hash a User ID, it produces a binary string: `01001100...`
+HLL simply counts the longest streak of leading zeroes it has ever seen in the hashes. If the longest streak it has seen is 2 zeroes (`001...`), there are probably around 4 unique users. If it sees a streak of 15 zeroes (`0000000000000001...`), there are probably millions of unique users.
+
+## How It Works
+
+1. **The Hash:** A `user_id` is passed through a high-quality hash function (like MurmurHash3) to generate a uniform 64-bit binary string.
+2. **The Buckets:** To reduce the variance (because one lucky hash with 20 zeroes would wildly ruin the estimate), HLL divides the dataset into thousands of "buckets" (registers) based on the first few bits of the hash.
+3. **The Update:** For the remaining bits, HLL counts the number of leading zeroes. It updates the bucket only if this new streak of zeroes is larger than the number currently stored in the bucket.
+4. **The Estimate:** When you ask HLL for the count, it takes the Harmonic Mean of all the maximum streaks stored across its thousands of buckets. The result is a highly accurate estimate of the total unique items.
+
+## Trade-Offs
+
+- **Pros:** **Absolute Magic.** A standard HyperLogLog implementation in Redis uses a fixed size of exactly 12 KB of RAM, and can estimate the unique count of billions of items with a standard error of only 0.81%. It is infinitely scalable.
+- **Cons:** It cannot give you an exact number. It cannot tell you *who* the users are. You cannot retrieve the raw items from it.
+
+## Real-World Usage
+
+- **Redis:** Redis has native HLL commands (`PFADD`, `PFCOUNT`). It is the industry standard for unique visitor tracking.
+- **Data Warehousing:** Amazon Redshift and Google BigQuery use HLL under the hood to execute `COUNT(DISTINCT user_id)` queries over petabytes of data in seconds.
+
+## Interview Questions
+
+**Q: A developer wants to use Redis HyperLogLog to ensure that users are only billed once per month. Why is this a fireable offense?**
+**A:** Because HyperLogLog is **Probabilistic** and has a 0.81% error rate. If you have 1 million users, an 0.81% error means 8,100 users might accidentally be double-billed, or not billed at all. Probabilistic data structures must *never* be used for strict business logic, payments, or security. They are exclusively for analytics, dashboards, and metrics where "close enough" is perfectly acceptable.
+
+**Q: You have two separate HyperLogLogs. One tracks Unique Visitors on Monday, and one tracks Unique Visitors on Tuesday. The CEO asks for the total Unique Visitors across *both* days combined. How do you do this?**
+**A:** You perform a **Union**. The mathematical beauty of HyperLogLog is that you can merge two HLLs seamlessly. Because each bucket simply holds the "maximum number of leading zeroes seen so far", merging two HLLs is as simple as taking the maximum value of each corresponding bucket between the two structures. In Redis, this is done using the `PFMERGE` command, instantly giving you the deduped unique count across both days without needing the original user IDs.

@@ -1,0 +1,93 @@
+---
+title: "Metrics (Prometheus)"
+description: "Monitoring the health of your Go application."
+importance: "HIGH"
+revisionTime: 3
+category: "Go"
+subcategory: "Production"
+order: 58
+---
+
+## TL;DR
+
+Logs tell you *what* happened. **Metrics** tell you the *overall health* of the system. You use metrics to power Grafana dashboards and trigger PagerDuty alerts. In Go, the industry standard is to expose a `/metrics` HTTP endpoint that a Prometheus server regularly scrapes.
+
+## Mental Model
+
+```mermaid
+flowchart LR
+    App["Go Application"]
+    
+    subgraph Prometheus SDK
+        Counter["Counter\n(e.g., Total HTTP Requests)"]
+        Histogram["Histogram\n(e.g., Response Times)"]
+        Gauge["Gauge\n(e.g., Active Connections)"]
+    end
+    
+    App -->|Increments| Counter
+    App -->|Records| Histogram
+    App -->|Sets| Gauge
+    
+    PrometheusServer["Prometheus Server"]
+    PrometheusServer -->|HTTP GET /metrics\n(Every 15s)| App
+```
+
+## How It Works
+
+Instead of the Go application sending metrics *out* to a database (Push model), it simply holds the current numbers in memory. A separate monitoring server (Prometheus) sends an HTTP GET request to your app's `/metrics` endpoint to scrape the numbers (Pull model).
+
+**Core Metric Types:**
+1. **Counter**: Only goes up (e.g., `http_requests_total`).
+2. **Gauge**: Goes up and down (e.g., `active_goroutines`, `memory_usage`).
+3. **Histogram**: Places values into "buckets" to calculate percentiles like p99 (e.g., `http_request_duration_seconds`).
+
+## Example
+
+```go
+package main
+
+import (
+	"math/rand"
+	"net/http"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+)
+
+// 1. Define a global Counter metric
+var opsProcessed = promauto.NewCounter(prometheus.CounterOpts{
+	Name: "myapp_processed_ops_total",
+	Help: "The total number of processed events",
+})
+
+func recordMetrics() {
+	go func() {
+		for {
+		    // 2. Increment the metric safely (it handles locks internally!)
+			opsProcessed.Inc()
+			time.Sleep(time.Duration(rand.Intn(1000)) * time.Millisecond)
+		}
+	}()
+}
+
+func main() {
+	recordMetrics()
+
+	// 3. Expose the /metrics endpoint
+	// This exposes our custom metrics PLUS automatic Go runtime metrics 
+	// (GC pauses, memory allocation, goroutine count!)
+	http.Handle("/metrics", promhttp.Handler())
+	
+	http.ListenAndServe(":2112", nil)
+}
+```
+
+## Common Interview Questions
+
+### Do I need to use `sync.Mutex` when updating Prometheus metrics?
+No. The Prometheus Go client is fully thread-safe. You can call `Counter.Inc()` or `Histogram.Observe()` from thousands of concurrent goroutines safely. The library utilizes highly optimized `sync/atomic` operations under the hood to ensure minimal performance impact.
+
+### What is the "Cardinality Explosion" problem?
+Metrics can have "Labels" (e.g., `http_requests_total{status="200", path="/users"}`). If you accidentally put highly dynamic data into a label (like a User ID: `http_requests_total{user_id="12345"}`), Prometheus will generate a brand new unique time-series database entry for every single user. This is called High Cardinality and it will crash your Prometheus server by exhausting its RAM. Labels must only be used for a small set of predefined categories (like HTTP status codes or HTTP methods).

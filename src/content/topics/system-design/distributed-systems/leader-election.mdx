@@ -1,0 +1,67 @@
+---
+title: "Leader Election"
+description: "How a cluster decides who is in charge."
+importance: "HIGH"
+revisionTime: 4
+category: "System Design"
+subcategory: "Distributed Systems"
+order: 37
+---
+
+## Concept
+
+In a Single-Leader architecture, if the Leader server crashes, the system can no longer process Writes. To restore availability, the surviving Follower nodes must quickly detect the failure and agree upon which one of them will become the new Leader. This automated, democratic process is called **Leader Election**.
+
+## Mental Model
+
+```mermaid
+flowchart TD
+    subgraph The Cluster (Healthy)
+        Leader[(Leader)]
+        F1[(Follower 1)]
+        F2[(Follower 2)]
+        Leader -.->|Heartbeat Ping| F1
+        Leader -.->|Heartbeat Ping| F2
+    end
+    
+    subgraph The Crash
+        Dead[/(Leader Dies)/]
+        F1_Wait[(Follower 1\nWaits 3s)]
+        F2_Wait[(Follower 2\nWaits 5s)]
+    end
+    
+    subgraph The Election
+        F1_Cand[(Follower 1\nDeclares Candidacy!)]
+        F2_Vote[(Follower 2\nVotes for F1)]
+        F1_Cand -->|Receives Majority Votes| NewLeader[(New Leader!)]
+    end
+```
+
+## How It Works (The Raft Algorithm)
+
+The industry standard algorithm for Leader Election is **Raft**.
+
+1. **Heartbeats:** The Leader constantly sends "heartbeat" network pings to all Followers. This tells them, "I am alive, do not start an election."
+2. **The Timeout:** Every Follower has a randomized countdown timer (e.g., between 150ms and 300ms). If a Follower does not receive a heartbeat before its timer hits zero, it assumes the Leader is dead.
+3. **Candidacy:** The Follower whose timer ran out first immediately transitions to a "Candidate" state. It votes for itself, and broadcasts a "Request for Votes" to all other nodes.
+4. **Voting:** The other nodes receive the request. If they haven't voted for anyone else in this term, they reply with a "Yes" vote.
+5. **Victory:** If the Candidate receives a majority of votes (e.g., 3 out of 5 nodes), it instantly becomes the new Leader and begins sending its own heartbeats to suppress further elections.
+
+## Trade-Offs
+
+- **The Split Brain Problem:** What happens if the Leader didn't actually die, but a network cable broke, isolating it from the Followers? The Followers will elect a *new* Leader. Now you have two Leaders accepting writes! To prevent this, algorithms absolutely require a **Majority Quorum**. In a 5-node cluster, you must have 3 votes to become a Leader. It is mathematically impossible for two different nodes to get 3 votes out of 5. The old, isolated Leader will realize it cannot reach a majority and step down.
+- **Node Counts:** Because of the majority requirement, consensus clusters must ALWAYS be deployed with an **odd number of nodes** (3, 5, or 7). A 4-node cluster can result in a 2-2 tie, completely halting the system.
+
+## Real-World Usage
+
+Leader Election is notoriously difficult to code from scratch. Instead of building it into the application, companies rely on specialized distributed configuration stores that handle the heavy lifting.
+- **Zookeeper:** Used extensively in Hadoop and Kafka (older versions).
+- **etcd:** The brain of Kubernetes. It uses the Raft consensus algorithm to maintain cluster state and handle leader elections perfectly.
+
+## Interview Questions
+
+**Q: You deploy a 2-node database cluster (1 Leader, 1 Follower). The network connection between them breaks. Which one becomes the Leader?**
+**A:** **Neither.** This is a failed deployment strategy. In a 2-node cluster, a strict majority requires 2 votes. If the network breaks, the Follower can only vote for itself (1 vote). It cannot reach a majority, so it will never promote itself. The cluster will completely freeze and become unavailable for writes. To achieve high availability with failover, you must deploy a minimum of 3 nodes.
+
+**Q: In the Raft algorithm, why is the countdown timer randomized for every Follower?**
+**A:** If all Followers had the exact same countdown timer (e.g., exactly 200ms), they would all realize the Leader is dead at the exact same millisecond. They would all instantly declare Candidacy and vote for themselves. The election would result in a massive tie, forcing them to restart the election over and over. By randomizing the timers, one node is guaranteed to wake up first, preventing ties.

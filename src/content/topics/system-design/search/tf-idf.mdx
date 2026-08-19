@@ -1,0 +1,54 @@
+---
+title: "TF-IDF & BM25"
+description: "How search engines decide what is relevant."
+importance: "LOW"
+revisionTime: 3
+category: "System Design"
+subcategory: "Search"
+order: 80
+---
+
+## Concept
+
+If a user searches for `"The Brown Fox"`, and Elasticsearch finds 10,000 documents containing those words, how does it decide which document should be result #1, and which should be result #10,000?
+It uses a Relevance Scoring algorithm. The grandfather of all scoring algorithms is **TF-IDF**, and its modern, highly-optimized successor is **BM25** (Best Matching 25), which is the default algorithm inside Elasticsearch.
+
+## 1. Term Frequency (TF)
+
+**The Rule:** If a word appears *many* times in a document, that document is probably highly relevant.
+- If Document A contains the word "Fox" 1 time.
+- If Document B contains the word "Fox" 20 times.
+- Document B gets a higher TF score.
+
+**The BM25 Fix (Saturation):**
+In pure TF, if a spammer writes a document containing the word "Fox" 10,000 times, it will mathematically dominate the search results. BM25 introduces a **Non-Linear Saturation Curve**. The first time the word "Fox" appears, the score jumps massively. The 5th time it appears, the score goes up slightly. By the 20th time it appears, BM25 stops increasing the score entirely, completely defeating keyword-stuffing spammers.
+
+## 2. Inverse Document Frequency (IDF)
+
+**The Rule:** Rare words are infinitely more important than common words.
+If a user searches for `"The Brown Fox"`:
+- The word "The" appears in 99% of all documents in the database.
+- The word "Brown" appears in 5% of documents.
+- The word "Fox" appears in 0.01% of documents.
+
+If a document contains the word "The", it proves nothing. If a document contains the incredibly rare word "Fox", it is highly likely to be exactly what the user is looking for.
+IDF acts as a mathematical penalty. It drastically lowers the score weight of common words ("The", "is", "and") and massively boosts the score weight of rare, highly specific words ("Fox").
+
+## 3. Document Length Normalization (The BM25 Magic)
+
+If Document A is a 5-word tweet containing "Fox", and Document B is a 1,000-page encyclopedia containing "Fox", which one is more relevant?
+The 5-word tweet is entirely about foxes. The encyclopedia just happened to mention a fox on page 400.
+BM25 introduces **Length Normalization**. It mathematically penalizes very long documents and boosts very short documents. Finding a matching keyword in a short title is worth significantly more points than finding it buried deep in a massive text block.
+
+## Mental Model
+
+**BM25 Score = (How often the word appears here) × (How rare the word is globally) ÷ (How long this document is)**
+
+## Interview Questions
+
+**Q: You add a new document to Elasticsearch containing the word "Fox". Suddenly, the search ranking for an entirely different, older document containing the word "Fox" slightly changes. Why?**
+**A:** This is due to the **Inverse Document Frequency (IDF)** calculation. The IDF score of a word relies on knowing exactly how many documents in the entire database contain that word. When you add a new document containing "Fox", the global rarity of the word "Fox" technically decreases slightly. Therefore, the IDF multiplier for "Fox" decreases across the entire cluster, causing the BM25 scores of all older documents containing "Fox" to be slightly re-calculated.
+
+**Q: A user searches for "New York". The engine returns a document about "New Dogs" and "Yorkshire Pigs" as the #1 result, completely ignoring the actual city. How do you fix this scoring failure using standard keyword search?**
+**A:** TF-IDF and BM25 treat words as isolated, independent tokens (a "Bag of Words" model). They do not understand the concept of adjacent phrases. 
+To fix this in Elasticsearch, you must use a **Match Phrase Query** (or define Shingles during indexing). This forces the engine to not only calculate the BM25 score of the individual words, but to verify the positional offset in the Inverted Index, guaranteeing that "New" and "York" appear exactly next to each other in the text before awarding a high score.

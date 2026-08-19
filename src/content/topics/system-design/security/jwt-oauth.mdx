@@ -1,0 +1,54 @@
+---
+title: "JWT & OAuth"
+description: "Stateless authentication and third-party authorization."
+importance: "HIGH"
+revisionTime: 5
+category: "System Design"
+subcategory: "Security"
+order: 63
+---
+
+## Concept: JWT (JSON Web Tokens)
+
+In the past, servers used "Sessions". When you logged in, the server saved `user_id: 1` in its RAM, and gave your browser a random cookie (`session_id: xyz`). Every time you clicked a page, the server looked up `xyz` in its RAM to remember who you were. This violates REST statelessness and makes horizontal scaling very difficult.
+**JWT (JSON Web Token)** solves this. The server does not remember you. Instead, upon login, the server cryptographically signs a JSON object containing your `user_id` and hands it to the browser. The browser sends this token with every request.
+
+## How JWT Works
+
+A JWT is a base64-encoded string with three parts: `Header.Payload.Signature`
+1. **Header:** Defines the algorithm used (e.g., HMAC SHA256).
+2. **Payload (Data):** The actual JSON data (e.g., `{"userId": 123, "role": "admin", "exp": 16000000}`).
+3. **Signature:** The server takes the Header and Payload, and hashes them using a **secret key** only known to the server.
+
+**The Magic:** Because it is just base64 encoded, the user can easily decode the token and read the Payload. *However, they cannot alter it.* If a malicious user changes their role from "user" to "admin" in the Payload, the cryptographical Signature will no longer match the data. When the server receives the token, it recalculates the hash using its secret key. The hashes won't match, and the server rejects the request.
+
+## Trade-Offs of JWT
+
+- **Pros:** Completely stateless. The API Gateway can validate the cryptographic signature without ever querying the database, saving massive database load.
+- **Cons:** **The Revocation Problem.** Because the server doesn't keep a database of active sessions, you cannot easily "log out" a user or ban a hacker instantly. The JWT remains valid until its expiration date (`exp`) naturally passes. You have to implement a complex "Token Blacklist" database to fix this, defeating the entire purpose of a stateless token.
+
+## Concept: OAuth 2.0
+
+OAuth is an **Authorization** framework. It solves a very specific problem: How does an application (like Spotify) access your data on another application (like Facebook) *without* you giving Spotify your Facebook password?
+
+## The OAuth Flow (Authorization Code Grant)
+
+1. You click "Log in with Facebook" on Spotify.
+2. Spotify redirects your browser entirely away from Spotify, to `facebook.com/authorize`.
+3. You log into Facebook securely. Facebook asks: "Do you want to grant Spotify access to your Friends List?"
+4. You click Yes. Facebook redirects your browser *back* to Spotify, attaching a temporary, 1-time-use string called an **Authorization Code** to the URL.
+5. Spotify's Backend Server takes that Code, and makes a secret, server-to-server HTTP request directly to Facebook, exchanging the Code for an **Access Token** (which is often a JWT).
+6. Spotify now uses that Access Token to call the Facebook API and fetch your friends list. Spotify never saw your password.
+
+## Interview Questions
+
+**Q: A mobile app uses JWTs for authentication. The tokens expire every 15 minutes for security. How do you keep the user logged in without forcing them to type their password 96 times a day?**
+**A:** You must implement a **Refresh Token Architecture**.
+When the user logs in, the server returns *two* tokens:
+1. A short-lived **Access Token** (JWT, expires in 15 mins). This is sent with every API request.
+2. A long-lived **Refresh Token** (A random string, expires in 30 days). This is saved securely on the device and in the database.
+When the Access Token expires, the mobile app silently makes a request to a special `/refresh` endpoint, providing the Refresh Token. The server checks the database to ensure the Refresh Token hasn't been revoked/banned. If valid, the server issues a brand new 15-minute Access Token. This provides the performance of stateless JWTs, while maintaining the ability to instantly ban a user (by revoking their Refresh Token in the DB).
+
+**Q: Why does OAuth 2.0 use the complex Authorization Code exchange step? Why doesn't Facebook just immediately redirect back to Spotify with the Access Token in the URL?**
+**A:** This prevents **Token Interception**. If Facebook put the Access Token directly in the URL (`spotify.com/callback#token=123`), the token would be visible in the browser's history, the operating system logs, and could be stolen by malicious browser extensions.
+By sending an Authorization Code instead, even if a hacker steals the Code, it is useless to them. To exchange the Code for the real Access Token, the requester must also provide Spotify's `client_secret` password, which is safely hidden on Spotify's backend server, never exposed to the browser.

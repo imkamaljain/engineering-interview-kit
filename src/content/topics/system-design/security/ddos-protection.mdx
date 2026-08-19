@@ -1,0 +1,49 @@
+---
+title: "DDoS Protection"
+description: "Surviving a distributed attack on your infrastructure."
+importance: "MEDIUM"
+revisionTime: 4
+category: "System Design"
+subcategory: "Security"
+order: 66
+---
+
+## Concept
+
+A **DoS (Denial of Service)** attack is when a single malicious computer sends an overwhelming amount of junk traffic to your server, consuming all its CPU and bandwidth until it crashes. You can stop this easily by blocking that one IP address.
+A **DDoS (Distributed Denial of Service)** attack is when a hacker hijacks a botnet of 100,000 infected smart TVs, refrigerators, and laptops across the globe, and commands all of them to attack your server simultaneously. You cannot block 100,000 random, globally distributed IP addresses manually.
+
+## The 3 Layers of DDoS Attacks
+
+Hackers attack different parts of the OSI model to take you down:
+
+### 1. Volumetric Attacks (Layer 3/4)
+- **The Goal:** Clog the physical pipes. The hacker sends 500 Gigabits per second of raw UDP garbage data to your server's IP address. Your hosting provider's network cables physically cannot handle the bandwidth and drop all traffic, taking you offline.
+- **The Fix:** You cannot fix this with code. Your entire server only has a 10Gbps network card. You must use a massive, globally distributed **Anycast Network (like Cloudflare or AWS Shield)**. Cloudflare has thousands of servers worldwide with massive data pipes. They absorb the 500Gbps attack across their entire global network, filter the garbage out, and only forward clean traffic to your tiny origin server.
+
+### 2. Protocol Attacks (Layer 4)
+- **The Goal:** Exhaust server state. The most famous is the **SYN Flood**. When establishing a TCP connection, the client sends a `SYN` packet, the server replies `SYN-ACK`, and the server reserves a tiny bit of RAM waiting for the client to send the final `ACK`. The hacker sends millions of `SYN` packets but never sends the `ACK`. The server's RAM fills up with half-open connections and it crashes.
+- **The Fix:** Modern Load Balancers use hardware-level defenses (like SYN cookies) to instantly reject connections that don't complete the handshake, protecting the backend servers.
+
+### 3. Application Layer Attacks (Layer 7)
+- **The Goal:** Exhaust CPU and Database resources. The hacker sends completely legitimate, perfectly formatted HTTP `GET /search?q=expensive_query` requests. Since the requests look normal, Cloudflare lets them through. But the search query requires a massive 5-second SQL `JOIN` on your backend. Sending 5,000 of these requests a second will instantly crash your database.
+- **The Fix:** This is the hardest to defend. You must use a **WAF (Web Application Firewall)** to inspect the HTTP headers and behavioral patterns. You must aggressively implement **Rate Limiting** at the API Gateway. You must implement **Load Shedding** to drop the search requests when the database CPU hits 90%.
+
+## Mental Model
+
+```mermaid
+flowchart TD
+    Botnet[100,000 Bots\n(500 Gbps Attack)] --> Cloudflare{Cloudflare Edge Network\n(Absorbs Layer 3/4)}
+    
+    Cloudflare -->|Filters 99% of junk| WAF{Web App Firewall\n(Blocks Layer 7)}
+    
+    WAF -->|Only clean traffic| Gateway[API Gateway\n(Rate Limits)]
+    
+    Gateway --> Server[Origin Server]
+```
+
+## Interview Questions
+
+**Q: You place your entire application behind Cloudflare to protect against DDoS attacks. However, a smart hacker bypasses Cloudflare entirely and crashes your server. How did they do it, and how do you prevent it?**
+**A:** The hacker found the **Origin IP Address** of your actual AWS server (perhaps by looking at old DNS records, or triggering your server to send them an email which reveals the IP in the email headers). Once they have the raw IP address, they launch the DDoS attack directly at your server, completely bypassing the Cloudflare proxy shield.
+**Fix:** You must configure your AWS Security Groups (Firewall) to explicitly **DROP all incoming traffic** *unless* the traffic's source IP matches Cloudflare's published list of proxy IP addresses. This mathematically forces all internet traffic to go through the Cloudflare scrubber first.

@@ -1,0 +1,83 @@
+---
+title: "Design Netflix"
+description: "Streaming massive video files across the globe."
+importance: "HIGH"
+revisionTime: 5
+category: "System Design"
+subcategory: "Interview Problems"
+order: 89
+---
+
+## Concept
+
+**The Problem:** Design a video streaming platform. Users upload videos, and millions of viewers watch them.
+
+This question tests your knowledge of **CDNs (Content Delivery Networks)**, Video Transcoding, and separating the Data Plane (Video Bytes) from the Control Plane (UI and APIs).
+
+## 1. Requirements
+
+**Functional:**
+- Upload a video (Creators).
+- Watch a video (Viewers).
+- Search and Discover videos.
+
+**Non-Functional:**
+- No buffering while streaming.
+- Highly Available.
+- Massive Storage (Petabytes of video data).
+
+## 2. High-Level Architecture (The Two Halves)
+
+Netflix is famously divided into two entirely separate architectures.
+
+### Half 1: The Control Plane (AWS)
+This handles everything *except* the video files. It runs on AWS.
+- User login and authentication.
+- Processing credit cards.
+- Rendering the UI (Movie titles, descriptions, thumbnails).
+- The Recommendation Engine (Machine Learning).
+- Search.
+
+### Half 2: The Data Plane (Open Connect / CDN)
+This handles delivering the actual 10GB video files. It does *not* run on AWS (too expensive). Netflix built their own custom CDN called **Open Connect**. They physically ship massive hard drives to your local ISP (Comcast, Verizon).
+When you hit play, your TV connects to the hard drive sitting inside your local Comcast building to download the video, completely bypassing the global internet.
+
+## 3. The Upload & Transcoding Pipeline
+
+You cannot just upload an `.mp4` and stream it directly to users. You must **Transcode** it.
+
+**Why Transcode?**
+- A user on a 4K TV needs a 4K resolution file. A user on an old iPhone on a 3G network needs a 360p resolution file.
+- The video must be sliced into small 5-second "chunks". This allows the video player to use **Adaptive Bitrate Streaming**. If your Wi-Fi suddenly drops, the player seamlessly requests the next 5-second chunk in 480p instead of 4K, preventing the video from pausing to buffer.
+
+**The Workflow:**
+1. Creator uploads the raw 50GB file to AWS S3.
+2. A Kafka event triggers the Transcoding Workers.
+3. The workers chop the video and convert it into 15 different resolutions and formats (1080p, 720p, 480p, audio-only, etc.).
+4. The transcoded files are saved back to S3.
+5. The files are distributed globally to the CDN edge servers.
+
+## 4. System Diagram
+
+```mermaid
+flowchart TD
+    UserUpload[Creator] -->|Raw Video| S3[(AWS S3 Origin)]
+    S3 --> Transcode[Transcoding Workers]
+    Transcode --> S3_Final[(S3 Transcoded)]
+    
+    S3_Final -->|Nightly Sync| CDN[CDN Edge Server\n(Local ISP)]
+    
+    Viewer[Viewer TV] -->|1. Load UI| Control[AWS Backend API]
+    Control -.->|2. Returns Video URL| Viewer
+    Viewer -->|3. Stream Video Bytes| CDN
+```
+
+## Interview Questions
+
+**Q: A famous new movie is releasing globally at midnight. How do you prevent the origin S3 database from crashing when 10 million users hit Play at the exact same second?**
+**A:** You proactively cache it. You don't wait for the users to ask for it. 24 hours before the release, you slowly push the movie file from S3 to every single CDN edge server in the world. At midnight, when 10 million people hit Play, 100% of their requests are served by the local CDN servers. The central AWS S3 origin receives exactly 0 traffic, easily surviving the spike.
+
+**Q: Why does Netflix slice movies into tiny 5-second chunks instead of just serving the whole 2GB MP4 file at once?**
+**A:** Slicing the file is required for **Adaptive Bitrate Streaming (DASH / HLS)**.
+If you send a monolithic 2GB file, the server and client are locked into a single connection and resolution. If the user's internet speed drops, the video buffers.
+By slicing the video into 5-second segments (each segment having its own unique URL, like `chunk_1_1080p.ts`, `chunk_1_480p.ts`), the Javascript video player acts like a smart client. It downloads chunk 1 in 1080p. It measures the download speed. If the speed dropped, it actively asks the server for chunk 2 in 480p. The transition is seamless to the user, and buffering is completely eliminated.

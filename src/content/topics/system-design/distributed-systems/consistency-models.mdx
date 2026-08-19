@@ -1,0 +1,57 @@
+---
+title: "Consistency Models"
+description: "How strictly do we keep our data synchronized?"
+importance: "HIGH"
+revisionTime: 5
+category: "System Design"
+subcategory: "Distributed Systems"
+order: 33
+---
+
+## Concept
+
+In a distributed system, data is copied across multiple nodes (Replication). When a user writes data to Node A, it takes time for that data to travel over the network to Node B. If another user reads from Node B during that exact millisecond, what should the system do? 
+A **Consistency Model** is a contract between the system and the developer dictating exactly what data will be returned in these scenarios.
+
+## The Primary Models
+
+### 1. Strong Consistency (Strict / Linearizable)
+- **The Contract:** Once a Write is acknowledged as successful, every subsequent Read (from *any* node in the world) is guaranteed to see that newly written data. The system behaves as if there is only one single copy of the data.
+- **How it works:** When you write to Node A, Node A locks the data, sends the update to Node B and Node C, waits for them to acknowledge the save, and *then* returns "Success" to the user.
+- **Trade-Off:** Incredibly slow. High Latency. If the network to Node C goes down, the system cannot process writes (sacrifices Availability).
+
+### 2. Eventual Consistency
+- **The Contract:** If no new writes are made to the system, eventually all nodes will synchronize and hold the same data. In the short term, different users querying different nodes might see completely different, contradictory data.
+- **How it works:** Node A saves the data locally and immediately returns "Success" to the user. In the background, it eventually broadcasts the update to B and C.
+- **Trade-Off:** Massive write speeds and perfect Availability. However, developers must write complex code to handle temporary data discrepancies.
+
+### 3. Causal Consistency
+- **The Contract:** A middle ground. The system guarantees that operations which are logically dependent on each other are seen in the correct order by everyone.
+- **Example:** If User A comments "Where is everyone?", and User B replies "I am here", the system guarantees that *no user* will ever see User B's reply before they see User A's initial comment.
+
+### 4. Read-Your-Own-Writes Consistency
+- **The Contract:** If a user updates their profile picture, they are guaranteed to see the new picture immediately upon page refresh, even if other users around the world still see the old picture for a few seconds.
+- **How it works:** The system uses cookies or session IDs to ensure that if a user just performed a Write, their subsequent Reads are strictly routed to the Primary node (or the specific replica they just wrote to).
+
+## Mental Model
+
+```mermaid
+flowchart TD
+    subgraph Strong Consistency
+        W1[Write 'X=5' to Node A] -->|Wait for sync| NodeB1[Node B: X=5]
+        NodeB1 -->|Read| R1[User reads 5]
+    end
+
+    subgraph Eventual Consistency
+        W2[Write 'X=5' to Node A] -->|Background sync| NodeB2[Node B: X=1 (Stale!)]
+        NodeB2 -->|Read| R2[User reads 1]
+    end
+```
+
+## Interview Questions
+
+**Q: A banking application manages user balances. Which consistency model must you choose?**
+**A:** You must use **Strong Consistency**. If Alice has $100 and transfers it to Bob, Node A records her balance as $0. If she immediately logs into Node B (which hasn't synced yet) and her balance still shows $100, she could perform a double-spend attack by transferring that same money to Charlie. Financial ledgers cannot tolerate Eventual Consistency.
+
+**Q: In DNS (Domain Name System), when you buy a new domain name, the registrar often says "It may take up to 48 hours for your domain to propagate globally." What consistency model is DNS using?**
+**A:** DNS is the most famous example of **Eventual Consistency**. The global internet cannot freeze and wait for every single ISP router on the planet to update its cache simultaneously. The system prioritizes 100% Availability. Over 48 hours, the caches expire and the new domain record eventually propagates to all nodes.

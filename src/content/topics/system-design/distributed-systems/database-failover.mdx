@@ -1,0 +1,61 @@
+---
+title: "Database Failover"
+description: "Surviving the death of the primary database."
+importance: "HIGH"
+revisionTime: 4
+category: "System Design"
+subcategory: "Distributed Systems"
+order: 42
+---
+
+## Concept
+
+In a Primary-Replica architecture, all Writes hit the single Primary database. If the hardware running the Primary database bursts into flames, your entire application goes down. **Failover** is the automated process of detecting this disaster, promoting a Replica to become the new Primary, and silently routing all new Writes to it without the users noticing.
+
+## Mental Model
+
+```mermaid
+flowchart TD
+    subgraph Step 1: Normal Operation
+        App1[App Servers] -->|Writes| Primary[(Primary)]
+        Primary -.->|Replicates| Replica[(Replica)]
+    end
+
+    subgraph Step 2: The Crash
+        App2[App Servers] -.->|Write Fails| Dead[(Dead Primary)]
+        Replica2[(Replica)]
+    end
+    
+    subgraph Step 3: Failover
+        Monitor{Monitor\n(ZooKeeper)} -->|Detects Death,\nPromotes Replica| NewPrimary
+        App3[App Servers] -->|Writes| NewPrimary[(New Primary!)]
+    end
+```
+
+## How It Works
+
+A proper failover architecture usually requires a third-party monitoring system (like ZooKeeper or etcd) to orchestrate the switch.
+
+1. **Detection:** The monitoring system constantly sends ping requests to the Primary. If it fails 3 times in a row, it declares the Primary dead.
+2. **Fencing (CRITICAL):** The monitoring system must ensure the old Primary is *actually* dead, and not just experiencing a temporary network glitch. It executes a **Fencing** script (often literally shutting off the power to the old Primary server) to prevent a "Split Brain" scenario where the old Primary wakes back up and tries to accept writes alongside the new Primary.
+3. **Promotion:** The monitoring system connects to the healthiest Replica (the one with the least replication lag) and sends a command to transition it out of "Read-Only" mode into "Primary" mode.
+4. **Re-routing:** The monitoring system updates the central configuration (or DNS record) to point the `database-primary.app.com` URL to the new IP address. The Application servers instantly begin writing to the new Primary.
+
+## Active-Active vs Active-Passive Failover
+
+- **Active-Passive (Standard):** The Replica sits idle (or serves Read queries) until the Primary dies. It is relatively cheap and simple to maintain.
+- **Active-Active (Multi-Master):** Both databases sit behind a Load Balancer and accept Writes simultaneously. If one dies, the Load Balancer just stops sending traffic to it. There is zero downtime and no need to execute a complex "Promotion" script. However, it requires complex bidirectional replication and conflict resolution (LWW/Vector Clocks).
+
+## Real-World Usage
+
+- **AWS RDS Multi-AZ:** When you enable Multi-AZ on a PostgreSQL instance, AWS automatically provisions a hidden, synchronous standby replica in a different physical data center. If the primary hardware fails, AWS automatically flips the internal DNS record to the standby instance within 60 seconds. You don't have to write any failover scripts.
+- **Patroni:** A highly popular open-source template for building highly available PostgreSQL clusters using etcd to manage automated failover.
+
+## Interview Questions
+
+**Q: You use Asynchronous Replication. The Primary dies and Failover executes successfully. 5 minutes later, users complain that their newest comments are missing. Why?**
+**A:** Because of the Asynchronous nature of the replication. The old Primary acknowledged the user's Writes locally, but crashed *before* it could send those final log updates to the Replica. When the Replica was promoted, it simply did not have the data. This is an unavoidable data loss scenario in Async failover setups. (To fix this, you must use Synchronous or Semi-Synchronous replication).
+
+**Q: Explain the "Split Brain" scenario and how Fencing (STONITH) prevents it.**
+**A:** Split Brain occurs if a network cable breaks between the Primary and the Monitor. The Monitor thinks the Primary is dead and promotes a Replica. However, the old Primary is actually alive and can still receive Write requests from some Application servers. Now you have two databases accepting writes, irreversibly corrupting your data. 
+**STONITH** stands for "Shoot The Other Node In The Head". It is a Fencing protocol where the Monitor actively kills the old Primary (e.g., by sending a command to the physical server rack's power supply to cut electricity) *before* promoting the new Replica.

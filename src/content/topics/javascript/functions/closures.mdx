@@ -1,0 +1,96 @@
+---
+title: "Closures"
+description: "Functions remembering where they were born."
+importance: "HIGH"
+revisionTime: 5
+category: "JavaScript"
+subcategory: "Functions"
+order: 15
+---
+
+## TL;DR
+
+A **Closure** is created when an inner function remembers and has access to the variables of its outer function, *even after the outer function has finished executing and returned*. It is the mechanism JavaScript uses to create private state and encapsulate data.
+
+## Mental Model
+
+```mermaid
+flowchart TD
+    Outer["function outer() {\n  let count = 0;\n  return inner();\n}"]
+    Inner["function inner() {\n  count++;\n}"]
+    
+    Outer -->|Executes and Dies| Memory
+    
+    subgraph Memory
+        ClosureData["Hidden Closure Object\n{ count: 0 }"]
+        InnerFunc["inner() reference"]
+        
+        InnerFunc -->|Maintains link to| ClosureData
+    end
+    
+    Note right of Memory: outer() is gone from the Call Stack,\nbut Garbage Collection skips 'count'\nbecause inner() still needs it!
+```
+
+## How It Works
+
+Normally, when a function finishes executing, all its local variables are destroyed by the Garbage Collector. 
+However, if a function returns an inner function, the JavaScript engine looks at that inner function and says: "Does this function use any variables from its parent?"
+If yes, it preserves those specific variables in memory inside a hidden `[[Environment]]` object attached to the inner function. This "backpack" of preserved variables is the Closure.
+
+## Example
+
+```javascript
+// A classic use-case: Data Privacy (Encapsulation)
+function createCounter() {
+  // 'count' is a private variable. 
+  // It cannot be accessed directly from the outside.
+  let count = 0; 
+
+  // We return an object containing inner functions
+  return {
+    increment: function() {
+      count++;
+      return count;
+    },
+    decrement: function() {
+      count--;
+      return count;
+    }
+  };
+}
+
+const myCounter = createCounter();
+// createCounter() has finished. Its execution context is dead.
+
+// But the inner functions still have access to the closure memory!
+console.log(myCounter.increment()); // 1
+console.log(myCounter.increment()); // 2
+console.log(myCounter.decrement()); // 1
+
+// console.log(myCounter.count); // undefined (It is truly private!)
+```
+
+## Common Output Question
+
+```javascript
+function multiplier(factor) {
+  return function(number) {
+    return number * factor;
+  };
+}
+
+const twice = multiplier(2);
+const thrice = multiplier(3);
+
+console.log(twice(5));
+console.log(thrice(5));
+```
+**Q: What does this output and why?**
+**A:** `10` and `15`.
+Every time you call the outer function `multiplier()`, a brand new, distinct closure memory space is created. `twice` holds a closure where `factor` is 2. `thrice` holds a completely separate closure where `factor` is 3. They do not overwrite each other.
+
+## Senior Interview Question
+
+**Q: How do Closures cause Memory Leaks?**
+
+**A:** Because closures keep variables alive, they prevent the Garbage Collector from cleaning up memory. If an outer function contains a massive data structure (like a 10MB JSON object), and the inner function is attached to a long-lived DOM element (like a button click event listener), that 10MB object will stay in memory forever as long as the button exists on the page, even if the inner function never actually clicks it. You must manually remove event listeners or nullify references to allow the GC to sweep the closure.

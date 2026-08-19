@@ -1,0 +1,71 @@
+---
+title: "Runtime vs Compile Time"
+description: "The most important concept for using TypeScript in a backend environment."
+importance: "HIGH"
+revisionTime: 5
+category: "TypeScript"
+subcategory: "Backend"
+order: 46
+---
+
+## TL;DR
+
+TypeScript only exists at **Compile Time**. When your Node.js application is actually running, it is executing plain JavaScript. Therefore, TypeScript cannot protect you from bad data entering your system from external sources (like API requests or Databases) at runtime.
+
+## Mental Model
+
+```mermaid
+flowchart TD
+    subgraph Compile Time [Compile Time (TypeScript)]
+        IDE["IDE / tsc"]
+        Interfaces["Interfaces & Types"]
+        Errors["Type Errors shown to Dev"]
+    end
+    
+    subgraph Runtime [Runtime (Node.js / V8)]
+        JS["Compiled JavaScript"]
+        Network["Network Request\n(JSON)"]
+        Crash["Runtime Crash if Data is Bad"]
+    end
+    
+    Compile Time -.->|Types are Erased| Runtime
+    Network --> JS
+    JS --> Crash
+```
+
+## How It Works
+
+This is the biggest hurdle for backend developers coming from Java or C#. In Java, if you define a class `User { int age; }` and an API request comes in with `{ "age": "twenty" }`, the Java runtime will automatically throw an error before your code even executes.
+
+In TypeScript, if you cast an incoming request body as an interface:
+`const body = req.body as User;`
+TypeScript will happily let you compile. But at runtime, `req.body` is completely unchecked. If the user sent a string instead of a number, your code will crash or corrupt the database.
+
+## Example: The Illusion of Safety
+
+```typescript
+interface CreateUserDTO {
+    age: number;
+}
+
+app.post('/users', (req, res) => {
+    // DANGER: We are lying to the compiler!
+    // req.body is 'any' (from Express). We just asserted it is CreateUserDTO.
+    // If the user sends { age: "twenty" }, this will NOT throw an error here.
+    const payload = req.body as CreateUserDTO;
+    
+    // TS allows this because it thinks payload.age is a number.
+    // At runtime, this evaluates to: "twenty" * 2 = NaN. Database corruption!
+    const doubleAge = payload.age * 2; 
+    
+    saveToDb(doubleAge); 
+});
+```
+
+## Common Interview Questions
+
+### If TypeScript is erased at runtime, how do we validate incoming API data?
+You must use **Runtime Validation Libraries** like Zod, Joi, or class-validator. These libraries provide functions that execute in standard JavaScript to check the shape of the data. The best libraries (like Zod) allow you to write the validation schema once, and automatically infer the TypeScript type from it, keeping the compile-time and runtime perfectly synchronized.
+
+### What is "Type Erasure"?
+It is the process where the TypeScript compiler strips away all interfaces, type aliases, generics, and access modifiers (`public`/`private`), leaving only standard JavaScript.

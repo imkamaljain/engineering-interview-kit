@@ -1,0 +1,92 @@
+---
+title: "Custom HTTP Servers"
+description: "Why you shouldn't use http.ListenAndServe in production."
+importance: "HIGH"
+revisionTime: 4
+category: "Go"
+subcategory: "Networking"
+order: 39
+---
+
+## TL;DR
+
+Calling `http.ListenAndServe(":8080", nil)` is great for quick scripts, but terrible for production. It uses default, infinite timeouts. If a malicious client connects but sends data at 1 byte per minute (a Slowloris attack), the connection will stay open forever, eventually exhausting your server's memory. You must always create a custom `http.Server` struct.
+
+## Mental Model
+
+```mermaid
+flowchart TD
+    Client["Malicious Client"]
+    
+    subgraph Custom http.Server
+        ReadTimeout["ReadTimeout: 5s"]
+        WriteTimeout["WriteTimeout: 10s"]
+        IdleTimeout["IdleTimeout: 120s"]
+        
+        Handler["Your ServeMux"]
+    end
+    
+    Client -->|Sends 1 byte / min| ReadTimeout
+    ReadTimeout -->|Kills connection\nafter 5s!| Client
+    
+    Note right of ReadTimeout: Protects against\nSlowloris Attacks and\nresource exhaustion.
+```
+
+## How It Works
+
+To run a production-ready server, you instantiate an `http.Server` struct manually. This allows you to configure critical timeouts at the TCP/HTTP layer.
+
+- **`ReadTimeout`**: Maximum time to read the entire request (headers + body).
+- **`ReadHeaderTimeout`**: Maximum time to read *just* the headers. Highly recommended to prevent Slowloris attacks.
+- **`WriteTimeout`**: Maximum time allowed to write the response back to the client.
+- **`IdleTimeout`**: Maximum time to keep a Keep-Alive connection open waiting for the *next* request.
+
+## Example
+
+```go
+package main
+
+import (
+	"fmt"
+	"net/http"
+	"time"
+)
+
+func main() {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("Production Ready!"))
+	})
+
+	// Create a custom server with strict timeouts
+	srv := &http.Server{
+		Addr:    ":8080",
+		Handler: mux,
+		
+		// 1. Prevent Slowloris attacks (client sending headers too slowly)
+		ReadHeaderTimeout: 3 * time.Second,
+		
+		// 2. Prevent slow body uploads from hogging connections
+		ReadTimeout: 5 * time.Second,
+		
+		// 3. Prevent slow clients from blocking our response writer
+		WriteTimeout: 10 * time.Second,
+		
+		// 4. Close Keep-Alive connections if idle for too long
+		IdleTimeout: 120 * time.Second,
+	}
+
+	fmt.Println("Starting secure server on :8080")
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		fmt.Printf("Server failed: %v\n", err)
+	}
+}
+```
+
+## Common Interview Questions
+
+### What happens if my Handler takes 15 seconds to process, but `WriteTimeout` is 10 seconds?
+Your handler will keep running in the background (wasting CPU), but when it finally tries to call `w.Write()`, the operation will fail because the underlying TCP connection was already forcefully closed by the Server at the 10-second mark. (This is why your handler should also listen to `r.Context().Done()` to cancel its work early!).
+
+### Should I use `http.DefaultServeMux`?
+The `nil` in `http.ListenAndServe(":8080", nil)` tells Go to use `http.DefaultServeMux`, which is a global variable. This is dangerous because any third-party package you import could secretly call `http.HandleFunc("/debug/pprof")` and expose sensitive endpoints on your server without you knowing. Always create a local, isolated router using `mux := http.NewServeMux()` and pass it to the server.

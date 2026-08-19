@@ -1,0 +1,77 @@
+---
+title: "Cluster"
+description: "Scaling Node.js web servers across multiple CPU cores."
+importance: "HIGH"
+revisionTime: 4
+category: "Node.js"
+subcategory: "Concurrency"
+order: 26
+---
+
+## TL;DR
+
+The `cluster` module allows you to easily create child processes (workers) that run simultaneously and **share the same server port**. This is the built-in way to scale a single-threaded Node.js web server to utilize all available CPU cores.
+
+## Mental Model
+
+```mermaid
+flowchart TD
+    Internet["Incoming HTTP Requests (Port 3000)"]
+    Master["Master Process\n(Load Balancer / OS)"]
+    Worker1["Worker 1 (Node process)"]
+    Worker2["Worker 2 (Node process)"]
+    Worker3["Worker 3 (Node process)"]
+
+    Internet --> Master
+    Master -->|Round-Robin| Worker1
+    Master -->|Round-Robin| Worker2
+    Master -->|Round-Robin| Worker3
+```
+
+## How It Works
+
+1.  A **Master** process is started. Its only job is to manage the workers.
+2.  The Master uses `cluster.fork()` to spawn multiple **Worker** processes (usually one per CPU core).
+3.  All workers share the same TCP port (e.g., 3000). 
+4.  When requests arrive, the Master process distributes them among the workers using a round-robin algorithm.
+
+## Example
+
+```javascript
+const cluster = require('cluster');
+const http = require('http');
+const os = require('os');
+
+const numCPUs = os.cpus().length;
+
+if (cluster.isPrimary) {
+  console.log(`Master process ${process.pid} is running`);
+
+  // Fork a worker for each CPU core
+  for (let i = 0; i < numCPUs; i++) {
+    cluster.fork();
+  }
+
+  // Replace dead workers
+  cluster.on('exit', (worker, code, signal) => {
+    console.log(`Worker ${worker.process.pid} died. Restarting...`);
+    cluster.fork();
+  });
+} else {
+  // Workers share the TCP connection in this block
+  http.createServer((req, res) => {
+    res.writeHead(200);
+    res.end(`Hello from Worker ${process.pid}\n`);
+  }).listen(8000);
+
+  console.log(`Worker ${process.pid} started`);
+}
+```
+
+## Common Interview Questions
+
+### Do cluster workers share memory?
+**No.** Each worker is a completely separate OS process with its own V8 instance and its own memory. If Worker A updates a local variable, Worker B will not see the change. You must use a database like Redis to share state (like sessions) between workers.
+
+### Should I use the Cluster module in production?
+Often, **no**. In modern cloud infrastructure, it is usually better to deploy multiple single-threaded Node.js containers (via Docker/Kubernetes) and let the infrastructure load balancer (like AWS ALB or NGINX) handle the traffic distribution, rather than managing processes manually with the `cluster` module.

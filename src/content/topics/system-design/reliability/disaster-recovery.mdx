@@ -1,0 +1,54 @@
+---
+title: "Disaster Recovery"
+description: "When the entire data center burns down."
+importance: "MEDIUM"
+revisionTime: 3
+category: "System Design"
+subcategory: "Reliability"
+order: 70
+---
+
+## Concept
+
+Redundancy within a single building is not enough. If a hurricane floods the entire AWS `us-east-1` data center, your Load Balancers, API Gateways, and primary databases are all destroyed simultaneously.
+**Disaster Recovery (DR)** is the architectural planning and infrastructure required to completely recreate your entire company's system in a different geographic region as quickly as possible.
+
+## The Two Key Metrics
+
+Every company must define these two metrics before designing a DR plan. It dictates how much money they will spend.
+
+1. **RPO (Recovery Point Objective):** How much *data loss* is acceptable?
+   - If RPO is 24 hours: You can just take a daily database backup at midnight. If the server burns down at 11:00 PM, you lose 23 hours of data. (Cheap).
+   - If RPO is 0 seconds: You must synchronously replicate every single database write to a different continent before confirming it to the user. (Extremely expensive and slow).
+2. **RTO (Recovery Time Objective):** How much *downtime* is acceptable?
+   - If RTO is 1 week: You can manually buy new servers, install Linux, and restore backups. (Cheap).
+   - If RTO is 5 minutes: You must have an exact, fully-running replica of your entire infrastructure sitting idle in another region, ready to take over instantly. (Extremely expensive).
+
+## The 3 Disaster Recovery Architectures
+
+### 1. Backup and Restore (Cold Standby)
+- **How it works:** You take daily snapshots of your database and save them to AWS S3. You use Infrastructure-as-Code (Terraform) to define your servers.
+- **The Disaster:** Data center dies. You run your Terraform scripts to spin up brand new blank servers in a new region. You download the S3 backup and restore the database.
+- **Metrics:** High RTO (Takes hours/days to boot). High RPO (You lose hours of data).
+- **Cost:** Very cheap.
+
+### 2. Pilot Light (Warm Standby)
+- **How it works:** You keep your most critical core piece (the Database) continuously running and replicating in Region B. The App servers in Region B are either turned off or scaled down to exactly 1 tiny instance.
+- **The Disaster:** Data center dies. The database in Region B is already up to date. You just flip the auto-scaler to spin up 50 App servers and update the DNS to point to Region B.
+- **Metrics:** Low RPO (Minutes of data loss). Medium RTO (Takes 10-15 minutes for new App servers to boot up).
+- **Cost:** Moderate.
+
+### 3. Multi-Region Active-Active (Hot Standby)
+- **How it works:** Your entire application is fully deployed and running at 100% capacity in both Region A (New York) and Region B (London) simultaneously. A global DNS Load Balancer (like AWS Route53) routes users to their closest region.
+- **The Disaster:** New York data center dies. Route53 instantly detects the failure and routes 100% of global traffic to London.
+- **Metrics:** RPO is near zero. RTO is zero (instant).
+- **Cost:** Astronomically expensive. You are paying double for infrastructure 24/7.
+
+## Interview Questions
+
+**Q: You use a Multi-Region Active-Active architecture. A user in New York creates an account, but the New York data center burns down 1 second later. They refresh their page and are routed to London, but they cannot log in. Why?**
+**A:** This is the harsh reality of the **CAP Theorem**. Because New York and London are physically far apart, database replication between them *must* be asynchronous to maintain fast performance. The user's account was saved in New York, but the asynchronous replication stream didn't have time to cross the Atlantic Ocean to London before the fire happened. The London database simply does not know the user exists.
+
+**Q: What is Infrastructure as Code (IaC) and why is it mandatory for modern Disaster Recovery?**
+**A:** IaC (using tools like Terraform, Ansible, or AWS CloudFormation) means you write your entire server architecture as code files (e.g., "I need 1 VPC, 3 EC2 instances, and 1 Postgres Database"). You commit this to GitHub.
+If a region dies, you cannot rely on an engineer frantically clicking buttons in the AWS Dashboard from memory to try and rebuild the company. With IaC, you simply point your Terraform script at the `eu-west-1` region, hit "Run", and the exact, flawless replica of your complex infrastructure is automatically spun up by AWS APIs in minutes.

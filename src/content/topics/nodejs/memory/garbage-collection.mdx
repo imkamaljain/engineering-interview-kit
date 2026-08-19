@@ -1,0 +1,60 @@
+---
+title: "Garbage Collection"
+description: "How V8 reclaims memory using the generational garbage collector."
+importance: "HIGH"
+revisionTime: 5
+category: "Node.js"
+subcategory: "Memory"
+order: 29
+---
+
+## TL;DR
+
+**Garbage Collection (GC)** is an automated process in V8 that identifies and reclaims memory occupied by objects that are no longer referenced by the application. V8 uses a generational approach, dividing objects into a "Young Generation" and an "Old Generation".
+
+## Mental Model
+
+```mermaid
+flowchart LR
+    NewObject["New Object created"]
+    NewSpace["New Space\n(Young Generation)"]
+    Scavenger["Minor GC (Scavenger)"]
+    OldSpace["Old Space\n(Old Generation)"]
+    MarkSweep["Major GC (Mark-Sweep)"]
+
+    NewObject -->|Allocated in| NewSpace
+    NewSpace -->|Object survives 2 GCs| Scavenger
+    Scavenger -->|Promoted to| OldSpace
+    OldSpace -->|Memory gets full| MarkSweep
+    MarkSweep -->|Unreachable objects| Deleted["Deleted/Freed"]
+```
+
+## How It Works
+
+V8 uses the Generational Hypothesis: *most objects die young*.
+1.  **Minor GC (Scavenger)**: Runs frequently on the "New Space". It is extremely fast. It cleans up short-lived objects (like variables inside a function). If an object survives two Minor GCs, it gets "promoted" to the Old Space.
+2.  **Major GC (Mark-and-Sweep)**: Runs less frequently on the "Old Space". It traverses the entire object graph starting from the global root to "Mark" reachable objects. Anything unmarked is "Swept" (deleted). This is an expensive operation and can cause "Stop-The-World" pauses, briefly halting your JavaScript execution.
+
+## Example
+
+```javascript
+let cache = {};
+
+function processRequest(req) {
+    // 1. 'tempData' is created in the Young Gen.
+    // It will be cleaned up almost immediately by the Minor GC.
+    const tempData = req.body.map(item => item * 2);
+
+    // 2. We attach data to the global 'cache' object.
+    // This stays reachable, survives Minor GCs, and moves to the Old Gen.
+    cache[req.id] = tempData; 
+}
+```
+
+## Common Interview Questions
+
+### What is a "Stop-The-World" pause?
+It is a phase during Garbage Collection where the execution of the main JavaScript thread is completely paused so the GC can safely move objects around in memory without the application modifying them at the same time. Frequent or long pauses cause noticeable lag (high latency) in your application.
+
+### How does V8 optimize the Major GC to prevent long pauses?
+Modern V8 uses **Concurrent Marking** and **Parallel Sweeping**. Instead of pausing the main thread for the entire Mark-and-Sweep process, it uses background threads to do most of the marking work concurrently while the JavaScript application continues to run.

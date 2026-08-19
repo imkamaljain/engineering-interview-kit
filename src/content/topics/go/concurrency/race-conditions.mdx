@@ -1,0 +1,93 @@
+---
+title: "Race Conditions"
+description: "When concurrent operations ruin data integrity, and how to find them."
+importance: "HIGH"
+revisionTime: 3
+category: "Go"
+subcategory: "Concurrency"
+order: 20
+---
+
+## TL;DR
+
+A **Race Condition** (specifically a Data Race) occurs when two or more goroutines access the same memory location concurrently, and at least one of the accesses is a write. This leads to silent data corruption, unpredictable behavior, and random crashes.
+
+## Mental Model
+
+```mermaid
+flowchart TD
+    subgraph Shared Memory
+        Counter["Balance = 100"]
+    end
+    
+    G1["Goroutine 1\n(Deposit $50)"]
+    G2["Goroutine 2\n(Withdraw $20)"]
+    
+    G1 -->|Read: 100| Counter
+    G2 -->|Read: 100| Counter
+    
+    G1 -->|Write: 100 + 50| Counter
+    G2 -->|Write: 100 - 20| Counter
+    
+    Note over Counter: Final Balance is 80 instead of 130!\nG1's write was completely overwritten.
+```
+
+## How It Works
+
+Data races are notoriously difficult to debug because they only happen under specific timing conditions (which often don't occur on your local laptop, but happen instantly under high load in production).
+
+Go provides a built-in **Race Detector** compiler flag to find these bugs instantly during testing.
+
+## Example: A Classic Data Race
+
+```go
+package main
+
+import (
+	"fmt"
+	"sync"
+)
+
+func main() {
+	counter := 0
+	var wg sync.WaitGroup
+
+	for i := 0; i < 1000; i++ {
+		wg.Add(1)
+		go func() {
+			// RACE CONDITION!
+			// 1000 goroutines are reading and writing to 'counter'
+			// simultaneously without a Mutex or Atomic instruction.
+			counter++ 
+			wg.Done()
+		}()
+	}
+
+	wg.Wait()
+	// You expect 1000, but it will randomly print 984, 912, etc.
+	fmt.Println("Counter:", counter) 
+}
+```
+
+## Detecting and Fixing the Race
+
+To find this bug, run your code with the `-race` flag:
+`go run -race main.go` or `go test -race ./...`
+
+The runtime will aggressively monitor memory and instantly print a massive warning exactly where the race occurred:
+`WARNING: DATA RACE`
+`Write at 0x... by goroutine 7`
+`Previous read at 0x... by goroutine 8`
+
+**How to fix it:**
+1. Use `sync.Mutex` to lock the variable.
+2. Use `sync/atomic` (e.g., `atomic.AddInt64(&counter, 1)`).
+3. Use a Channel to send the updates to a single dedicated state-manager goroutine.
+
+## Common Interview Questions
+
+### Should I leave the `-race` flag enabled in Production?
+**Absolutely Not.** The race detector injects massive amounts of tracking code into your compiled binary. It will increase memory usage by 5-10x and decrease execution speed by 2-20x. It is strictly for local testing, CI/CD pipelines, or isolated staging environments.
+
+### Can a Race Condition crash a Go program?
+Usually, it just silently corrupts data (like an integer being the wrong value). However, if there is a data race on an `interface{}`, a `slice`, or a `map`, the internal memory layout gets corrupted. The Go runtime detects this structural corruption and immediately triggers a fatal, unrecoverable panic, taking the entire server down.

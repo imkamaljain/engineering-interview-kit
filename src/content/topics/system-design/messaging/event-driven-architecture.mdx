@@ -1,0 +1,65 @@
+---
+title: "Event-Driven Architecture (EDA)"
+description: "Reacting to things that have already happened."
+importance: "HIGH"
+revisionTime: 4
+category: "System Design"
+subcategory: "Messaging"
+order: 46
+---
+
+## Concept
+
+In a traditional **Request-Driven** architecture, services command each other to do things (e.g., the Order Service HTTP POSTs to the Payment Service: "Charge this card"). This tightly couples the services together. If Payment is down, Order fails.
+
+In an **Event-Driven Architecture (EDA)**, services do not command each other. They simply broadcast facts about what just happened in their own domain (e.g., the Order Service broadcasts: "Order 123 was Created"). Other services actively listen for those facts and react to them independently.
+
+## Mental Model
+
+```mermaid
+flowchart TD
+    subgraph Request-Driven (Tightly Coupled)
+        O1[Order Svc] -->|HTTP POST\n'Send Email'| E1[Email Svc]
+        Note1["If Email Svc crashes, Order Svc crashes.\nOrder Svc must know Email Svc exists."]
+    end
+
+    subgraph Event-Driven (Decoupled)
+        O2[Order Svc] -->|Publishes Event\n'OrderCreated'| Kafka[(Event Broker)]
+        
+        Kafka -->|Consumes| E2[Email Svc]
+        Kafka -->|Consumes| I2[Inventory Svc]
+        Note2["Order Svc doesn't know Email Svc exists.\nIt just drops a fact into the void."]
+    end
+```
+
+## How It Works
+
+The core of EDA is the **Event Broker** (usually Apache Kafka, AWS EventBridge, or SNS/SQS).
+1. An **Event** is an immutable record of something that happened in the past. It is a fact. It cannot be changed.
+2. The Producer publishes the Event to the Broker and immediately considers its job done. It returns a 200 OK to the user.
+3. The Broker fans the Event out to any Consumers who have subscribed to it.
+4. Consumers process the Event entirely asynchronously.
+
+## Trade-Offs
+
+- **Pros:** 
+  - **Ultimate Decoupling:** You can add a new "Analytics Service" tomorrow. It just subscribes to the existing `OrderCreated` events. You don't have to rewrite or redeploy the Order Service at all.
+  - **Resilience:** If the Email service goes down for 3 hours, the Order Service keeps running perfectly fine. The emails will just queue up in the broker and send when the Email service reboots.
+- **Cons:** 
+  - **Eventual Consistency:** The UI might say "Order Placed!", but the Inventory might take 5 seconds to deduct the stock. You must design UX to handle this delay.
+  - **Debugging Hell:** Following a single business transaction requires tracing IDs through 5 different asynchronous event logs.
+
+## Real-World Usage
+
+- Modern Microservice architectures at companies like Uber, Netflix, and Amazon are almost exclusively Event-Driven.
+- **Serverless (AWS Lambda):** The entire AWS Serverless ecosystem is natively event-driven. An S3 upload triggers an Event, which triggers a Lambda function, which triggers an SQS queue.
+
+## Interview Questions
+
+**Q: Explain the difference between "Choreography" and "Orchestration" in an Event-Driven architecture.**
+**A:** These are the two ways to manage a complex business workflow (like a Saga) across multiple services.
+- **Choreography:** Decentralized. Every service listens to events and emits events, like dancers reacting to each other without a conductor. If Order is placed -> Payment reacts. If Payment succeeds -> Shipping reacts. It is heavily decoupled but incredibly hard to visualize the overall business flow.
+- **Orchestration:** Centralized. A single "Orchestrator" service (the Conductor) listens to events and explicitly commands the other services what to do. It is easier to debug and manage state, but re-introduces tight coupling around the Orchestrator.
+
+**Q: A user clicks "Buy" and the Order Service publishes an `OrderCreated` event to Kafka. The Email Service reads it and sends a receipt. A network glitch causes Kafka to send the event to the Email Service a second time. How do you prevent sending two receipts?**
+**A:** Event Brokers explicitly guarantee **"At-Least-Once"** delivery, which means duplicates are inevitable. You cannot fix the broker. The Email Service must be programmed to be **Idempotent**. It must maintain its own database table of `Processed_Event_IDs`. Before sending the email, it checks the table. If the ID exists, it ignores the duplicate event. If not, it sends the email and records the ID.

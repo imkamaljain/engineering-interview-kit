@@ -1,0 +1,98 @@
+---
+title: "Graceful Shutdown"
+description: "Stopping the server without dropping active user requests."
+importance: "HIGH"
+revisionTime: 4
+category: "Go"
+subcategory: "Networking"
+order: 42
+---
+
+## TL;DR
+
+When you deploy a new version of your app or Kubernetes scales down a pod, it sends a `SIGTERM` signal to your Go application. If you don't handle this, the server instantly dies, terminating any HTTP requests or database transactions currently in progress. A **Graceful Shutdown** intercepts this signal, stops accepting *new* requests, and waits for *existing* requests to finish before exiting.
+
+## Mental Model
+
+```mermaid
+flowchart TD
+    OS["OS / Kubernetes"]
+    
+    subgraph Go App
+        SignalChannel["os.Signal Channel"]
+        Server["http.Server"]
+        Goroutine["Background Worker"]
+    end
+    
+    OS -->|Sends SIGTERM| SignalChannel
+    SignalChannel -->|Intercepted| Server
+    
+    Server -->|1. Stops accepting new connections| Server
+    Server -->|2. Waits for active requests to finish| Server
+    
+    Server -->|3. server.Shutdown(ctx)| AppExit["os.Exit(0)"]
+```
+
+## How It Works
+
+1. Create a channel to listen for OS signals (`os.Interrupt`, `syscall.SIGTERM`).
+2. Run the `server.ListenAndServe()` in a background goroutine, because it blocks forever.
+3. The main thread blocks on reading the signal channel.
+4. When a `SIGTERM` arrives (e.g., you press Ctrl+C, or Docker stops the container), the main thread unblocks.
+5. You call `server.Shutdown(ctx)`. This tells `net/http` to close the listener, but keep active TCP connections alive until they finish their current request.
+6. Provide a timeout context so that if a request is stuck forever, the server eventually forces a shutdown anyway.
+
+## Example
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+)
+
+func main() {
+	srv := &http.Server{Addr: ":8080"}
+
+	// 1. Run server in the background
+	go func() {
+		fmt.Println("Server starting...")
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			fmt.Printf("listen: %s\n", err)
+		}
+	}()
+
+	// 2. Setup channel to listen for OS signals
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
+
+	// 3. Block until we receive a signal
+	<-quit
+	fmt.Println("Shutting down server...")
+
+	// 4. Create a timeout context (give requests 5 seconds to finish)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// 5. Trigger graceful shutdown
+	if err := srv.Shutdown(ctx); err != nil {
+		fmt.Println("Server forced to shutdown:", err)
+	}
+
+	fmt.Println("Server exiting")
+}
+```
+
+## Common Interview Questions
+
+### What happens if a background worker goroutine is running when `Shutdown` is called?
+`server.Shutdown()` *only* waits for active HTTP requests managed by `net/http`. If your HTTP handler spun off an asynchronous background goroutine (`go sendWelcomeEmail()`) and immediately returned an HTTP 200, `net/http` has no idea that goroutine exists. The server will exit and kill that background email job! To prevent this, you must use a `sync.WaitGroup` to track and wait for your own background workers during the shutdown phase.
+
+### How does Kubernetes interact with this?
+Kubernetes sends a `SIGTERM` to your pod. Your Go app intercepts it and starts gracefully shutting down. However, Kubernetes will only wait for a specific `terminationGracePeriodSeconds` (default 30s). If your Go app is still waiting for requests to finish after 30 seconds, Kubernetes sends a brutal `SIGKILL`, which cannot be intercepted, and instantly terminates the process. Your Go context timeout should always be slightly *less* than the K8s grace period to ensure clean logs.

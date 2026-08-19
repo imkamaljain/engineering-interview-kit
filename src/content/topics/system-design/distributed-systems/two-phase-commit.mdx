@@ -1,0 +1,73 @@
+---
+title: "Two-Phase Commit (2PC)"
+description: "The brutal, synchronous way to achieve distributed consistency."
+importance: "MEDIUM"
+revisionTime: 4
+category: "System Design"
+subcategory: "Distributed Systems"
+order: 41
+---
+
+## Concept
+
+When you absolutely must guarantee perfect ACID consistency across multiple independent databases (e.g., a massive financial transaction), the Saga Pattern's eventual consistency is unacceptable. You must use the **Two-Phase Commit (2PC)** protocol. It is a synchronous blocking protocol that ensures all databases commit, or all databases roll back.
+
+## Mental Model
+
+```mermaid
+flowchart TD
+    Coordinator{Transaction\nCoordinator}
+    
+    DB1[(DB 1: Alice)]
+    DB2[(DB 2: Bob)]
+    
+    subgraph Phase 1: Prepare
+        Coordinator -->|1. "Prepare to deduct $100"| DB1
+        Coordinator -->|1. "Prepare to add $100"| DB2
+        DB1 -.->|2. "Prepared & Locked!"| Coordinator
+        DB2 -.->|2. "Prepared & Locked!"| Coordinator
+    end
+    
+    subgraph Phase 2: Commit
+        Coordinator -->|3. "Everyone commit!"| DB1
+        Coordinator -->|3. "Everyone commit!"| DB2
+    end
+```
+
+## How It Works
+
+A dedicated "Transaction Coordinator" service manages the flow.
+
+**Phase 1: The Prepare Phase (Voting)**
+1. The Coordinator sends a "Prepare" message to all participating databases.
+2. Each database checks its constraints (e.g., Does Alice have $100?).
+3. **CRITICAL:** The database writes the intent to its local transaction log and places a hard **Lock** on the relevant rows. No other queries can touch Alice's account now.
+4. The database replies to the Coordinator with a "Yes" (Prepared) or "No" (Abort).
+
+**Phase 2: The Commit Phase (Execution)**
+1. The Coordinator receives the votes.
+2. If *every single database* voted "Yes", the Coordinator sends the "Commit" command. The databases apply the changes permanently and release the locks.
+3. If *even one database* voted "No" (or timed out), the Coordinator sends an "Abort/Rollback" command to everyone. The databases drop the changes and release the locks.
+
+## Trade-Offs
+
+2PC is widely hated in modern microservices architectures. 
+
+- **Pros:** Perfect data consistency. No developer needs to write complex "Compensating Transactions" (Undo logic) like in the Saga pattern.
+- **Cons:** 
+  - **Massive Performance Bottleneck:** It is the slowest possible way to write data. It requires multiple network round-trips. Furthermore, the databases hold hard locks on the rows for the entire duration of the network chatter. If the network is slow, all other users trying to access those rows are completely blocked.
+  - **Coordinator SPOF:** If the Coordinator sends the "Prepare" command, all databases lock their rows. If the Coordinator crashes *before* sending the "Commit" command, the databases are stuck forever holding locks, waiting for an instruction that will never arrive. The system freezes.
+
+## Real-World Usage
+
+- **Relational Databases:** Many modern SQL databases (like PostgreSQL) support the `PREPARE TRANSACTION` command specifically to allow external coordinators to implement 2PC.
+- **Spanner / CockroachDB:** Modern NewSQL distributed databases use highly optimized, advanced variants of 2PC (combined with atomic clocks like TrueTime) to achieve distributed ACID transactions natively, hiding the complexity from the developer.
+
+## Interview Questions
+
+**Q: Explain the Blocking Problem in 2PC.**
+**A:** The biggest flaw in 2PC is that it is a blocking protocol. During Phase 1, databases write their intentions to disk and lock the resources. If the Transaction Coordinator dies exactly after Phase 1, the participating databases are completely paralyzed. They cannot safely commit (because another DB might have voted No), and they cannot safely roll back (because the Coordinator might have decided to Commit before crashing). The entire system halts until an administrator manually intervenes or the Coordinator is rebooted. 
+*(Note: A highly complex protocol called Three-Phase Commit (3PC) exists to fix this, but it is too slow for practical use).*
+
+**Q: If 2PC is so bad, why do companies still use it?**
+**A:** It is almost exclusively used when dealing with legacy financial systems, payment gateways, or strict enterprise integrations where data corruption or temporary discrepancies (Eventual Consistency) lead to massive financial/legal liability. For standard e-commerce or social media apps, the Saga pattern is always preferred.

@@ -1,0 +1,93 @@
+---
+title: "Writing Benchmarks"
+description: "Implementing performance tests in the testing framework."
+importance: "MEDIUM"
+revisionTime: 3
+category: "Go"
+subcategory: "Testing"
+order: 54
+---
+
+## TL;DR
+
+Go's benchmarking tool is built right into the standard `testing` package. You write functions starting with `Benchmark...` in your `_test.go` files. The tool runs your code repeatedly to figure out exactly how many nanoseconds each operation takes.
+
+## Mental Model
+
+```mermaid
+flowchart TD
+    BenchFunc["BenchmarkAdd(b *testing.B)"]
+    
+    Loop["for i := 0; i < b.N; i++"]
+    
+    Exec["Add(1, 2)"]
+    
+    BenchFunc --> Loop
+    Loop --> Exec
+    
+    Note right of Loop: The Go Test Runner automatically\nadjusts b.N (10 -> 100 -> 10,000)\nuntil the loop runs for 1 second.
+```
+
+## How It Works
+
+To ensure statistical significance, a benchmark cannot just run a function once. The Go test runner (`go test -bench=.`) takes over the `b.N` variable. It runs your loop with `N=1`. If it finishes too fast, it runs it again with `N=100`, then `N=10,000`, until the total execution time surpasses 1 second. It then divides the total time by `N` to get the true nanoseconds-per-operation.
+
+**Rules for Benchmarks:**
+1. Must be in a `_test.go` file.
+2. Function must start with `Benchmark` (e.g., `BenchmarkJSONParse`).
+3. Must accept `b *testing.B`.
+4. The core code must be placed inside a `for i := 0; i < b.N; i++` loop.
+
+## Example
+
+```go
+package parsing
+
+import (
+	"encoding/json"
+	"testing"
+)
+
+type User struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+}
+
+var rawJSON = []byte(`{"id": 1, "name": "Alice"}`)
+
+func BenchmarkJSONDecode(b *testing.B) {
+	// --- SETUP PHASE ---
+	// Code here runs ONCE.
+	// We call b.ResetTimer() so the setup time isn't counted in the final metric!
+	b.ResetTimer()
+
+	// --- MEASUREMENT PHASE ---
+	for i := 0; i < b.N; i++ {
+		var u User
+		_ = json.Unmarshal(rawJSON, &u)
+	}
+}
+```
+
+**Running the Benchmark:**
+`go test -bench=BenchmarkJSONDecode -benchmem`
+
+## Common Interview Questions
+
+### What does the compiler optimization trap look like in benchmarking?
+If you benchmark a simple math function `result := Add(1, 2)`, the Go compiler might realize that `result` is never used anywhere else. It will aggressively optimize the code by completely deleting the `Add()` call from the binary! Your benchmark will show `0.0001 ns/op`, which is a lie.
+**The Fix:** Assign the result to a global variable so the compiler is forced to execute the code.
+```go
+var GlobalResult int // Global!
+
+func BenchmarkAdd(b *testing.B) {
+    var r int
+    for i := 0; i < b.N; i++ {
+        r = Add(1, 2)
+    }
+    GlobalResult = r // Force the compiler to keep the code
+}
+```
+
+### Can you benchmark parallel code?
+Yes. Use `b.RunParallel()`. It spans multiple goroutines (based on `GOMAXPROCS`) to run your loop concurrently. This is fantastic for testing if a `sync.Mutex` is causing a bottleneck under heavy concurrent load.

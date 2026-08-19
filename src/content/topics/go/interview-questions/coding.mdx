@@ -1,0 +1,163 @@
+---
+title: "Live Coding Challenges"
+description: "Common algorithmic and concurrency tasks asked in Go interviews."
+importance: "HIGH"
+revisionTime: 5
+category: "Go"
+subcategory: "Interview Questions"
+order: 69
+---
+
+## TL;DR
+
+Go interviews often feature live coding. Beyond standard Leetcode questions, interviewers love to ask **Concurrency Challenges** to test your practical knowledge of Channels, WaitGroups, and Select statements.
+
+## Challenge 1: The Worker Pool
+**Prompt:** Write a function that accepts a slice of URLs, fetches them concurrently, but ensures no more than 3 network requests are happening at the exact same time.
+
+**The Solution:**
+```go
+package main
+
+import (
+	"fmt"
+	"sync"
+	"time"
+)
+
+func fetchWorker(id int, jobs <-chan string, results chan<- string, wg *sync.WaitGroup) {
+	defer wg.Done()
+	for url := range jobs {
+		fmt.Printf("Worker %d fetching %s\n", id, url)
+		time.Sleep(100 * time.Millisecond) // Simulate network delay
+		results <- url + " success"
+	}
+}
+
+func main() {
+	urls := []string{"url1", "url2", "url3", "url4", "url5", "url6"}
+	
+	jobs := make(chan string, len(urls))
+	results := make(chan string, len(urls))
+	
+	var wg sync.WaitGroup
+	
+	// 1. Start exactly 3 workers (The Pool limit)
+	for w := 1; w <= 3; w++ {
+		wg.Add(1)
+		go fetchWorker(w, jobs, results, &wg)
+	}
+	
+	// 2. Send all jobs to the channel
+	for _, url := range urls {
+		jobs <- url
+	}
+	close(jobs) // Close jobs so workers exit when empty
+	
+	// 3. Wait for all workers to finish
+	wg.Wait()
+	close(results) // Safe to close results now
+	
+	// 4. Print results
+	for res := range results {
+		fmt.Println(res)
+	}
+}
+```
+
+## Challenge 2: The Timeout Wrapper
+**Prompt:** You have a function `slowOperation()` that you cannot modify. Write a wrapper function that runs it, but if it takes longer than 2 seconds, returns an error instead of the result.
+
+**The Solution:**
+```go
+package main
+
+import (
+	"errors"
+	"fmt"
+	"time"
+)
+
+func slowOperation() string {
+	time.Sleep(3 * time.Second) // Takes too long!
+	return "done"
+}
+
+func executeWithTimeout() (string, error) {
+	// Create a channel to hold the result
+	resultCh := make(chan string, 1) // Buffer 1 is crucial to prevent goroutine leak!
+
+	// Run the slow op in the background
+	go func() {
+		resultCh <- slowOperation()
+	}()
+
+	// Race the result against a timer
+	select {
+	case res := <-resultCh:
+		return res, nil
+	case <-time.After(2 * time.Second):
+		return "", errors.New("timeout exceeded")
+	}
+}
+
+func main() {
+	res, err := executeWithTimeout()
+	fmt.Println(res, err)
+}
+```
+
+## Challenge 3: Fan-In
+**Prompt:** You have two channels producing data at different rates. Write a function that merges both channels into a single output channel, and closes the output channel when BOTH inputs are exhausted.
+
+**The Solution:**
+```go
+package main
+
+import (
+	"fmt"
+	"sync"
+	"time"
+)
+
+func merge(ch1, ch2 <-chan int) <-chan int {
+	out := make(chan int)
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	// Helper function to drain a channel
+	drain := func(c <-chan int) {
+		defer wg.Done()
+		for val := range c {
+			out <- val
+		}
+	}
+
+	go drain(ch1)
+	go drain(ch2)
+
+	// Background goroutine to close the out channel when done
+	go func() {
+		wg.Wait()
+		close(out)
+	}()
+
+	return out
+}
+
+func main() {
+	c1 := make(chan int)
+	c2 := make(chan int)
+
+	go func() {
+		c1 <- 1; time.Sleep(10 * time.Millisecond); c1 <- 2; close(c1)
+	}()
+	go func() {
+		c2 <- 3; time.Sleep(20 * time.Millisecond); c2 <- 4; close(c2)
+	}()
+
+	for val := range merge(c1, c2) {
+		fmt.Println(val)
+	}
+}
+```

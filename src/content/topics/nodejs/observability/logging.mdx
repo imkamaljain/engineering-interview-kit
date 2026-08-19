@@ -1,0 +1,64 @@
+---
+title: "Logging"
+description: "Best practices for structured logging in Node.js backend applications."
+importance: "HIGH"
+revisionTime: 3
+category: "Node.js"
+subcategory: "Observability"
+order: 51
+---
+
+## TL;DR
+
+`console.log` is completely insufficient for production backends. Modern **Logging** requires structured logs (JSON format), log levels (INFO, WARN, ERROR), and proper transport mechanisms to send logs to centralized services like Datadog, Splunk, or ELK.
+
+## Mental Model
+
+```mermaid
+flowchart LR
+    App["Node.js Application"]
+    Logger["Logger\n(Winston / Pino)"]
+    
+    App -->|logger.info({user: 1})| Logger
+    
+    Logger -->|Transport 1| Stdout["Console (Local)"]
+    Logger -->|Transport 2| File["app.log (Disk)"]
+    Logger -->|Transport 3| Cloud["Logstash / Datadog (Cloud)"]
+```
+
+## How It Works
+
+Instead of printing raw strings to the terminal, you use a logging library (like **Pino**, **Winston**, or **Bunyan**).
+1.  **JSON Format**: Logs are output as JSON objects. This allows log aggregators to parse, index, and query the logs instantly (e.g., searching `req.userId = 5`).
+2.  **Log Levels**: You can dynamically filter what gets logged based on environments (e.g., print `debug` logs in development, but only `info` and `error` in production).
+3.  **Context**: Every log should include metadata (timestamps, request IDs, server hostnames) automatically.
+
+## Example
+
+```javascript
+// Using Pino (The fastest logger for Node.js)
+const pino = require('pino');
+
+// Create the logger instance
+const logger = pino({
+    level: process.env.LOG_LEVEL || 'info',
+});
+
+// BAD: Unstructured, hard to search in production
+console.log(`User ${userId} bought item ${itemId}`);
+
+// GOOD: Structured JSON log
+logger.info({ userId: 123, itemId: 456, action: 'purchase' }, 'Purchase successful');
+
+/* Output: 
+{"level":30,"time":1690000000000,"pid":1024,"hostname":"server1","userId":123,"itemId":456,"action":"purchase","msg":"Purchase successful"}
+*/
+```
+
+## Common Interview Questions
+
+### Why is Pino faster than Winston or console.log?
+`console.log` is actually somewhat slow and blocking in certain environments. Pino is designed with extremely optimized JSON stringification and writes logs asynchronously (or with minimal overhead), causing the least amount of Event Loop lag possible.
+
+### What is a Correlation ID (Request ID)?
+In a microservices architecture, a single user click might trigger 5 different backend services. A Correlation ID is a unique UUID generated at the API Gateway and passed in the headers to every service. Every service attaches this ID to its logs, allowing you to trace the exact lifecycle of that specific request across all servers.

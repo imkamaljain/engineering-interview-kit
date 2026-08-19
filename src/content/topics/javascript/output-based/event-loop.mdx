@@ -1,0 +1,141 @@
+---
+title: "Output: Event Loop"
+description: "Tricky outputs testing Macrotasks vs Microtasks."
+importance: "HIGH"
+revisionTime: 5
+category: "JavaScript"
+subcategory: "Output Based"
+order: 46
+---
+
+## TL;DR
+
+Event loop output questions test your knowledge of synchronous execution vs asynchronous execution, and specifically the priority difference between the Microtask Queue (Promises) and the Macrotask Queue (`setTimeout`).
+
+## Question 1: The Classic Concurrency Test
+
+```javascript
+console.log(1);
+
+setTimeout(() => console.log(2), 0);
+
+Promise.resolve().then(() => console.log(3));
+
+console.log(4);
+```
+
+**Output:**
+```text
+1
+4
+3
+2
+```
+
+**Why?**
+1. Sync code runs first. `1` is printed.
+2. `setTimeout` goes to the Web API, and its callback goes to the Macrotask Queue.
+3. `Promise.then` instantly queues its callback to the Microtask Queue (VIP lane).
+4. Sync code continues. `4` is printed.
+5. The Call Stack is empty. The Event Loop checks the Microtask queue first. Finds `3`, executes it.
+6. The Microtask queue is empty. The Event Loop checks the Macrotask queue. Finds `2`, executes it.
+
+---
+
+## Question 2: The Promise Constructor Trap
+
+```javascript
+console.log("A");
+
+const p = new Promise((resolve, reject) => {
+  console.log("B");
+  resolve();
+});
+
+p.then(() => console.log("C"));
+
+console.log("D");
+```
+
+**Output:**
+```text
+A
+B
+D
+C
+```
+
+**Why?**
+The function passed into `new Promise(function)` (the executor) runs **synchronously**. It is NOT queued as a microtask. Only `.then()` or `.catch()` callbacks go to the Microtask queue.
+Therefore, `A` and `B` run immediately. Then `resolve()` prepares the `.then()` callback for the Microtask queue. Then `D` runs. Stack empties. Event loop pulls `C` from the Microtask queue.
+
+---
+
+## Question 3: Nested Queues
+
+```javascript
+setTimeout(() => console.log("Timeout 1"));
+
+Promise.resolve().then(() => {
+  console.log("Promise 1");
+  setTimeout(() => console.log("Timeout 2"));
+  Promise.resolve().then(() => console.log("Promise 2"));
+});
+
+setTimeout(() => console.log("Timeout 3"));
+```
+
+**Output:**
+```text
+Promise 1
+Promise 2
+Timeout 1
+Timeout 3
+Timeout 2
+```
+
+**Why?**
+1. **Sync Execution:** Line 1 queues Macrotask (T1). Line 3 queues Microtask (P1). Line 9 queues Macrotask (T3).
+2. **Microtask Queue Drain:** Stack empties. Event loop hits the Microtask Queue. Runs P1. Prints `Promise 1`. 
+3. *Inside P1*, it queues Macrotask (T2) and queues Microtask (P2). 
+4. The Event Loop does NOT leave the Microtask Queue yet! It must be 100% drained. It finds the newly queued P2. Prints `Promise 2`.
+5. **Macrotask Queue Execution:** Microtask queue is finally empty. Event loop moves to Macrotasks. They were queued in this order: T1, T3, T2.
+6. It runs them in order, printing `Timeout 1`, `Timeout 3`, `Timeout 2`.
+
+---
+
+## Question 4: Async/Await Translation
+
+```javascript
+async function async1() {
+  console.log("1");
+  await async2();
+  console.log("2");
+}
+
+async function async2() {
+  console.log("3");
+}
+
+console.log("4");
+async1();
+console.log("5");
+```
+
+**Output:**
+```text
+4
+1
+3
+5
+2
+```
+
+**Why?**
+To solve this, mentally translate `await` into a Promise `.then()`.
+- Line 11 prints `4`.
+- Call `async1()`. Prints `1`. 
+- Call `async2()`. Prints `3`.
+- Hit the `await` keyword. The `await` keyword yields execution back to the caller. The rest of `async1()` (`console.log("2")`) is thrown into the Microtask Queue.
+- Back in the global scope, Line 13 prints `5`.
+- Sync code ends. Stack empties. Event loop checks Microtask Queue, finds `2`, and prints it.

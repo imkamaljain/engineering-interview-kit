@@ -1,0 +1,81 @@
+---
+title: "Middleware"
+description: "The pattern of using functions to intercept and modify HTTP requests in Express."
+importance: "HIGH"
+revisionTime: 3
+category: "Node.js"
+subcategory: "Backend Concepts"
+order: 54
+---
+
+## TL;DR
+
+**Middleware** functions in Node.js frameworks (like Express) are functions that have access to the Request object, the Response object, and the `next` function in the application's request-response cycle. They execute sequentially and can modify data, end the request, or pass control to the next middleware.
+
+## Mental Model
+
+```mermaid
+flowchart LR
+    Request["Incoming HTTP Request"]
+    MW1["Middleware 1\n(e.g., helmet/cors)"]
+    MW2["Middleware 2\n(e.g., auth check)"]
+    Controller["Controller\n(e.g., app.get)"]
+
+    Request --> MW1
+    MW1 -->|next()| MW2
+    MW2 -->|next()| Controller
+    Controller -->|res.send()| Response["HTTP Response"]
+    
+    MW2 -.->|res.status(401)| Response
+```
+
+## How It Works
+
+When a request hits an Express server, it goes through a pipeline.
+Each middleware function must do one of two things:
+1.  **Terminate the request** by sending a response (e.g., `res.send()`, `res.json()`).
+2.  **Pass control** to the next middleware by calling `next()`.
+
+If a middleware does neither, the request will hang forever, and the browser will eventually timeout.
+
+## Example
+
+```javascript
+const express = require('express');
+const app = express();
+
+// Custom Logger Middleware
+const loggerMiddleware = (req, res, next) => {
+    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+    next(); // Pass control to the next function
+};
+
+// Custom Auth Middleware
+const authMiddleware = (req, res, next) => {
+    const token = req.headers.authorization;
+    if (token === 'secret') {
+        req.user = { id: 1, name: 'Alice' }; // Modify the request object
+        next();
+    } else {
+        // Terminate the request early!
+        res.status(401).send('Unauthorized'); 
+    }
+};
+
+// Apply globally
+app.use(loggerMiddleware);
+
+// Apply specifically to one route
+app.get('/dashboard', authMiddleware, (req, res) => {
+    res.send(`Welcome ${req.user.name}`);
+});
+```
+
+## Common Interview Questions
+
+### What happens if you pass an argument to `next()`?
+If you pass *any* argument to `next()` (except the string `'route'`), Express assumes it is an error. It skips all remaining regular middleware and routes, and jumps directly to the Error Handling Middleware.
+`next(new Error('DB Failed'));`
+
+### Does middleware run on the request going in, or the response going out?
+Usually on the request going in. However, you can write middleware that hooks into the response going out by listening to events on the `res` object (like `res.on('finish', ...)`), which is how logging libraries record the final HTTP status code.

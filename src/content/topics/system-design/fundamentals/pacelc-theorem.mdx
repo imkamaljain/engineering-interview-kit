@@ -1,0 +1,60 @@
+---
+title: "The PACELC Theorem"
+description: "The modern extension to the CAP Theorem."
+importance: "MEDIUM"
+revisionTime: 3
+category: "System Design"
+subcategory: "Fundamentals"
+order: 6
+---
+
+## Concept
+
+The CAP theorem is heavily criticized because it only dictates what happens *during a network failure* (a Partition). But network failures are rare. What trade-offs do we make during normal, healthy operations?
+
+The **PACELC Theorem** (pronounced "Pass-Elk") builds on CAP to answer this. It states:
+- If there is a **P**artition (`P`), you must choose between **A**vailability or **C**onsistency (`A` or `C`). (This is just CAP).
+- **E**lse (`E`), when the network is healthy, you must choose between **L**atency or **C**onsistency (`L` or `C`).
+
+## Mental Model
+
+```mermaid
+flowchart TD
+    Network{"Is the Network\nPartitioned? (Broken)"}
+    
+    Network -->|Yes (P)| CAP{"Choose (CAP)"}
+    CAP -->|A| AP["Availability\n(Accept writes, risk conflicts)"]
+    CAP -->|C| CP["Consistency\n(Reject writes, go offline)"]
+    
+    Network -->|No (E)| Else{"Else Choose (Healthy)"}
+    Else -->|L| Latency["Latency\n(Write to 1 node, reply instantly)"]
+    Else -->|C| Cons["Consistency\n(Write to all nodes, reply slowly)"]
+```
+
+## Trade-Offs: The "Else" Condition (L vs C)
+
+When the system is running perfectly fine, you write data to Node 1. Node 1 needs to replicate this data to Node 2 and Node 3.
+You have to make a choice:
+
+**1. Optimize for Latency (L):**
+Node 1 saves the data to its own disk and instantly replies "Success!" to the user. In the background, it slowly sends the data to Node 2 and 3.
+- **Pro:** Incredibly fast response times for the user.
+- **Con:** If a user immediately reads from Node 2, they will see stale, old data (Poor Consistency).
+
+**2. Optimize for Consistency (C):**
+Node 1 saves the data to its disk, sends it to Node 2 and 3, and WAITS for them to reply "We got it!". Only then does Node 1 reply "Success!" to the user.
+- **Pro:** Perfect Consistency. Any user reading from any node gets the exact same data.
+- **Con:** Extremely slow response times (High Latency) because the user is waiting for network hops.
+
+## Real-World Usage
+
+Databases are categorized by their PACELC choices:
+
+- **DynamoDB / Cassandra (PA/EL):** During a partition, they choose Availability. During normal operation, they choose low Latency (fast writes, eventual consistency). They are built for extreme speed and uptime.
+- **MongoDB (PA/EC):** During a partition, it will drop writes to preserve the system (usually). But during normal operations, it prefers Consistency by ensuring data is written to a primary node before acknowledging.
+- **VoltDB / CockroachDB (PC/EC):** Strictly built for absolute data correctness. They will go offline during a partition (PC), and during normal operations, they will take the latency hit to guarantee perfect synchronous replication (EC).
+
+## Interview Questions
+
+**Q: A distributed caching layer like Redis is incredibly fast, but sometimes users see outdated profile pictures for a few seconds after uploading a new one. How does PACELC explain this?**
+**A:** Redis is typically configured to prioritize **Latency** during healthy operations (the `EL` in PACELC). When the user uploads a picture, Redis writes it to the master node and responds immediately. The user's next request might hit a read-replica (slave node) before the data has finished syncing in the background, resulting in stale data (sacrificing Consistency for speed).

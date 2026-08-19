@@ -1,0 +1,57 @@
+---
+title: "Reverse Proxy"
+description: "The bodyguard that sits in front of your servers."
+importance: "HIGH"
+revisionTime: 3
+category: "System Design"
+subcategory: "Load Balancing"
+order: 9
+---
+
+## Concept
+
+A **Proxy** sits between a client and a server. 
+- A **Forward Proxy** sits in front of the *Client* (e.g., a corporate VPN that hides employee IP addresses from the internet).
+- A **Reverse Proxy** sits in front of the *Server*. It accepts incoming traffic from the internet, intercepts it, and forwards it to the backend application. The client thinks they are talking to the website, but they are actually talking to the proxy.
+
+## Mental Model
+
+```mermaid
+flowchart LR
+    subgraph Forward Proxy (Protects Client)
+        Client[You] --> FP[Corporate Proxy]
+        FP --> Internet
+    end
+
+    subgraph Reverse Proxy (Protects Server)
+        Hacker[Internet User] --> RP[Nginx Proxy]
+        RP --> AppServer[Backend Node.js]
+    end
+```
+
+## How It Works & Key Features
+
+Most modern Load Balancers (like Nginx or AWS ALB) are fundamentally Reverse Proxies that also happen to do load balancing. However, a reverse proxy does much more than just balance traffic:
+
+1. **Security & Anonymity:** The backend servers (Node.js, Python) live on a private subnet. They do not have public IP addresses. Only the Reverse Proxy is exposed to the internet. If a hacker tries to launch a DDoS attack, they hit the proxy, not the database.
+2. **SSL Termination:** Decrypting HTTPS traffic is CPU-intensive. The Reverse Proxy handles the SSL certificates and decryption. It then passes raw, unencrypted HTTP traffic to the backend servers over the secure private network, saving massive amounts of CPU power on the app servers.
+3. **Static Content Caching:** If a user requests `logo.png`, the Reverse Proxy can return the image directly from its own memory without ever waking up the backend Node.js server.
+4. **Compression:** The proxy can gzip compress the JSON response before sending it back over the internet, saving bandwidth.
+
+## Trade-Offs
+
+- **Pros:** Centralized security, offloads heavy tasks (SSL, compression) from application logic, hides internal architecture.
+- **Cons:** It is an extra network hop. If misconfigured, it can bottleneck traffic.
+
+## Real-World Usage
+
+- **Nginx & HAProxy:** The undisputed kings of open-source reverse proxies. You will almost never run a Node.js Express app directly on port 80 exposed to the internet. You run Nginx on port 80, and configure it to `proxy_pass` traffic to your Node app running on `localhost:3000`.
+- **Cloudflare:** Cloudflare is essentially a massive, globally distributed Reverse Proxy. By pointing your DNS to Cloudflare, they intercept all traffic to filter out malicious bots and cache content before it ever reaches your actual AWS servers.
+
+## Interview Questions
+
+**Q: Your Node.js app logs the IP address of every user who creates an account. You notice that every single user has the exact same IP address (e.g., `10.0.0.5`). Why?**
+**A:** Your app is sitting behind a Reverse Proxy. The client connects to the proxy, and the proxy makes a new connection to your app server. Your app sees the IP address of the proxy (`10.0.0.5`). To fix this, you must configure the Reverse Proxy to inject the `X-Forwarded-For` header containing the user's real IP, and configure your app framework to trust and read that header.
+
+**Q: Explain the difference between an API Gateway and a Reverse Proxy.**
+**A:** They are very similar, but an API Gateway is a "smarter" reverse proxy specifically tailored for microservices. While a reverse proxy mostly handles network-level tasks (SSL, caching, routing), an API Gateway handles business-level logic: User Authentication (verifying JWTs), Rate Limiting per user, and API versioning.

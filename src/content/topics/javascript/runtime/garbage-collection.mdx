@@ -1,0 +1,83 @@
+---
+title: "Garbage Collection"
+description: "How JavaScript automatically cleans up memory."
+importance: "HIGH"
+revisionTime: 4
+category: "JavaScript"
+subcategory: "Runtime"
+order: 32
+---
+
+## TL;DR
+
+In low-level languages like C, you must manually allocate and free memory (`malloc()` and `free()`). JavaScript handles this automatically using a **Garbage Collector (GC)**. The GC periodically scans memory to find objects that are no longer accessible by the application and deletes them to free up RAM.
+
+## Mental Model
+
+```mermaid
+flowchart TD
+    Global["Global Scope (Root)"]
+    
+    ObjA["Object A"]
+    ObjB["Object B"]
+    ObjC["Object C (Island)"]
+    
+    Global -->|Reference| ObjA
+    ObjA -->|Reference| ObjB
+    
+    ObjC -->|Reference| ObjC
+    
+    Note right of ObjC: The GC starts at the Root.\nIt can reach A and B.\nIt cannot reach C.\nC is garbage collected!
+```
+
+## How It Works: Mark-and-Sweep Algorithm
+
+Modern JavaScript engines (like V8) use the **Mark-and-Sweep** algorithm for garbage collection.
+
+1. **Roots:** The GC builds a list of "roots" (global variables, active local variables on the Call Stack).
+2. **Mark Phase:** The GC starts at the roots and traverses every single reference (pointer) it can find. It "marks" every object it touches as "active".
+3. **Sweep Phase:** The GC scans the Heap memory. Any object that was *not* marked during the traversal is considered unreachable. The memory is instantly freed.
+
+**The "Island of Isolation" Problem (Solved):**
+Older browsers (IE6) used "Reference Counting", which broke if two unneeded objects referenced each other (a circular reference). Mark-and-Sweep solves this: if the two objects cannot be reached from the Global Root, they are swept away, regardless of how many times they reference each other.
+
+## Example
+
+```javascript
+let user = { name: "Alice" }; 
+// The object {name: "Alice"} is reachable via the 'user' variable (Root).
+
+let admin = user;
+// The object is now reachable via 'user' AND 'admin'.
+
+user = null;
+// The object is STILL reachable via 'admin'. GC does not delete it.
+
+admin = null;
+// The object has zero paths leading to it from the Root. 
+// It is now eligible for Garbage Collection.
+```
+
+## Common Output Question
+
+```javascript
+function createLeak() {
+  const massiveData = new Array(1000000).fill("Data");
+  
+  // We accidentally forget the 'var/let/const' keyword
+  leakedData = massiveData; 
+}
+
+createLeak();
+```
+**Q: Will `massiveData` be garbage collected after `createLeak()` finishes?**
+**A:** No! Because the developer forgot to use `const` or `let`, `leakedData` automatically became a global variable attached to the `window` object. Since the Global object is a Root, the GC considers `leakedData` reachable forever. This is a massive **Memory Leak**. (Strict Mode prevents this by throwing an error).
+
+## Senior Interview Question
+
+**Q: What are the most common causes of Memory Leaks in modern Single Page Applications (React/Vue)?**
+
+**A:** The most common causes are:
+1. **Uncleared Intervals/Timers:** If a component mounts and starts a `setInterval`, but doesn't run `clearInterval` when it unmounts, the callback (and any closures it holds) remains in memory forever.
+2. **Uncleared Event Listeners:** Attaching an event listener to the `window` or `document` (`window.addEventListener('scroll', fn)`) keeps `fn` alive. If `fn` relies on component state, the entire component cannot be garbage collected even after the user navigates away.
+3. **Third-party library maps:** Storing DOM elements in a standard `Map` or `Set`. If the DOM node is removed from the screen, the `Map` still holds a reference to it. (This is why `WeakMap` and `WeakSet` exist—they do not prevent garbage collection!).

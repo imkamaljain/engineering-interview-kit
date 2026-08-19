@@ -1,0 +1,62 @@
+---
+title: "Fuzzy Search"
+description: "Handling typos and misspellings like a pro."
+importance: "MEDIUM"
+revisionTime: 3
+category: "System Design"
+subcategory: "Search"
+order: 78
+---
+
+## Concept
+
+Users are terrible at spelling. If a user searches for "Iphon", a standard database exact-match query will return zero results, costing your e-commerce company a $1,000 sale. 
+**Fuzzy Search** (Approximate String Matching) is the algorithmic technique used by search engines to find documents that match the user's query *closely*, but not exactly, intelligently handling typos, missing letters, and swapped characters.
+
+## The Levenshtein Distance (Edit Distance)
+
+The foundation of Fuzzy Search is the **Levenshtein Distance** algorithm. It mathematically calculates how many single-character edits are required to change Word A into Word B.
+
+The allowed edits are:
+1. **Insertion:** `cat` -> `caRt` (Distance: 1)
+2. **Deletion:** `apple` -> `appe` (Distance: 1)
+3. **Substitution:** `water` -> `wAter` (Distance: 1)
+
+If a user searches for "Iphon", and you configure your search engine to allow a Fuzziness (Edit Distance) of 1, the engine will mathematically match it against the word "Iphone" in the database, because it only takes 1 insertion to fix the typo.
+
+## How It Works in Elasticsearch
+
+If your Inverted Index contains 10 million unique words, Elasticsearch cannot run the complex Levenshtein mathematical formula against all 10 million words every time a user types a query. It would take minutes.
+
+Instead, Elasticsearch uses an advanced data structure called a **Levenshtein Automaton** (a highly optimized Finite State Machine) combined with the Inverted Index dictionary. 
+It instantly traverses the dictionary and identifies all words that are within the allowed Edit Distance. If you search `apppe` with a Fuzziness of 1, the Automaton instantly finds `apple`. It then uses the Inverted Index to find all documents containing `apple` and returns them.
+
+## N-Grams (The Autocomplete Alternative)
+
+Levenshtein distance is great for typos, but terrible for "Search As You Type" (Autocomplete). If you type `app`, Levenshtein does not match `apple` (the edit distance is 2, which is too high).
+
+For instant Autocomplete, search engines use **Edge N-Grams**.
+During the indexing phase, when you save the word `apple`, the Analyzer chops the word into smaller prefixes and saves *all of them* into the Inverted Index pointing to the same document:
+- `a`
+- `ap`
+- `app`
+- `appl`
+- `apple`
+
+Now, when the user types `app`, the search engine does an exact $O(1)$ lookup for `app` in the Inverted Index, instantly finding the document. This burns extra hard drive storage to achieve lightning-fast read speeds.
+
+## Trade-Offs
+
+- **Pros:** Massively increases conversion rates and user satisfaction by preventing empty search result pages.
+- **Cons:** 
+  - **Performance Penalty:** Fuzzy queries are significantly more CPU-intensive than exact match queries.
+  - **Relevance Pollution:** If a user searches for "Box", and fuzziness is set to 2, the engine will return documents containing "Boy", "Bat", "Fox", and "Bog". The user is flooded with completely irrelevant garbage.
+
+## Interview Questions
+
+**Q: A developer configures a massive global search bar using Elasticsearch. They set the Fuzziness (Edit Distance) to 3 to catch as many typos as possible. Why is this a terrible idea that will likely crash the cluster?**
+**A:** Edit Distance scales exponentially in complexity. An Edit Distance of 1 checks a small, localized cluster of variations. An Edit Distance of 2 checks thousands. An Edit Distance of 3 requires the engine to generate and evaluate hundreds of thousands of permutations for *every single word* in the user's query. Setting fuzziness above 2 provides almost no human benefit (it returns too much garbage data) but requires so much CPU that a handful of concurrent users will cause the Elasticsearch nodes to melt down and crash under the computation load.
+
+**Q: What is "Phonetic Search" and when is it better than standard Fuzzy Search?**
+**A:** Standard Fuzzy Search relies on spelling (character placement). Phonetic Search relies on *sound*. It uses algorithms (like Soundex or Metaphone) to convert words into phonetic hashes. For example, "Smith", "Smyth", and "Smithe" all map to the exact same phonetic code (`S530`). 
+If you are building a medical or legal database where users are trying to search for complex names or drug prescriptions they only heard spoken aloud, Phonetic Search is infinitely superior to Levenshtein distance, which would fail to connect wildly different spellings of the same sound.

@@ -1,0 +1,79 @@
+---
+title: "Service Mesh"
+description: "Managing the chaos of microservice communication."
+importance: "LOW"
+revisionTime: 3
+category: "System Design"
+subcategory: "API & Architecture"
+order: 59
+---
+
+## Concept
+
+When you break a monolith into 50 microservices, those services now have to talk to each other over a network. Suddenly, every developer has to write complex code for:
+- Retrying failed network requests (with exponential backoff).
+- Encrypting internal traffic with Mutual TLS (mTLS).
+- Implementing Circuit Breakers.
+- Routing traffic (A/B testing, Canary deployments).
+
+Writing this infrastructure code into the actual business logic of every single Node.js, Python, and Go microservice is a nightmare. A **Service Mesh** extracts all this networking complexity out of the application code and pushes it down into the infrastructure layer.
+
+## Mental Model
+
+```mermaid
+flowchart TD
+    subgraph Node 1
+        AppA[Service A\n(Pure Business Logic)]
+        ProxyA[(Sidecar Proxy\nEnvoy)]
+        AppA <-->|Localhost| ProxyA
+    end
+
+    subgraph Node 2
+        AppB[Service B\n(Pure Business Logic)]
+        ProxyB[(Sidecar Proxy\nEnvoy)]
+        AppB <-->|Localhost| ProxyB
+    end
+
+    ProxyA <-->|mTLS Encrypted Network Call| ProxyB
+    
+    ControlPlane{{Control Plane\n(Istio)}} -.->|Pushes Routing Rules| ProxyA
+    ControlPlane -.->|Pushes Routing Rules| ProxyB
+```
+
+## How It Works: The Sidecar Pattern
+
+A Service Mesh relies heavily on the **Sidecar Pattern**.
+1. You deploy `Service A` into a Kubernetes Pod.
+2. The Service Mesh automatically injects a tiny, lightning-fast proxy server (usually **Envoy**) into the exact same Pod. This is the "Sidecar".
+3. **The Magic:** `Service A` thinks it is making a simple, unencrypted HTTP call to `Service B`. However, the Sidecar proxy intercepts that call. The proxy encrypts it, figures out where `Service B` lives, handles retries, and sends it over the network to `Service B`'s Sidecar proxy.
+4. The developer writes pure business logic and knows absolutely nothing about the network.
+
+## The Control Plane vs Data Plane
+
+- **Data Plane (The Proxies):** The thousands of Sidecar proxies actually passing the data back and forth.
+- **Control Plane (The Brain):** The centralized manager (like **Istio** or **Linkerd**). The administrator uses the Control Plane to push rules to all the proxies. For example, "Route 10% of all traffic going to the Payment Service to the new v2 version for Canary testing." The Control Plane instantly updates all sidecars to obey this rule.
+
+## Trade-Offs
+
+- **Pros:** 
+  - **Zero-Trust Security:** Effortlessly enforces mTLS encryption between all internal services without touching application code.
+  - **Advanced Routing:** Allows for incredibly complex Canary deployments and traffic shifting.
+  - **Observability:** Because all traffic flows through the proxies, the Service Mesh automatically generates flawless metrics (latency, error rates) and distributed tracing data.
+- **Cons:** 
+  - **Massive Complexity:** Tools like Istio are notoriously difficult to configure and maintain.
+  - **Resource Overhead:** Adding a proxy container to every single Pod in your cluster consumes a significant amount of RAM and adds a tiny bit of latency to every network hop.
+
+## Real-World Usage
+
+- **Istio:** The most famous and fully-featured Service Mesh, backed by Google. It uses Envoy proxies.
+- **Linkerd:** A much lighter, simpler, and faster alternative written in Rust, focused purely on Kubernetes.
+
+## Interview Questions
+
+**Q: Explain how a Service Mesh facilitates a "Canary Deployment".**
+**A:** In a traditional setup, deploying a new version of the Checkout Service is risky. If it has a bug, 100% of users crash.
+With a Service Mesh, you deploy `Checkout v2` alongside `Checkout v1`. You then configure the Control Plane to instruct all the sidecar proxies in the cluster to route exactly **1%** of traffic to `v2`, and 99% to `v1`. You monitor the error rates of `v2` (which the Service Mesh provides automatically). If `v2` is stable, you slowly shift the dial in the Control Plane to 10%, 50%, and finally 100%, allowing for a totally safe, risk-free deployment without changing any application code.
+
+**Q: What is mTLS (Mutual TLS) and why is it a primary selling point of a Service Mesh?**
+**A:** Standard TLS (HTTPS) only verifies the Server to the Client (e.g., your browser knows it's talking to the real Google).
+In a microservices architecture, you want "Zero Trust" internal networking. If a hacker breaches your perimeter, you don't want them freely calling internal APIs. **Mutual TLS (mTLS)** ensures that the Client (Service A) mathematically proves its identity to the Server (Service B), AND the Server proves its identity to the Client. Doing this manually requires rotating SSL certificates on every server weekly, which is a nightmare. A Service Mesh automates 100% of this certificate rotation and encryption transparently via the Sidecar proxies.

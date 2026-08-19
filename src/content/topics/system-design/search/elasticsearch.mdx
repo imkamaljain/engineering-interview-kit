@@ -1,0 +1,67 @@
+---
+title: "Elasticsearch"
+description: "The distributed engine behind modern search."
+importance: "HIGH"
+revisionTime: 5
+category: "System Design"
+subcategory: "Search"
+order: 76
+---
+
+## Concept
+
+If you build an e-commerce site and try to implement the search bar using a standard PostgreSQL `LIKE '%iphone%'` query, your database will collapse. SQL databases must scan every single row on the hard drive to find wildcard text matches (a Full Table Scan).
+**Elasticsearch** is a highly distributed, NoSQL database purpose-built for ultra-fast, full-text search. It is built on top of the Apache Lucene library and operates using an architecture fundamentally different from relational databases.
+
+## Mental Model
+
+```mermaid
+flowchart TD
+    User -->|'Search: waterproof boots'| API[App Server]
+    API -->|HTTP GET /products/_search| ES[(Elasticsearch Cluster)]
+    
+    subgraph Inside Elasticsearch
+        Node1[Node 1\n(Shard 1)]
+        Node2[Node 2\n(Shard 2)]
+        Node3[Node 3\n(Shard 3)]
+        
+        ES --> Node1 & Node2 & Node3
+        Note["Scatter-Gather:\nES queries all shards simultaneously,\nmerges the results, scores them,\nand returns the Top 10."]
+    end
+```
+
+## How It Works
+
+1. **Documents (Not Rows):** You do not insert rows into tables. You insert JSON objects (Documents) into an "Index" (similar to a table).
+2. **The Inverted Index:** (Covered deeply in the next chapter). This is the secret sauce. Instead of mapping a Document ID to the text it contains, it maps specific Words to the Document IDs that contain them.
+3. **Analyzers:** When you insert the text `"The Quick Brown Foxes Jumped!"`, Elasticsearch does not save that exact string. It runs it through an Analyzer:
+   - **Tokenize:** Splits into `["The", "Quick", "Brown", "Foxes", "Jumped"]`
+   - **Lowercase:** `["the", "quick", "brown", "foxes", "jumped"]`
+   - **Stopwords:** Removes useless words `["quick", "brown", "foxes", "jumped"]`
+   - **Stemming:** Reduces words to their root `["quick", "brown", "fox", "jump"]`
+   This is why searching "jumping fox" will successfully match a document containing "Jumped Foxes".
+4. **Relevance Scoring (TF-IDF / BM25):** Elasticsearch doesn't just return matches; it ranks them. If you search for "Apple", a document where the word "Apple" appears 50 times in the title gets a much higher score than a document where "Apple" appears once in the footer.
+
+## Distributed Architecture
+
+Elasticsearch is designed to be horizontally scaled out of the box.
+- An Index is divided into **Shards** (physical Lucene instances).
+- When you create an Index, you configure it to have, for example, 5 Primary Shards and 1 Replica Shard.
+- Elasticsearch distributes these 10 shards perfectly across your cluster of servers.
+- If a server dies, Elasticsearch automatically promotes the Replica shards to Primary and rebalances the cluster without any human intervention.
+
+## Trade-Offs
+
+- **Pros:** Unbeatable speed for full-text, fuzzy, and geo-spatial queries across billions of documents. Highly available and distributed by default.
+- **Cons:** 
+  - **Terrible as a primary database.** It is not strictly ACID compliant. It is highly prone to "Split Brain" scenarios if network configurations are wrong.
+  - **The Synchronization Tax:** You must keep your PostgreSQL database (the source of truth) synchronized with Elasticsearch. This requires complex Event-Driven architectures or background workers pushing updates.
+
+## Interview Questions
+
+**Q: A user updates their product description in your React app. You save the update to PostgreSQL, and instantly push the update to Elasticsearch. However, when the user is redirected to the Search page half a second later, their updated product doesn't show up. Why?**
+**A:** This is due to Elasticsearch's **Near Real-Time (NRT)** nature. When you write a document to Elasticsearch, it is saved to a memory buffer. It is NOT searchable immediately. By default, a background process called "Refresh" takes that memory buffer and writes it to a searchable Lucene segment *once every 1 second*. This 1-second delay is intentional to optimize indexing throughput, but it means developers must account for a 1-second eventual consistency window in their UI flows.
+
+**Q: Explain the "Split Brain" problem in Elasticsearch and how `discovery.zen.minimum_master_nodes` used to fix it.**
+**A:** If a 2-node cluster suffers a network partition, Node A and Node B cannot communicate. Both assume the other is dead, and both promote themselves to be the "Master" node. Now you have two Master nodes accepting conflicting writes, permanently destroying the cluster state.
+To fix this, you must configure a **Quorum** using the formula `(N / 2) + 1`. In a 3-node cluster, a node must see at least 2 nodes to form a cluster. If Node A is isolated, it only sees 1 node (itself), realizes it lacks a quorum, and intentionally shuts down write capabilities, preventing Split Brain. (Note: Modern Elasticsearch v7+ handles this voting math automatically).

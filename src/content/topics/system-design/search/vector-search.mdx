@@ -1,0 +1,50 @@
+---
+title: "Vector Search (AI Search)"
+description: "Searching by meaning, not by matching keywords."
+importance: "HIGH"
+revisionTime: 5
+category: "System Design"
+subcategory: "Search"
+order: 79
+---
+
+## Concept
+
+If a user searches for `"cozy sweater"`, traditional keyword engines (like Elasticsearch's Inverted Index) look for documents containing the exact words "cozy" and "sweater". If your database contains a product named `"warm knitted pullover"`, standard search will return 0 results, because none of the letters match.
+**Vector Search (Semantic Search)** uses Artificial Intelligence to understand the *meaning* and *context* of words. It realizes that a "cozy sweater" and a "warm pullover" are conceptually the exact same thing, and returns the result perfectly.
+
+## Mental Model
+
+Imagine a 3-Dimensional graph.
+- The X-axis is "Warmth".
+- The Y-axis is "Clothing Type".
+- The Z-axis is "Comfort".
+
+When you index the product `"warm knitted pullover"`, an AI model calculates its position on this graph. It gets coordinates `[0.9, 0.8, 0.9]`. This array of numbers is called an **Embedding Vector**.
+When the user searches for `"cozy sweater"`, the AI model calculates its coordinates: `[0.85, 0.8, 0.88]`.
+The Database simply measures the physical distance between the two points on the graph. Because they are grouped closely together in "concept space", the database returns it as a match.
+
+## How It Works
+
+1. **The Embedding Model:** You take all the text/images in your database and pass them through a Machine Learning model (like OpenAI's `text-embedding-ada-002`). The model returns a massive array of floats (e.g., a 1536-dimensional vector) representing the "meaning" of the text.
+2. **The Vector Database:** You save these massive arrays into a specialized database (like Pinecone, Milvus, or pgvector). Standard B-Trees cannot search 1536-dimensional space. These databases use advanced algorithms (like HNSW - Hierarchical Navigable Small World graphs) to cluster similar vectors together.
+3. **The Query:** The user types a query. Your backend passes the query to the Embedding Model to turn it into a 1536-dimensional vector.
+4. **KNN / ANN Search:** Your backend asks the Vector Database to perform a **K-Nearest Neighbors (KNN)** or **Approximate Nearest Neighbors (ANN)** search. The database uses math (Cosine Similarity or Euclidean Distance) to find the vectors stored in the database that are physically closest to the user's query vector, returning the matches.
+
+## Trade-Offs
+
+- **Pros:** Unbelievably powerful. It powers Spotify's song recommendations, Netflix's movie matching, and ChatGPT's "Retrieval-Augmented Generation (RAG)" memory. It can search images, audio, and text interchangeably (e.g., uploading an image of a sweater to find text descriptions of similar sweaters).
+- **Cons:** 
+  - **Latency & Cost:** Generating embeddings via AI APIs takes hundreds of milliseconds and costs money.
+  - **The Exact Match Problem:** Vector search is terrible at finding exact serial numbers or precise IDs. Searching for `iPhone 14` might return `iPhone 13` as the top result because conceptually they are 99% identical.
+
+## Real-World Usage
+
+Because Vector Search struggles with exact keyword matching, the modern industry standard is **Hybrid Search**.
+You run a traditional Elasticsearch keyword query AND a Vector Search query simultaneously. You take both sets of results, feed them into a secondary "Re-ranking" algorithm (like Reciprocal Rank Fusion - RRF), and combine them to get the absolute best of both worlds.
+
+## Interview Questions
+
+**Q: In a Vector Database, why do we use ANN (Approximate Nearest Neighbors) instead of exact KNN (K-Nearest Neighbors)?**
+**A:** Exact KNN mathematically calculates the distance between the user's query vector and *every single vector stored in the database*. If you have 1 billion documents, calculating 1 billion 1536-dimensional mathematical distances will take hours and consume massive CPU. 
+**ANN (Approximate Nearest Neighbors)** sacrifices perfect accuracy for speed. It uses graphing algorithms (like HNSW) to intelligently skip 99% of the database and only measure distances in the general "neighborhood" of the query. It returns results in 10 milliseconds, and while it might accidentally miss the absolute #1 best match, finding the #2 or #3 best match is perfectly acceptable for semantic search.

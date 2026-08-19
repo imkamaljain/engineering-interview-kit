@@ -1,0 +1,70 @@
+---
+title: "System Design with Node.js"
+description: "How to architect and scale Node.js applications in a system design interview."
+importance: "HIGH"
+revisionTime: 5
+category: "Node.js"
+subcategory: "Interview"
+order: 63
+---
+
+## TL;DR
+
+When designing systems with Node.js, you must account for its single-threaded nature. It excels at I/O-heavy workloads (API gateways, real-time chats, streaming) but fails at CPU-heavy workloads. Scaling involves stateless horizontal replication, caching, and message queues.
+
+## Mental Model
+
+```mermaid
+flowchart TD
+    Internet["Internet / Users"]
+    LB["Load Balancer (NGINX/ALB)"]
+    
+    subgraph Node.js Servers (Stateless)
+        Node1["Node.js Pod 1"]
+        Node2["Node.js Pod 2"]
+    end
+    
+    Cache["Redis (Sessions / Cache)"]
+    Queue["Message Queue (RabbitMQ / Kafka)"]
+    Worker["Worker Service (Go/Python/Node)"]
+    DB["Primary Database (Postgres)"]
+
+    Internet --> LB
+    LB --> Node1
+    LB --> Node2
+    
+    Node1 <--> Cache
+    Node2 <--> Cache
+    
+    Node1 -->|Heavy Tasks| Queue
+    Queue --> Worker
+    
+    Node1 <--> DB
+    Worker <--> DB
+```
+
+## Key Architectural Decisions
+
+### 1. Handling CPU-Heavy Tasks
+If the design requires video transcoding, heavy image manipulation, or complex machine learning, you **must not** do it in the main Node.js web server. 
+*Solution*: Node.js pushes a job to a Message Queue (like RabbitMQ or SQS), and a separate pool of background workers (written in Python, Go, or Node.js Worker Threads) processes the job asynchronously.
+
+### 2. Scaling Horizontally (Statelessness)
+Node.js processes should be completely stateless. 
+*Solution*: Do not store user sessions in Node's memory or rely on `cluster` for scaling in the cloud. Store sessions in a distributed cache like **Redis**. Run Node.js as Docker containers managed by Kubernetes, scaling up and down based on CPU usage.
+
+### 3. I/O Optimization
+Node.js thrives on concurrency.
+*Solution*: Use Connection Pooling for databases. Use Redis Cache-Aside patterns to prevent DB bottlenecks. Use streams for file uploads/downloads instead of buffering in memory.
+
+## Example Scenario: Designing a Chat Application
+
+If asked to design WhatsApp or Discord using Node.js:
+1. **API Gateway**: Node.js is perfect here. It handles thousands of concurrent WebSocket connections efficiently due to `libuv`.
+2. **State Management**: Node.js servers track active socket connections locally.
+3. **Message Routing**: Since users might be connected to different Node.js servers, Server A must publish the message to a **Redis Pub/Sub** channel. Server B is subscribed to that channel, receives the event, and pushes it to User 2 via their WebSocket.
+
+## Common Interview Questions
+
+### Node.js vs Java/Go for a specific system?
+Advocate for Node.js if the system is highly asynchronous, I/O bound (lots of DB/API calls), requires WebSockets, or if the team already uses JavaScript on the frontend (enabling code sharing). Advocate against it if the system is primarily doing heavy mathematical computations or requires strict multi-threading memory sharing.

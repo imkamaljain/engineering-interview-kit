@@ -1,0 +1,77 @@
+---
+title: "Escape Analysis"
+description: "How the compiler decides between Stack and Heap allocation."
+importance: "HIGH"
+revisionTime: 4
+category: "Go"
+subcategory: "Memory"
+order: 31
+---
+
+## TL;DR
+
+**Escape Analysis** is a compiler phase that determines the lifespan of a variable. If a variable's memory address is passed outside of its local scope (e.g., returned as a pointer, stored in a global variable, or sent over a channel), it "escapes" the local Stack and is forced onto the Heap.
+
+## Mental Model
+
+```mermaid
+flowchart TD
+    Variable["u := User{}"]
+    
+    Analysis{"Does anyone outside\nthis function\nneed this variable?"}
+    Variable --> Analysis
+    
+    Analysis -->|No (Passed by value)| Stack["Allocated on Stack\n(Fast, No GC)"]
+    Analysis -->|Yes (Returned as pointer)| Heap["Escapes to Heap\n(Slower, Triggers GC)"]
+```
+
+## How It Works
+
+The Go compiler is extremely smart. It wants to put absolutely everything on the Stack to keep the program blisteringly fast. It only resorts to the Heap when it is mathematically proven that the Stack is unsafe.
+
+Common reasons a variable escapes to the Heap:
+1. **Returning a Pointer**: `return &u`. The caller needs the memory after the function frame is destroyed.
+2. **Interface Assignments**: Assigning a concrete value to an `interface{}` (like passing it to `fmt.Println()`) often forces an escape because the internal interface structure requires heap references.
+3. **Large Variables**: If a variable is too massive (e.g., `make([]byte, 1000000)`), the compiler skips the stack (which has limited space) and puts it directly on the heap.
+4. **Unknown Slice Size at Compile Time**: If you do `make([]int, n)` where `n` is a variable, it usually escapes because the stack requires known sizes.
+
+## Example (Checking Escape Analysis)
+
+You don't have to guess what the compiler is doing. You can ask it to print its Escape Analysis decisions using the `-m` flag.
+
+```go
+package main
+
+func doMath() int {
+	// 'x' stays on the stack. No one else needs it.
+	x := 10 
+	return x * 2
+}
+
+func getPointer() *int {
+	// 'y' escapes to the heap because we return its address!
+	y := 20 
+	return &y
+}
+
+func main() {
+	doMath()
+	getPointer()
+}
+```
+
+**Running the Compiler:**
+`go build -gcflags="-m" main.go`
+
+**Output:**
+```
+./main.go:11:2: moved to heap: y
+```
+
+## Common Interview Questions
+
+### Why does `fmt.Println(x)` cause `x` to escape to the heap?
+`fmt.Println` takes arguments of type `...any` (which is `...interface{}`). When you pass a local integer to an empty interface, Go must wrap the integer in a tiny struct that holds both the type data and the value. Because the compiler cannot strictly guarantee what the `fmt` package does with that interface under the hood, it plays it safe and allocates the integer on the heap.
+
+### If Escape Analysis is automatic, why should a developer care?
+Because Heap allocations are the #1 cause of performance bottlenecks in high-throughput Go applications. Every heap allocation creates work for the Garbage Collector. If you write an HTTP server processing 10,000 requests per second, and each request accidentally escapes 5 variables to the heap, the GC will start consuming 30% of your CPU just cleaning up the garbage, causing your response times to spike.

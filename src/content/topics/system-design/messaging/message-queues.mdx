@@ -1,0 +1,61 @@
+---
+title: "Message Queues"
+description: "Decoupling systems through asynchronous processing."
+importance: "HIGH"
+revisionTime: 5
+category: "System Design"
+subcategory: "Messaging"
+order: 43
+---
+
+## Concept
+
+In a standard synchronous architecture, if an App Server needs to perform a heavy task (like generating a PDF invoice or sending an email), it does the work while the user stares at a loading spinner. If the email server is down, the App Server crashes and the user sees an error.
+A **Message Queue** solves this by introducing asynchronous decoupling. The App Server simply drops a "Generate PDF" message into a queue, instantly returns "Success" to the user, and goes back to serving web traffic. A separate background "Worker" server pulls the message from the queue and does the heavy lifting on its own time.
+
+## Mental Model
+
+```mermaid
+flowchart LR
+    User -->|HTTP Request| App[App Server\n(Producer)]
+    App -->|Pushes Message| Queue[(Message Queue\nBroker)]
+    App -.->|Instantly Replies| User
+    
+    Queue -->|Pulls Message| Worker1[Worker Server 1\n(Consumer)]
+    Queue -->|Pulls Message| Worker2[Worker Server 2\n(Consumer)]
+    
+    Note["If Worker 1 crashes while processing,\nthe Queue safely gives the message to Worker 2."]
+```
+
+## How It Works
+
+1. **Producer:** The application that generates the message (e.g., the web server handling checkout).
+2. **Broker (The Queue):** A dedicated server (like RabbitMQ, Amazon SQS, or Redis) that holds the messages safely in memory or on disk. It acts as a buffer.
+3. **Consumer (Worker):** A background server that connects to the broker, pulls a message, processes it, and then sends an "Acknowledgement" (ACK) back to the queue.
+4. **Acknowledgement:** The queue NEVER deletes a message until it receives an ACK from the Consumer. If the Consumer pulls a message and then crashes (no ACK received within 5 minutes), the queue assumes failure and makes the message available for another Consumer to try again.
+
+## Trade-Offs
+
+- **Pros:** 
+  - **Decoupling:** Producers and Consumers don't know each other exist. You can write the Producer in Node.js and the Consumer in Python.
+  - **Spike Smoothing:** If 10,000 users check out on Black Friday, the App Server doesn't crash trying to send 10,000 emails. It just dumps 10,000 messages into the queue instantly. The Workers will process them over the next few hours.
+- **Cons:** 
+  - The system is no longer strictly synchronous. The user doesn't know *when* the PDF will actually be ready. You have to build complex UI polling or WebSockets to notify them later.
+  - Introduces a new Single Point of Failure (the Queue Broker).
+
+## Real-World Usage
+
+- **RabbitMQ:** The traditional, enterprise standard message broker. Extremely feature-rich (complex routing rules).
+- **Amazon SQS (Simple Queue Service):** AWS's managed, infinitely scalable message queue.
+- **Redis (Lists/Streams):** Often used by startups as a fast, in-memory queue, though it lacks the advanced durability features of dedicated brokers.
+- **Use Cases:** Sending emails, resizing uploaded images, generating reports, processing payments in the background.
+
+## Interview Questions
+
+**Q: You use Amazon SQS to process payments. A bug in your Worker code causes it to crash every time it tries to process a specific message. What happens to the Queue, and how do you fix it?**
+**A:** This is a **Poison Pill** message. The Worker pulls the message, crashes, and fails to send an ACK. The Queue puts the message back. Another Worker pulls it, crashes, and so on. This creates an infinite loop that wastes CPU and blocks legitimate messages from being processed.
+**Fix:** You must configure a **Dead Letter Queue (DLQ)**. You set a "Max Receive Count" (e.g., 3). If the main Queue gives the same message to Workers 3 times and never receives an ACK, it automatically removes the message from the main queue and drops it into a separate DLQ folder, allowing an engineer to inspect it manually without blocking the system.
+
+**Q: A user creates an account, and your system drops a message in the Queue to send a Welcome Email. A network glitch causes the Queue to deliver the *same* message to two different Workers. The user gets two emails. How do you prevent this?**
+**A:** Message Queues only guarantee **"At-Least-Once"** delivery. Duplicates will happen. You cannot fix the Queue; you must fix the Consumer. The Consumer must be **Idempotent**.
+Before the Worker sends the email, it must check a shared database: `Has Email Sent for UserID_123?`. If yes, it drops the duplicate message. If no, it updates the database and sends the email.

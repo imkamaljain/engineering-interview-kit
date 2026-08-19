@@ -1,0 +1,105 @@
+---
+title: "sync.Pool"
+description: "Recycling objects to save the Garbage Collector."
+importance: "MEDIUM"
+revisionTime: 4
+category: "Go"
+subcategory: "Advanced"
+order: 66
+---
+
+## TL;DR
+
+If your server creates millions of short-lived structs or massive byte buffers (e.g., parsing JSON for every HTTP request), allocating that memory on the Heap will crush your CPU under Garbage Collection pressure. `sync.Pool` is a thread-safe recycling bin. Instead of creating new objects, you grab an old one from the pool, use it, and put it back.
+
+## Mental Model
+
+```mermaid
+flowchart TD
+    App["High-Throughput App"]
+    
+    subgraph sync.Pool
+        Free["Free Objects: [{}, {}, {}]"]
+    end
+    
+    NewFunc["New() func\n(Creates fresh object)"]
+    
+    App -->|1. Request Object| PoolCheck{"Is Pool Empty?"}
+    
+    PoolCheck -->|No| Get["Get()"]
+    Get -->|Reuses old object| App
+    
+    PoolCheck -->|Yes| NewFunc
+    NewFunc -->|Allocates new memory| App
+    
+    App -->|2. Done using object| Put["Put()"]
+    Put -->|Returns to Pool| Free
+    
+    Note right of Put: The Garbage Collector occasionally\nempties the Pool in the background!
+```
+
+## How It Works
+
+`sync.Pool` is designed specifically to cache allocated but unused items for later reuse, relieving pressure on the garbage collector.
+
+It only requires two methods:
+- `Get() any`: Retrieves an item from the pool. If the pool is empty, it calls the `New` function you defined.
+- `Put(x any)`: Returns an item to the pool.
+
+**CRITICAL RULE:** You **MUST** reset/clear the object before putting it back in the pool! If you don't, the next person who calls `Get()` will receive an object containing the sensitive data of the previous user!
+
+## Example
+
+```go
+package main
+
+import (
+	"bytes"
+	"fmt"
+	"sync"
+)
+
+// 1. Create the global Pool
+var bufferPool = sync.Pool{
+    // 2. Define the factory function. 
+    // This ONLY runs if the pool is completely empty.
+	New: func() interface{} {
+		fmt.Println("Allocating brand new buffer!")
+		return new(bytes.Buffer)
+	},
+}
+
+func processRequest(data string) {
+	// 3. Grab a buffer from the pool
+	// (Requires a type assertion because Pool holds 'any')
+	buf := bufferPool.Get().(*bytes.Buffer)
+
+	// 4. CRITICAL: Reset the buffer to wipe out the previous user's data!
+	buf.Reset()
+
+	// 5. Defer returning it to the pool
+	defer bufferPool.Put(buf)
+
+	// Use the buffer
+	buf.WriteString(data)
+	// fmt.Println(buf.String())
+}
+
+func main() {
+    // The first call allocates memory.
+	processRequest("Hello")
+	
+	// The next 99 calls reuse the exact same memory! Zero allocations!
+	for i := 0; i < 99; i++ {
+		processRequest("World")
+	}
+}
+```
+
+## Common Interview Questions
+
+### Can I use `sync.Pool` as an application cache (like Redis or Memcached)?
+**Absolutely not.** The Go Garbage Collector has the right to completely empty a `sync.Pool` at any moment without warning. If you store persistent data (like a database query result) in a `sync.Pool`, it will randomly disappear. It is strictly a *memory allocation* optimization, not a data cache.
+
+### Why is `fmt.Printf` so fast?
+The `fmt` package relies heavily on `sync.Pool`. When you call `fmt.Printf`, it requires a complex internal `pp` struct to manage the printing state. Instead of allocating a new `pp` struct on the heap for every single print statement, the standard library maintains a global `sync.Pool` of them. This is how Go achieves high-throughput logging.

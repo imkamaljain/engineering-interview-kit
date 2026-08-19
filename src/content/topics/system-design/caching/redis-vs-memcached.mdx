@@ -1,0 +1,51 @@
+---
+title: "Redis vs Memcached"
+description: "Choosing the right engine for your distributed cache."
+importance: "LOW"
+revisionTime: 2
+category: "System Design"
+subcategory: "Caching"
+order: 27
+---
+
+## Concept
+
+When you need a Distributed Cache (a cluster of servers dedicated to holding RAM data, accessible by all your App Servers), you generally choose between the two industry titans: **Redis** and **Memcached**. While they both act as ultra-fast, in-memory Key-Value stores, Redis has largely won the market due to its advanced features.
+
+## Mental Model
+
+| Feature | Memcached | Redis |
+| :--- | :--- | :--- |
+| **Data Types** | Strings only | Strings, Lists, Sets, Hashes, Geospatial |
+| **Persistence (Disk Save)**| No (RAM only) | Yes (RDB Snapshots & AOF Logs) |
+| **Replication / HA** | No (Client-side sharding only) | Yes (Master/Slave & Sentinel Failover) |
+| **Threading** | Multi-threaded | Single-threaded (mostly) |
+| **Complexity** | Extremely simple | Complex, acts like a full database |
+
+## Memcached
+
+Created in 2003, Memcached does one thing and does it perfectly: it stores strings in RAM.
+- **Pros:** Because it is multi-threaded, a single massive Memcached server with 32 CPU cores can handle slightly more throughput than a single Redis server. It is incredibly simple to operate.
+- **Cons:** It only stores flat strings. If you want to append an item to a cached array, you must fetch the entire array over the network, parse the JSON, append the item, stringify it, and send the whole massive string back over the network. If the server reboots, 100% of the data is lost instantly.
+
+## Redis (Remote Dictionary Server)
+
+Created in 2009, Redis is essentially an in-memory data structures server.
+- **Pros:** 
+  - **Data Structures:** You can store a List in Redis, and issue an `LPUSH` command. Redis modifies the list internally in memory without transferring the payload back and forth.
+  - **Durability:** Redis can take snapshots of its RAM and save them to a hard drive. If the server reboots, it loads the snapshot back into RAM, preventing a massive cache stampede on your primary database.
+  - **Pub/Sub:** Built-in message brokering for real-time applications.
+- **Cons:** Because it is single-threaded (for command execution), a single slow command (like `KEYS *`) will block every other user waiting to use the cache.
+
+## Real-World Usage
+
+- **Redis** is the default choice for 99% of modern startups and enterprises. It is used for caching, rate-limiting, session storage, and even as a primary database for high-speed use cases (leaderboards).
+- **Memcached** is still used by legacy giants (like Facebook, who heavily customized it) for pure, massive-scale HTML fragment caching where complex data structures are not needed.
+
+## Interview Questions
+
+**Q: You are building a real-time gaming Leaderboard. Which caching system do you choose and why?**
+**A:** I would absolutely use **Redis**. Redis has a built-in data structure called `Sorted Sets` (ZSET). I can insert a player's score `ZADD leaderboard 500 "Alice"`, and Redis will mathematically maintain the sorted order in RAM automatically. To get the top 10 players, I run `ZREVRANGE leaderboard 0 9`, which executes in $O(\log N)$ time. Doing this in Memcached would require fetching the entire player database, sorting it in the Node.js application layer, and saving it back as a massive string.
+
+**Q: Redis is single-threaded. How does it handle 100,000 concurrent connections without blocking?**
+**A:** Redis uses **I/O Multiplexing** (via `epoll` or `kqueue`). The single thread doesn't sit and wait for the network data to travel across the wire. The OS monitors all 100,000 network sockets simultaneously. When a socket actually has data ready to be read, the OS notifies the Redis thread, which processes the command in microseconds, and immediately moves to the next ready socket. Because all data is in RAM, processing a command takes nanoseconds, allowing the single thread to serve millions of requests a second.

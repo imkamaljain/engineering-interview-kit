@@ -1,0 +1,65 @@
+---
+title: "Server-Sent Events (SSE)"
+description: "The lightweight alternative to WebSockets."
+importance: "MEDIUM"
+revisionTime: 3
+category: "System Design"
+subcategory: "Real-Time"
+order: 50
+---
+
+## Concept
+
+If you are building a live stock ticker, or a live sports score update feed, the server needs to push data to the client constantly. You *could* use WebSockets, but WebSockets are bidirectional. In a stock ticker, the client never sends data *back* to the server; it only listens. 
+**Server-Sent Events (SSE)** is a standard HTTP protocol specifically designed for unidirectional (Server-to-Client) event streaming.
+
+## Mental Model
+
+```mermaid
+flowchart LR
+    subgraph WebSockets (Full Duplex)
+        C1[Client] <-->|Read / Write| S1[Server]
+    end
+
+    subgraph Server-Sent Events (Simplex)
+        C2[Client] -->|1. Standard HTTP GET| S2[Server]
+        S2 -.->|2. Push Data (Price: $10)| C2
+        S2 -.->|3. Push Data (Price: $11)| C2
+        Note["Connection stays open.\nServer pushes forever.\nClient CANNOT write back."]
+    end
+```
+
+## How It Works
+
+1. The Javascript Client uses the native `EventSource` API to make a standard HTTP `GET` request.
+2. The Server responds with a specific header: `Content-Type: text/event-stream`.
+3. Instead of sending the full response and closing the connection, the Server flushes data chunks (`data: {"price": 10}\n\n`) down the open HTTP connection whenever it wants.
+4. The Client's `EventSource` fires an `onmessage` callback every time a chunk arrives.
+
+## Trade-Offs
+
+**Advantages over WebSockets:**
+- **Simplicity:** It operates entirely over standard HTTP/HTTPS. There are no complex connection upgrades or custom protocols to debug. 
+- **Corporate Firewalls:** Many strict enterprise firewalls completely block the `ws://` WebSocket protocol, but they almost always allow standard HTTP traffic (SSE).
+- **Built-in Reconnection:** The browser's `EventSource` API automatically tries to reconnect if the connection drops. With WebSockets, you have to write the retry logic yourself.
+
+**Disadvantages vs WebSockets:**
+- **Unidirectional:** The client cannot send messages back over the SSE channel. (If they need to, they must make a separate standard HTTP POST request).
+- **Connection Limits:** Historically, browsers enforce a strict limit of 6 open HTTP connections per domain. If a user opens 6 tabs to your SSE website, the browser will completely block the 7th tab from making any HTTP requests at all. (Note: HTTP/2 solves this through multiplexing).
+
+## Real-World Usage
+
+- **ChatGPT / LLM Streaming:** When you ask ChatGPT a question and the text slowly "types" out on the screen one word at a time, it is using Server-Sent Events. The server generates a token and pushes it down the SSE stream instantly, rather than waiting for the entire paragraph to generate.
+- **Live Notifications:** Facebook-style dropdown notification counters.
+- **Continuous Integration (CI/CD) Logs:** Streaming the live console output of a build pipeline to the browser.
+
+## Interview Questions
+
+**Q: You are building a collaborative drawing app (like Figma) where users can see each other's mouse cursors moving in real-time. Do you choose Polling, SSE, or WebSockets?**
+**A:** You absolutely must choose **WebSockets**. 
+- Polling is too slow and will cause the cursors to jump laggy distances. 
+- SSE is unidirectional; it allows the server to push cursor updates to the client, but the client cannot rapidly stream its *own* cursor movements back to the server over the SSE connection. (The client would have to fire 60 HTTP POST requests a second, destroying performance). 
+- WebSockets provide the required low-latency, bidirectional, full-duplex communication needed for real-time collaboration.
+
+**Q: How does HTTP/2 change the calculus between SSE and WebSockets?**
+**A:** HTTP/1.1 suffers from connection limits and Head-of-Line blocking. HTTP/2 introduces **Multiplexing**, allowing thousands of simultaneous streams over a single TCP connection. This makes SSE incredibly powerful and efficient on modern browsers, completely eliminating the 6-connection limit problem and making SSE the undisputed best choice for unidirectional real-time data streaming.

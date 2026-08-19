@@ -1,0 +1,75 @@
+---
+title: "Design Amazon S3"
+description: "Building a global Object Storage system."
+importance: "HIGH"
+revisionTime: 5
+category: "System Design"
+subcategory: "Interview Problems"
+order: 99
+---
+
+## Concept
+
+**The Problem:** Design a system that allows users to upload, store, and download massive, unstructured files (photos, videos, zip files) with infinite scalability and 11 nines of durability (99.999999999%).
+
+This tests your knowledge of **Object Storage, Erasure Coding, and Storage Tiers.**
+
+## 1. Object Storage vs Block Storage
+
+Why can't we just buy a massive Linux server and store files on the `ext4` filesystem?
+Because traditional filesystems use hierarchical trees (Folders inside Folders). As the tree gets deeper, searching for a file takes exponentially longer.
+
+**Object Storage** uses a flat namespace.
+Every file is an "Object". It consists of:
+1. **The Data:** The raw binary bytes of the video file.
+2. **Metadata:** JSON describing the file (e.g., `{"author": "Alice", "type": "video/mp4"}`).
+3. **The Key:** A globally unique UUID string.
+
+There are no folders. You simply query the Key, and the system instantly returns the Data.
+
+## 2. High-Level Architecture
+
+```mermaid
+flowchart TD
+    User -->|1. PUT /bucket/video.mp4| Gateway[API Gateway]
+    
+    Gateway --> MetaDB[(Metadata DB\nCassandra)]
+    Note right of MetaDB: Stores mapping:\nUUID -> Server A, B, C
+    
+    Gateway --> ChunkSvc[Chunk & Encrypt Svc]
+    
+    ChunkSvc --> StorageNodeA[(Storage Node A)]
+    ChunkSvc --> StorageNodeB[(Storage Node B)]
+    ChunkSvc --> StorageNodeC[(Storage Node C)]
+```
+
+## 3. The Core Challenge: 11 Nines of Durability
+
+If you store a file on a physical hard drive, that drive *will* eventually break.
+To achieve 99.999999999% durability, you must never lose the file, even if an entire data center burns down.
+
+**Approach 1: Full Replication**
+Copy the 10GB video file to 3 separate data centers.
+- *Pros:* Easy. Highly durable.
+- *Cons:* Storage costs are tripled. You are wasting 20GB of expensive hard drive space.
+
+**Approach 2: Erasure Coding (The S3 Way)**
+Erasure coding is mathematical magic. Instead of copying the file, you break the 10GB video into 10 smaller "Data Chunks" (1GB each). 
+You run a mathematical formula (like Reed-Solomon) on those chunks to generate 4 "Parity Chunks" (1GB each).
+You now have 14 chunks total. You distribute them across 14 different servers.
+**The Magic:** To reconstruct the 10GB video, the system only needs to read *any 10* of the 14 chunks. If 4 servers physically explode simultaneously, the math allows you to perfectly regenerate the lost data using the Parity chunks.
+- *Pros:* Same massive durability as 3x replication, but only requires 1.4x the storage space, saving Amazon billions of dollars.
+
+## 4. Metadata Management
+
+While the massive raw bytes are stored on dumb Storage Nodes using Erasure Coding, you need a fast database to track where everything is.
+The **Metadata Database (Cassandra)** stores the mapping.
+When a user asks for `video.mp4`, the API queries Cassandra: `SELECT chunks FROM metadata WHERE filename = 'video.mp4'`. Cassandra returns the IP addresses of the 14 storage nodes holding the chunks. The API fetches the chunks, assembles them in RAM, and streams the file to the user.
+
+## Interview Questions
+
+**Q: A user is uploading a 50GB file. Their Wi-Fi drops at 99%. Do they have to restart the 4-hour upload?**
+**A:** No, because S3 mandates **Multipart Uploads** for large files. The client SDK chops the 50GB file into 50 separate 1GB pieces and uploads them in parallel using independent HTTP PUT requests. If piece #49 fails due to a network drop, the client simply retries piece #49. Once all 50 pieces arrive, the S3 backend mathematically concatenates them into the final object.
+
+**Q: How does S3 ensure files are not silently corrupted over years of sitting on a magnetic hard drive (Bit Rot)?**
+**A:** When S3 saves a chunk to a hard drive, it also calculates and saves the MD5 Checksum hash of that chunk. S3 runs continuous background worker processes called **Data Scrubbers**. These scrubbers constantly scan old hard drives, re-calculating the hash of the data. If the calculated hash doesn't match the saved hash, S3 knows the hard drive suffered "Bit Rot" (magnetic degradation). It immediately throws away the corrupted chunk and uses Erasure Coding to perfectly rebuild it on a new hard drive, entirely silently.

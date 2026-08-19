@@ -1,0 +1,69 @@
+---
+title: "Bloom Filters"
+description: "The fastest way to know if something DOES NOT exist."
+importance: "HIGH"
+revisionTime: 4
+category: "System Design"
+subcategory: "Distributed Data Structures"
+order: 81
+---
+
+## Concept
+
+Imagine a user is registering for your website and types a desired username. You need to check if that username is already taken. You have 1 billion registered users. Querying the PostgreSQL database takes 50 milliseconds. Doing this for every single keystroke as they type will crash your database.
+A **Bloom Filter** is a bizarre, probabilistic data structure that can tell you if a username exists in nanoseconds, using almost zero RAM.
+
+**The Golden Rule of Bloom Filters:**
+- It can tell you with **100% certainty** that an item DOES NOT exist.
+- It can tell you with **99% certainty** that an item DOES exist (False Positives are possible).
+
+## Mental Model
+
+```mermaid
+flowchart TD
+    subgraph Bloom Filter (A simple Bit Array of 0s)
+        Bits["[ 0, 0, 0, 0, 0, 0, 0, 0 ]"]
+    end
+    
+    subgraph Adding 'Alice'
+        Alice["'Alice'"] --> Hash1A["Hash 1 -> Pos 2"]
+        Alice --> Hash2A["Hash 2 -> Pos 5"]
+        Hash1A --> BitsA["[ 0, 0, 1, 0, 0, 1, 0, 0 ]"]
+    end
+    
+    subgraph Checking 'Bob'
+        Bob["'Bob'"] --> Hash1B["Hash 1 -> Pos 1"]
+        Hash1B --> CheckB{"Is Pos 1 a 1?\nNO."}
+        CheckB --> ResultB["Bob 100% does NOT exist"]
+    end
+```
+
+## How It Works
+
+1. **The Array:** You create a massive array of bits (0s), e.g., 10 million bits. This uses roughly 1 Megabyte of RAM.
+2. **Adding an Item:** When user "Alice" registers, you run the string "Alice" through 3 different, fast hash functions (e.g., MurmurHash). They output three numbers: 2, 5, and 8. You change the bits at positions 2, 5, and 8 in the array to `1`.
+3. **Checking an Item (Negative):** A user types "Bob". You run "Bob" through the exact same 3 hash functions. They output 1, 4, and 7. You check the array. Position 1 is a `0`. You instantly stop. Because position 1 is a `0`, you know with **absolute, 100% mathematical certainty** that "Bob" has never been added to this filter.
+4. **Checking an Item (Positive):** A user types "Charlie". The hashes output 2, 5, and 8. You check the array. All three positions are `1`. You return "Charlie probably exists". 
+*Why probably?* Because "Alice" might have been the one who flipped those exact bits to 1 earlier. This is a False Positive.
+
+## Trade-Offs
+
+- **Pros:** Phenomenal space efficiency. You can represent 1 billion items in a few megabytes of RAM. Extremely fast $O(1)$ lookups.
+- **Cons:** **You cannot delete items.** If Alice deletes her account, you cannot flip positions 2, 5, and 8 back to `0`, because "Charlie" might be relying on position 5 being a `1`. (To fix this, you have to use a much larger, more complex *Counting Bloom Filter*).
+
+## Real-World Usage
+
+Bloom Filters are used to prevent expensive disk/network reads.
+- **Databases (Cassandra / PostgreSQL):** Before checking the slow hard drive to see if a row exists, the database checks a Bloom Filter in RAM. If it says "No", the database skips the hard drive entirely, saving massive I/O.
+- **Malicious URL Blockers (Google Chrome):** Chrome does not want to send every URL you visit to a Google server to check if it's a phishing site. Instead, Google pushes a tiny 5MB Bloom Filter containing millions of bad URLs to your local browser. If the filter flags a URL, *only then* does Chrome make a network request to verify.
+
+## Interview Questions
+
+**Q: A Bloom filter is producing too many False Positives (saying items exist when they don't). How do you adjust the mathematical parameters to fix this?**
+**A:** There are two ways to reduce the False Positive rate:
+1. **Increase the size of the Bit Array (m):** A larger array means fewer collisions.
+2. **Increase the number of Hash Functions (k):** Requiring 5 hash matches instead of 3 makes it harder for random overlapping bits to trigger a false positive. However, increasing hash functions also fills up the bit array faster, so it must be balanced perfectly against the array size.
+
+**Q: Explain how you would use a Bloom Filter in front of a Redis Cache to prevent Cache Stampedes caused by malicious users.**
+**A:** A hacker might launch a DDoS attack requesting thousands of randomized, fake user profiles (`/users/99999`, `/users/abcde`). Because these users don't exist, they will bypass the Redis cache (Cache Miss) and violently hammer the primary PostgreSQL database, crashing it.
+To fix this, you place a Bloom Filter in front of the cache containing all *valid* user IDs. When the hacker requests `/users/abcde`, the Bloom Filter instantly returns "100% Does Not Exist". You drop the HTTP request immediately, saving both Redis and PostgreSQL from the junk traffic.

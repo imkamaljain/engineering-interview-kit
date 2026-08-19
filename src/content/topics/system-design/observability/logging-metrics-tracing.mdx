@@ -1,0 +1,64 @@
+---
+title: "Logging, Metrics & Tracing"
+description: "The Three Pillars of Observability."
+importance: "HIGH"
+revisionTime: 5
+category: "System Design"
+subcategory: "Observability"
+order: 71
+---
+
+## Concept
+
+When your monolithic Node.js app crashed, you could just SSH into the server and read the `console.log` file. 
+When you have 500 microservices running inside ephemeral Kubernetes containers that are created and destroyed every minute, SSH is impossible. If the checkout button is slow, how do you know which of the 500 services is causing the delay?
+**Observability** is the architectural practice of instrumenting your code to output massive amounts of telemetry data, so you can debug complex distributed systems from the outside.
+
+## The Three Pillars
+
+To fully understand a system, you must implement all three pillars. They answer different questions.
+
+### 1. Logs (The "What" and "Why")
+- **What it is:** A discrete, immutable record of a specific event that happened at a specific timestamp.
+- **Format:** Should *always* be structured JSON, never raw text. `{"timestamp": "12:00", "level": "error", "user_id": 123, "message": "DB connection failed"}`
+- **Use Case:** Deep debugging. You know an error happened; you read the logs to see the exact stack trace and variables that caused it.
+- **Tools:** ELK Stack (Elasticsearch, Logstash, Kibana), Datadog, Splunk.
+
+### 2. Metrics (The "Is it broken?")
+- **What it is:** Numbers measured over time. Aggregated data. (e.g., CPU %, Memory usage, HTTP 500 Error Rate, Requests Per Second).
+- **Format:** Time-series data points.
+- **Use Case:** Dashboards and Alerting. Metrics are incredibly lightweight to store. You look at a graph to see if the CPU spiked at 3:00 AM, triggering an automated PagerDuty alarm to wake up an engineer.
+- **Tools:** Prometheus, Grafana, AWS CloudWatch.
+
+### 3. Tracing (The "Where is the bottleneck?")
+- **What it is:** Tracking a single user's request as it travels across multiple different microservices.
+- **Format:** A `Trace ID` attached to multiple `Spans` (blocks of time).
+- **Use Case:** Performance tuning. If a request takes 5 seconds, the Trace visualizes exactly how much time was spent in the API Gateway (10ms), the Auth Service (50ms), and the Database query (4940ms), instantly identifying the bottleneck.
+- **Tools:** OpenTelemetry, Jaeger, Zipkin.
+
+## Mental Model
+
+```mermaid
+flowchart TD
+    subgraph Observability Workflow
+        M[Metrics Dashboard\n(Grafana)] -->|1. 'Error rate spiked! Something is broken.'| T[Tracing\n(Jaeger)]
+        T -->|2. 'The exact bottleneck is the Payment Service.'| L[Logs\n(Kibana)]
+        L -->|3. 'Ah, the payment API key expired.'| Fix[Fix the Bug]
+    end
+```
+
+## Real-World Usage
+
+- **Structured Logging is Mandatory:** In modern systems, never do `console.log("User " + id + " logged in")`. You cannot search for that easily. Use a library like `Winston` or `Pino` to log `logger.info("login", { userId: id })`. The centralized logging server can easily index JSON fields, allowing you to search `userId == 123` across billions of logs instantly.
+- **Agent Architecture:** You do not send logs directly from Node.js to Elasticsearch over the internet (it would block the thread). Instead, Node.js writes logs to `stdout`. A lightweight background agent (like Fluentbit or Filebeat) installed on the server reads the terminal output and streams it to the central logging database asynchronously.
+
+## Interview Questions
+
+**Q: You log every single HTTP request to your central Elasticsearch cluster. On Black Friday, the massive spike in traffic causes your Node.js servers to generate so many logs that it crashes your Elasticsearch cluster. How do you prevent this?**
+**A:** You must decouple log generation from log ingestion using a **Message Queue** (usually Kafka or Redis). 
+The lightweight log agents on the Node.js servers push all log data into Kafka. Kafka acts as a massive, highly durable shock absorber. The Logstash/Elasticsearch ingestion workers pull logs from Kafka at their own steady, manageable pace. If Elasticsearch gets overwhelmed, Kafka simply holds the logs safely on disk until the database catches up, preventing crashes and log loss.
+
+**Q: Explain the difference between RED metrics and USE metrics.**
+**A:** These are two standard frameworks for deciding *what* to measure:
+- **RED (For Services):** Rate (Requests per second), Errors (Failed requests), Duration (Latency). These measure the health of the application code.
+- **USE (For Infrastructure):** Utilization (Average time the resource was busy), Saturation (The queue length/backlog), Errors (Hardware faults). These measure the physical health of the servers, CPUs, and hard drives.

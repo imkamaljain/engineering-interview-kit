@@ -1,0 +1,102 @@
+---
+title: "The database/sql Package"
+description: "The standard abstraction layer for SQL databases in Go."
+importance: "HIGH"
+revisionTime: 4
+category: "Go"
+subcategory: "Database"
+order: 43
+---
+
+## TL;DR
+
+Go doesn't have an official ORM built-in. Instead, the standard library provides `database/sql`, an incredibly fast, lightweight abstraction layer. You write raw SQL queries, and the package automatically handles the underlying TCP connections, connection pooling, and data marshaling.
+
+## Mental Model
+
+```mermaid
+flowchart TD
+    App["Your Go App"]
+    
+    subgraph database/sql (Abstraction Layer)
+        Pool["Connection Pool"]
+    end
+    
+    subgraph Third-Party Database Drivers
+        PG["Postgres Driver\n(github.com/lib/pq)"]
+        MySQL["MySQL Driver\n(github.com/go-sql-driver/mysql)"]
+    end
+    
+    DB["Actual Database"]
+    
+    App -->|db.Query()| Pool
+    Pool -->|Delegates to| PG
+    PG <-->|TCP/TLS| DB
+    
+    Note right of PG: Drivers register themselves\nwith database/sql using\nan anonymous import: _
+```
+
+## How It Works
+
+To use `database/sql`, you must import a third-party driver. You import the driver anonymously (`_ "github.com/lib/pq"`) which triggers its `init()` function, registering it with the standard library.
+
+Once registered, you use `sql.Open("postgres", dsn)` to create a `*sql.DB` object.
+**Crucial Note:** `sql.Open` does *not* actually connect to the database! It just validates the connection string and sets up the internal connection pool. To verify the connection, you must call `db.Ping()`.
+
+## Example
+
+```go
+package main
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"log"
+
+	// The underscore imports the driver without using it directly
+	_ "github.com/lib/pq"
+)
+
+type User struct {
+	ID   int
+	Name string
+}
+
+func main() {
+    // 1. Setup the connection pool
+	dsn := "user=admin password=secret dbname=mydb sslmode=disable"
+	db, err := sql.Open("postgres", dsn)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer db.Close() // Close the pool when the app shuts down
+
+    // 2. Actually verify the connection!
+	if err := db.Ping(); err != nil {
+		log.Fatal("Could not connect to DB:", err)
+	}
+
+	// 3. Query a single row
+	// QueryRow always requires a Scan() to extract the data into pointers.
+	var u User
+	err = db.QueryRow("SELECT id, name FROM users WHERE id = $1", 1).Scan(&u.ID, &u.Name)
+	
+	if err == sql.ErrNoRows {
+		fmt.Println("User not found")
+	} else if err != nil {
+		log.Fatal("Query failed:", err)
+	} else {
+		fmt.Printf("Found User: %v\n", u)
+	}
+}
+```
+
+## Common Interview Questions
+
+### Should I pass `*sql.DB` to my functions, or create a new one every time?
+**Never create a new `*sql.DB` per request!** `*sql.DB` is not a single database connection; it is a thread-safe Connection Pool. You should call `sql.Open` exactly *once* when your server boots up, and then pass that same `*sql.DB` pointer to all your handlers (or inject it into a repository struct).
+
+### What is the difference between `Query()` and `QueryRow()`?
+- `QueryRow()` is optimized for expecting exactly 1 row. It returns a single `*Row` object.
+- `Query()` is for expecting 0-to-many rows. It returns `*Rows`. You **must** iterate over `*Rows` using `for rows.Next() { ... }`, and you **MUST** call `defer rows.Close()` immediately. If you forget to close `*Rows`, the underlying database connection will leak!

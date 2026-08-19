@@ -1,0 +1,66 @@
+---
+title: "WebRTC"
+description: "Browser-to-Browser, skipping the server entirely."
+importance: "MEDIUM"
+revisionTime: 3
+category: "System Design"
+subcategory: "Real-Time"
+order: 54
+---
+
+## Concept
+
+If you want to build a video chatting app like Zoom or Google Meet, you *could* use WebSockets. User A uploads their webcam video to the Server, and the Server pushes it to User B. 
+**The Problem:** Video data is massive. Routing gigabytes of video through your central server will consume all your bandwidth and cost thousands of dollars a day. It also introduces latency.
+**The Solution: WebRTC (Web Real-Time Communication).** WebRTC allows Browser A to connect *directly* to Browser B (Peer-to-Peer) and stream high-quality video, audio, or raw data, completely bypassing your central server.
+
+## Mental Model
+
+```mermaid
+flowchart TD
+    subgraph The WebSocket Way (Expensive)
+        A1[Browser A] -->|Uploads 10MB/s| S1[Your Server]
+        S1 -->|Downloads 10MB/s| B1[Browser B]
+        Note1["You pay AWS for 20MB/s of bandwidth."]
+    end
+
+    subgraph The WebRTC Way (Free)
+        A2[Browser A] <-->|Direct P2P Stream 10MB/s| B2[Browser B]
+        A2 -.->|Tiny Setup Info| S2[Signaling Server]
+        B2 -.->|Tiny Setup Info| S2
+        Note2["You pay AWS almost nothing.\nThe browsers do all the heavy lifting."]
+    end
+```
+
+## How It Works: The Signaling Process
+
+Browsers cannot just magically find each other on the internet. They sit behind home Wi-Fi routers and NAT firewalls. To establish a P2P connection, they need a middleman (your server) just for the initial setup. This is called **Signaling**.
+
+1. **Signaling (The Introductions):** Browser A uses a standard WebSocket to connect to your Server. It says, "I want to call Browser B. Here are my video codecs and my public IP address (SDP offer)." Your server passes this message to Browser B. Browser B replies with its own IP and codecs.
+2. **NAT Traversal (STUN/TURN):** Because home routers hide internal IP addresses, the browsers use a STUN server to figure out what their true public, internet-facing IP address actually is.
+3. **The P2P Connection:** Once the browsers have exchanged their public IPs and cryptographic keys via your signaling server, they open a direct, encrypted UDP pipe to each other.
+4. **The Stream:** The browsers begin streaming high-definition video directly to each other. Your signaling server is no longer involved.
+
+## Trade-Offs
+
+- **Pros:** 
+  - Ultra-low latency (data travels the shortest physical path between the two users).
+  - Bandwidth is effectively free for the developer.
+  - End-to-End encryption is enforced by default.
+- **Cons:** 
+  - **The Mesh Problem:** P2P works perfectly for 2 people. If you have a 10-person group call, Browser A has to upload its video stream 9 separate times to 9 different peers. The user's home Wi-Fi upload speed will instantly saturate, and their computer CPU will melt trying to encode 9 streams. WebRTC Mesh architectures do not scale past ~5 users.
+
+## Real-World Usage
+
+- **Google Meet, Zoom (Web), Discord (Voice):** All heavily rely on WebRTC under the hood.
+- **P2P File Sharing:** Tools like WebTorrent use WebRTC data channels to share large files directly between browsers.
+
+## Interview Questions
+
+**Q: You are building a 50-person video conference application (like Zoom). Since a P2P Mesh architecture will crash the users' computers, how do you architect this using WebRTC?**
+**A:** You must abandon pure P2P and introduce a **SFU (Selective Forwarding Unit)** server.
+Instead of sending 49 separate video streams to 49 peers, User A sends exactly *one* WebRTC video stream to your central SFU server. The SFU server acts as a giant router. It takes User A's single stream and forwards it to the other 49 users. This moves the massive bandwidth burden off the user's home Wi-Fi and onto your heavily provisioned cloud infrastructure. (This costs money, but it is the only way to scale group calls).
+
+**Q: What is a TURN server and why is it necessary as a fallback?**
+**A:** Sometimes, a user is working on a strict corporate network with aggressive firewalls that completely block incoming P2P UDP connections. The direct WebRTC connection fails.
+When this happens, WebRTC falls back to a **TURN (Traversal Using Relays around NAT)** server. The TURN server acts as an intermediary relay in the cloud. Both browsers connect to the TURN server, and it copies the video packets from one to the other. It guarantees the call will connect, but it defeats the purpose of P2P, introducing latency and costing the developer massive amounts of money in bandwidth.

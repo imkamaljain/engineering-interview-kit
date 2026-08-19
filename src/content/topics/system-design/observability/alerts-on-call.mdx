@@ -1,0 +1,56 @@
+---
+title: "Alerts & On-Call"
+description: "Waking up engineers at 3:00 AM."
+importance: "MEDIUM"
+revisionTime: 3
+category: "System Design"
+subcategory: "Observability"
+order: 75
+---
+
+## Concept
+
+Having beautiful Grafana dashboards and Kibana logs is useless if nobody is physically looking at the screen when the database crashes at 3:00 AM.
+**Alerting** is the final step of the Observability pipeline. It is the automated system that evaluates metrics against predefined thresholds and proactively notifies human engineers (via Slack, SMS, or automated phone calls) that the system is broken.
+
+## The Alerting Pipeline
+
+1. **The Rule Engine (Prometheus Alertmanager):** Continuously evaluates PromQL queries. Example rule: `IF (http_500_errors > 5%) FOR 5 minutes THEN FIRE_ALERT`.
+2. **The Routing / Escalation Tool (PagerDuty / Opsgenie):** Receives the webhook from Prometheus. It looks at the calendar to see who is on the "On-Call Schedule" tonight.
+3. **The Escalation Policy:** 
+   - *Minute 0:* PagerDuty sends a Slack message.
+   - *Minute 5:* If the engineer hasn't clicked "Acknowledge", PagerDuty calls their cell phone loudly.
+   - *Minute 15:* If the engineer sleeps through the call, PagerDuty automatically calls the Engineering Manager.
+   - *Minute 30:* It calls the CTO.
+
+## Symptoms vs Causes (How to write good alerts)
+
+The number one reason engineers quit on-call rotations is **Alert Fatigue**—being woken up constantly for things that don't matter, until they start ignoring the pager completely.
+
+To fix this, you must exclusively alert on **Symptoms (User Pain)**, never on **Causes (Infrastructure)**.
+
+- **BAD ALERT (Cause):** "Database CPU is at 95%." 
+  - *Why it's bad:* Who cares? If the database is at 95% CPU but user requests are still succeeding perfectly in 200ms, the system is working exactly as designed. Waking an engineer up for this causes burnout.
+- **GOOD ALERT (System):** "Checkout API Latency is > 5 seconds."
+  - *Why it's good:* Users are actively failing to buy things. The company is losing money. The engineer wakes up, looks at the dashboard, and *then* realizes the root cause is the high DB CPU.
+
+## Service Level Objectives (SLOs)
+
+Advanced companies don't alert on hardcoded thresholds (like "Alert if > 50 errors"). Traffic changes depending on the time of day. 50 errors during a midnight lull is a catastrophe; 50 errors during the Super Bowl is a rounding error.
+Instead, they use **SLOs (Service Level Objectives) and Error Budgets**.
+
+- **SLA (Agreement):** The legal contract with customers (e.g., "We guarantee 99.9% uptime or we refund you").
+- **SLO (Objective):** The internal engineering goal, which is strictly higher than the SLA (e.g., "We aim for 99.95% uptime").
+- **Error Budget:** If 99.95% of requests must succeed, you are allowed exactly 0.05% failures a month (your Error Budget). 
+
+**Alerting on Burn Rate:** You configure Prometheus to calculate how fast you are burning through your Error Budget. If a minor bug is consuming the budget slowly, it triggers a low-priority Slack message during business hours. If a catastrophic database failure is burning through the budget so fast that it will be depleted in 2 hours, it triggers a critical PagerDuty phone call at 3:00 AM.
+
+## Interview Questions
+
+**Q: A Junior developer sets up an alert: "If CPU > 80% for 1 minute, page the team." What are the two major flaws with this alert?**
+**A:** 
+1. **It alerts on a Cause, not a Symptom:** High CPU is not inherently bad; servers are meant to be used. As long as API response times and error rates are healthy, nobody should be woken up.
+2. **The Time Window is too short:** A 1-minute spike is extremely common (e.g., a cron job runs, or a new container spins up). Alerting on 1-minute windows will cause massive Alert Fatigue due to false positives. Alerts should usually require a sustained failure state of 5 to 10 minutes to filter out transient micro-glitches before paging a human.
+
+**Q: What is a "Runbook" (or Playbook), and why must it be linked inside every PagerDuty alert?**
+**A:** A Runbook is a simple, step-by-step markdown document explaining exactly how to fix a specific alert. When an engineer is woken up at 3:00 AM, their cognitive function is severely impaired. They should not have to guess how to restart the Redis cluster. The alert notification must contain a direct URL to the Runbook, which says exactly: "1. Click this AWS link. 2. Run this exact CLI command to flush the cache. 3. Verify the graphs recover."

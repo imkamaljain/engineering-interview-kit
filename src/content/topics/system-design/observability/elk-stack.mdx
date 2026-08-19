@@ -1,0 +1,68 @@
+---
+title: "The ELK Stack"
+description: "How to aggregate and search millions of logs."
+importance: "HIGH"
+revisionTime: 4
+category: "System Design"
+subcategory: "Observability"
+order: 74
+---
+
+## Concept
+
+If you have 50 microservices running on 200 servers, you cannot SSH into 200 machines to read text files when an error happens. You must centralize all the logs into a single database. 
+However, standard SQL databases (like PostgreSQL) are terrible at performing full-text searches across billions of unstructured log messages.
+The **ELK Stack** is the industry-standard open-source solution for aggregating, indexing, and searching massive amounts of log data in real-time.
+
+## The ELK Acronym
+
+### 1. Elasticsearch (The Brain/Database)
+A highly scalable, distributed NoSQL search engine based on Apache Lucene. It does not store data in rows/columns; it uses an **Inverted Index**. If you store a log message `{"msg": "User login failed"}`, Elasticsearch instantly indexes the words "User", "login", and "failed". You can search across 5 billion logs for the word "failed" and get the exact records back in 10 milliseconds.
+
+### 2. Logstash (The Pipeline)
+A data processing pipeline. Your servers send their raw logs to Logstash. Logstash ingests the data, aggressively transforms it (e.g., parsing a raw Nginx text string into a clean JSON object, extracting the IP address, and looking up the Geo-Location of that IP), and then drops the clean JSON into Elasticsearch.
+
+### 3. Kibana (The UI)
+The visual dashboard that sits on top of Elasticsearch. It provides a search bar for engineers to type queries like `status: 500 AND service: payment_api`, and renders beautiful pie charts and histograms of the log volume.
+
+## Mental Model
+
+```mermaid
+flowchart TD
+    subgraph Your Infrastructure
+        App1[Node.js Server 1] -->|Raw Logs| Agent1(Filebeat Agent)
+        App2[Node.js Server 2] -->|Raw Logs| Agent2(Filebeat Agent)
+    end
+
+    subgraph The Pipeline
+        Agent1 -.-> Logstash
+        Agent2 -.-> Logstash
+        Logstash[Logstash\n(Transforms Text to JSON)] -->|JSON| ES
+    end
+
+    subgraph The Brain
+        ES[(Elasticsearch\nCluster)]
+        Kibana[Kibana UI] -->|Searches| ES
+    end
+```
+
+## The "F" in EFK (Fluentd / Filebeat)
+
+Historically, Logstash was installed directly on the application servers. But Logstash is written in Java and consumes massive amounts of RAM and CPU, which crippled the application servers.
+Today, the industry uses lightweight log shippers (Agents) written in C or Go:
+- **Filebeat (Elastic):** A tiny agent that just reads the `.log` files and sends them to Logstash/Elasticsearch over the network.
+- **Fluentd (CNCF):** The modern, vendor-neutral alternative to Logstash. It often replaces Logstash entirely, creating the **EFK Stack** (Elasticsearch, Fluentd, Kibana).
+
+## Trade-Offs
+
+- **Pros:** Unbeatable search speed across Petabytes of text data. Essential for debugging microservices and security auditing.
+- **Cons:** **Astronomical Cost and Complexity.** Elasticsearch is famously RAM-hungry. Running a highly available Elasticsearch cluster at scale requires massive AWS instances and specialized engineers just to keep the cluster from crashing under the weight of billions of logs.
+
+## Interview Questions
+
+**Q: In an ELK stack, if your Node.js servers suddenly spike and output 100x more logs than normal, Elasticsearch might be overwhelmed and crash. How do you protect the ELK stack from traffic spikes?**
+**A:** You must decouple the ingestion using a **Message Broker (like Kafka or Redis)**. The lightweight agents (Filebeat) push the logs into Kafka. Kafka acts as a massive, durable shock-absorber. Logstash then pulls the logs from Kafka at its own safe, steady pace. If Elasticsearch slows down, the logs safely pile up in Kafka without crashing the system or losing data.
+
+**Q: A developer executes `console.log("Error finding user")` in Node.js. Why is this a terrible practice for ELK?**
+**A:** Because ELK is fundamentally designed to index **Structured JSON**, not raw text strings. If you send raw text, Logstash has to use incredibly slow and brittle Regex rules (Grok) to try and extract meaning from the sentence. 
+Instead, developers must use **Structured Logging** libraries (like Pino or Winston) to output raw JSON: `{"level":"error", "action":"find_user", "msg":"Error finding user"}`. Elasticsearch can instantly index the keys `level` and `action` without any processing, allowing you to instantly search Kibana for `level: error`.

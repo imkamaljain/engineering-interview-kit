@@ -1,0 +1,93 @@
+---
+title: "The net/http Package"
+description: "The gold standard for web servers and clients."
+importance: "HIGH"
+revisionTime: 4
+category: "Go"
+subcategory: "Networking"
+order: 38
+---
+
+## TL;DR
+
+Go is famous for its standard library, and `net/http` is the crown jewel. Unlike Python or Ruby, which require massive third-party frameworks (like Django or Rails) and external web servers (like Nginx/Gunicorn) to serve production traffic, Go's built-in `net/http` package is production-ready, highly concurrent, and secure right out of the box.
+
+## Mental Model
+
+```mermaid
+flowchart TD
+    Client["Client Request"]
+    
+    subgraph net/http Server
+        Mux["ServeMux (Router)"]
+        
+        Handler1["HandlerFunc (/users)"]
+        Handler2["HandlerFunc (/products)"]
+        
+        Mux -->|Path matches /users| Handler1
+        Mux -->|Path matches /products| Handler2
+    end
+    
+    Client --> Mux
+    
+    Note right of Mux: Each request is automatically\nspawned in its own Goroutine!
+```
+
+## How It Works
+
+The entire HTTP ecosystem in Go revolves around a single interface: `http.Handler`.
+```go
+type Handler interface {
+    ServeHTTP(ResponseWriter, *Request)
+}
+```
+
+- `http.ResponseWriter`: An interface used to construct the HTTP response (headers, status code, JSON body).
+- `*http.Request`: A struct containing all the details of the incoming request (URL, headers, body, context).
+
+**Concurrency:** You do not need to write asynchronous code or worry about thread pools. `net/http` automatically spawns a brand new Goroutine for *every single incoming request*. Your handler functions can safely perform blocking I/O (like reading from a DB) without stopping other requests.
+
+## Example
+
+```go
+package main
+
+import (
+	"fmt"
+	"net/http"
+)
+
+// 1. A basic HTTP Handler Function
+func helloHandler(w http.ResponseWriter, r *http.Request) {
+    // This function runs in its own dedicated goroutine!
+    
+    // Check the HTTP Method
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+    // Write headers and body
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprintf(w, "Hello! You requested: %s\n", r.URL.Path)
+}
+
+func main() {
+    // 2. The Default ServeMux (Router)
+	http.HandleFunc("/hello", helloHandler)
+
+    // 3. Start the server (Blocking call)
+	fmt.Println("Server listening on :8080")
+	if err := http.ListenAndServe(":8080", nil); err != nil {
+		panic(err)
+	}
+}
+```
+
+## Common Interview Questions
+
+### If every request spawns a goroutine, is my handler thread-safe?
+The handler function itself is concurrent, but **shared state is NOT thread-safe**. If your handler reads/writes to a global map, a global slice, or a shared database connection, you *must* use a `sync.Mutex` or channels to protect that shared data, otherwise you will cause a Data Race and crash the server.
+
+### Do I need to use third-party routers like Gin or Chi?
+Before Go 1.22, the standard library `ServeMux` was very basic (it didn't support path variables like `/users/{id}` or method-specific routing like `GET /users`). Therefore, routers like Chi and Gin were extremely popular. However, Go 1.22 overhauled `ServeMux` to natively support wildcards and HTTP methods! Now, using the standard library is perfectly viable for most REST APIs without any external dependencies.

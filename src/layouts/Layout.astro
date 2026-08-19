@@ -1,11 +1,49 @@
 ---
 import '../styles/global.css';
+import { getCollection } from 'astro:content';
 
 interface Props {
 	title: string;
 }
 
+
 const { title } = Astro.props;
+const pathname = Astro.url.pathname;
+const topics = await getCollection('topics');
+const slugify = (str) => str.toLowerCase().replace(/\s+/g, '-').replace(/\./g, '');
+
+let sidebarMode = 'default';
+let currentCategoryName = '';
+let currentCategoryTopics = [];
+let currentTopicId = '';
+
+if (pathname.startsWith('/topics/')) {
+    const parts = pathname.split('/').filter(Boolean);
+    const knownCategories = ['javascript', 'typescript', 'go', 'nodejs', 'sql', 'system-design'];
+    
+    if (parts.length === 2 && knownCategories.includes(parts[1])) {
+        // It's a category page (e.g. /topics/javascript)
+        const slug = parts[1];
+        sidebarMode = 'category';
+        currentCategoryTopics = topics.filter(t => slugify(t.data.category) === slug);
+        currentCategoryTopics.sort((a, b) => (a.data.order || 99) - (b.data.order || 99));
+        currentCategoryName = currentCategoryTopics.length > 0 ? currentCategoryTopics[0].data.category : slug;
+    } else if (parts.length >= 2) {
+        // It's a topic page (e.g. /topics/javascript/event-loop)
+        const topicSlug = parts.slice(1).join('/'); 
+        const currentTopic = topics.find(t => t.id === topicSlug || t.id === parts[1]);
+        
+        if (currentTopic) {
+            sidebarMode = 'category';
+            currentTopicId = currentTopic.id;
+            const catSlug = slugify(currentTopic.data.category);
+            currentCategoryTopics = topics.filter(t => slugify(t.data.category) === catSlug);
+            currentCategoryTopics.sort((a, b) => (a.data.order || 99) - (b.data.order || 99));
+            currentCategoryName = currentTopic.data.category;
+        }
+    }
+}
+
 ---
 
 <!doctype html>
@@ -32,7 +70,9 @@ const { title } = Astro.props;
 	<body class="bg-gray-950 text-gray-200 antialiased selection:bg-blue-500/30">
 		<div class="flex min-h-screen">
 			<!-- Sidebar -->
-			<aside class="w-64 border-r border-gray-800 hidden md:flex flex-col h-screen sticky top-0 bg-gray-950">
+			<aside id="app-sidebar" class="relative w-64 border-r border-gray-800 hidden md:flex flex-col h-screen sticky top-0 bg-gray-950 transition-all duration-300 ease-in-out shrink-0">
+				<div id="sidebar-content-wrapper" class="w-64 h-full overflow-hidden transition-all duration-300 ease-in-out">
+					<div class="w-64 flex flex-col h-full overflow-y-auto">
 				<div class="p-6">
 					<a href="/" class="text-xl font-bold tracking-tight text-white block mb-6">
 						Engineering<br/>Interview Kit
@@ -40,37 +80,143 @@ const { title } = Astro.props;
 					<div class="relative mb-6">
 						<input type="text" placeholder="Search topics (Press /)" class="w-full bg-gray-900 border border-gray-800 rounded-md px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500" id="search-input" />
 					</div>
-					<nav class="space-y-6 text-sm overflow-y-auto">
-						<div>
-							<h3 class="font-semibold text-gray-400 mb-3 uppercase tracking-wider text-xs">Languages</h3>
-							<ul class="space-y-2">
-								<li><a href="/topics/javascript" class="text-gray-300 hover:text-white transition-colors">JavaScript</a></li>
-								<li><a href="/topics/typescript" class="text-gray-300 hover:text-white transition-colors">TypeScript</a></li>
-								<li><a href="/topics/go" class="text-gray-300 hover:text-white transition-colors">Go</a></li>
-								<li><a href="/topics/sql" class="text-gray-300 hover:text-white transition-colors">SQL</a></li>
-							</ul>
-						</div>
-						<div>
-							<h3 class="font-semibold text-gray-400 mb-3 uppercase tracking-wider text-xs">Backend</h3>
-							<ul class="space-y-2">
-								<li><a href="/topics/nodejs" class="text-gray-300 hover:text-white transition-colors">Node.js</a></li>
-							</ul>
-						</div>
-						<div>
-							<h3 class="font-semibold text-gray-400 mb-3 uppercase tracking-wider text-xs">Architecture</h3>
-							<ul class="space-y-2">
-								<li><a href="/topics/system-design" class="text-gray-300 hover:text-white transition-colors">System Design</a></li>
-							</ul>
-						</div>
-						<div class="pt-4 border-t border-gray-800 mt-4">
-							<ul class="space-y-2">
-								<li><a href="/quick-revision" class="text-amber-400 hover:text-amber-300 transition-colors font-medium">⚡ Quick Revision</a></li>
-								<li><a href="/important" class="text-rose-400 hover:text-rose-300 transition-colors font-medium">🔥 Most Important</a></li>
-							</ul>
-						</div>
-					</nav>
+					{sidebarMode === 'default' ? (
+							<nav class="space-y-6 text-sm overflow-y-auto">
+								<div>
+									<h3 class="font-semibold text-gray-400 mb-3 uppercase tracking-wider text-xs">Languages</h3>
+									<ul class="space-y-2">
+										<li><a href="/topics/javascript" class="text-gray-300 hover:text-white transition-colors">JavaScript</a></li>
+										<li><a href="/topics/typescript" class="text-gray-300 hover:text-white transition-colors">TypeScript</a></li>
+										<li><a href="/topics/go" class="text-gray-300 hover:text-white transition-colors">Go</a></li>
+										<li><a href="/topics/sql" class="text-gray-300 hover:text-white transition-colors">SQL</a></li>
+									</ul>
+								</div>
+								<div>
+									<h3 class="font-semibold text-gray-400 mb-3 uppercase tracking-wider text-xs">Backend</h3>
+									<ul class="space-y-2">
+										<li><a href="/topics/nodejs" class="text-gray-300 hover:text-white transition-colors">Node.js</a></li>
+									</ul>
+								</div>
+								<div>
+									<h3 class="font-semibold text-gray-400 mb-3 uppercase tracking-wider text-xs">Architecture</h3>
+									<ul class="space-y-2">
+										<li><a href="/topics/system-design" class="text-gray-300 hover:text-white transition-colors">System Design</a></li>
+									</ul>
+								</div>
+								<div class="pt-4 border-t border-gray-800 mt-4">
+									<ul class="space-y-2">
+										<li><a href="/quick-revision" class="text-amber-400 hover:text-amber-300 transition-colors font-medium">⚡ Quick Revision</a></li>
+										<li><a href="/important" class="text-rose-400 hover:text-rose-300 transition-colors font-medium">🔥 Most Important</a></li>
+									</ul>
+								</div>
+							</nav>
+						) : (
+							<nav class="space-y-6 text-sm overflow-y-auto pb-8">
+								<a href="/" class="text-gray-400 hover:text-white flex items-center mb-6 transition-colors">
+									<span class="mr-2">←</span> All Categories
+								</a>
+								<div>
+									<h3 class="font-semibold text-blue-400 mb-4 uppercase tracking-wider text-xs">{currentCategoryName} Topics</h3>
+									
+									{Object.entries(
+										currentCategoryTopics.reduce((acc, topic) => {
+											const sub = topic.data.subcategory || 'Other Topics';
+											if (!acc[sub]) acc[sub] = [];
+											acc[sub].push(topic);
+											return acc;
+										}, {})
+									).map(([subcat, subTopics]) => (
+										<div class="mb-6 last:mb-0">
+											<h4 class="font-semibold text-gray-500 mb-3 uppercase tracking-wider text-[10px]">{subcat}</h4>
+											<ul class="space-y-2.5">
+												{subTopics.map((t: any) => (
+													<li>
+														<a 
+															href={`/topics/${t.id}`} 
+															class={`block transition-colors ${currentTopicId === t.id ? 'text-blue-400 font-medium' : 'text-gray-400 hover:text-white'}`}
+														>
+															{t.data.title}
+														</a>
+													</li>
+												))}
+											</ul>
+										</div>
+									))}
+								</div>
+							</nav>
+						)}
+										</div>
+					</div>
 				</div>
+				<!-- Sidebar Toggle Button (Top Right Edge) -->
+				<button id="sidebar-toggle" class="absolute top-8 -right-3.5 z-50 bg-gray-900 border border-gray-700 text-gray-400 p-1.5 rounded-full shadow-lg hover:bg-gray-800 hover:text-white transition-all hidden md:flex items-center justify-center cursor-pointer" aria-label="Toggle Sidebar">
+					<svg id="toggle-icon-open" class="w-4 h-4 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7"></path></svg>
+					<svg id="toggle-icon-close" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7"></path></svg>
+				</button>
 			</aside>
+			<script is:inline>
+				(function() {
+					const sidebar = document.getElementById('app-sidebar');
+					const contentWrapper = document.getElementById('sidebar-content-wrapper');
+					const toggleBtn = document.getElementById('sidebar-toggle');
+					const iconOpen = document.getElementById('toggle-icon-open');
+					const iconClose = document.getElementById('toggle-icon-close');
+					
+					if (sidebar && toggleBtn && contentWrapper) {
+						let isCollapsed = localStorage.getItem('sidebar-collapsed') === 'true';
+						
+						const applyState = (instant = false) => {
+							if (instant) {
+								sidebar.classList.remove('transition-all', 'duration-300');
+								contentWrapper.classList.remove('transition-all', 'duration-300', 'ease-in-out');
+								toggleBtn.classList.remove('transition-all');
+							}
+
+							if (isCollapsed) {
+								sidebar.classList.remove('w-64', 'border-r');
+								sidebar.classList.add('w-0', 'border-transparent');
+								contentWrapper.classList.remove('w-64');
+								contentWrapper.classList.add('w-0');
+								
+								toggleBtn.classList.remove('-right-3.5');
+								toggleBtn.classList.add('-right-10'); 
+
+								iconClose.classList.add('hidden');
+								iconOpen.classList.remove('hidden');
+							} else {
+								sidebar.classList.add('w-64', 'border-r');
+								sidebar.classList.remove('w-0', 'border-transparent');
+								contentWrapper.classList.add('w-64');
+								contentWrapper.classList.remove('w-0');
+								
+								toggleBtn.classList.add('-right-3.5');
+								toggleBtn.classList.remove('-right-10');
+
+								iconClose.classList.remove('hidden');
+								iconOpen.classList.add('hidden');
+							}
+
+							if (instant) {
+								// Force reflow
+								void sidebar.offsetWidth;
+								sidebar.classList.add('transition-all', 'duration-300');
+								contentWrapper.classList.add('transition-all', 'duration-300', 'ease-in-out');
+								toggleBtn.classList.add('transition-all');
+							}
+						};
+						
+						// Initial load must be instant to prevent animation FOUC
+						applyState(true);
+						
+						toggleBtn.addEventListener('click', () => {
+							isCollapsed = !isCollapsed;
+							localStorage.setItem('sidebar-collapsed', isCollapsed);
+							applyState(false); // Animate on user click
+						});
+					}
+				})();
+			</script>
+
 
 			<!-- Main content -->
 			<main class="flex-1 max-w-4xl px-6 py-10 lg:px-12 mx-auto w-full">
@@ -79,6 +225,8 @@ const { title } = Astro.props;
 		</div>
 
 		<script>
+			
+
 			// Keyboard shortcut for search
 			document.addEventListener('keydown', (e) => {
 				if (e.key === '/' && document.activeElement?.tagName !== 'INPUT' && document.activeElement?.tagName !== 'TEXTAREA') {

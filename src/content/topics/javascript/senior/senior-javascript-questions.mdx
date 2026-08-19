@@ -1,0 +1,71 @@
+---
+title: "Senior JavaScript Interview Questions"
+description: "High-level concepts designed to test deep runtime understanding."
+importance: "HIGH"
+revisionTime: 5
+category: "JavaScript"
+subcategory: "Senior"
+order: 47
+---
+
+## TL;DR
+
+Senior JavaScript interviews rarely ask about `var` vs `let`. They focus on Memory Management, Event Loop mechanics, Architecture (ESM/CJS), and Performance Optimization inside the V8 engine.
+
+---
+
+## 1. The Event Loop Deep Dive
+
+**Q: Explain the difference between Microtasks and Macrotasks, and why the distinction exists.**
+
+**A:** The distinction exists to allow high-priority asynchronous actions (like Promise resolutions) to execute immediately without being blocked by lower-priority browser rendering or timer events. 
+The Event Loop maintains two queues. The **Microtask Queue** (Promises, `queueMicrotask`) is the VIP lane. The **Macrotask Queue** (`setTimeout`, DOM events, I/O) is the standard lane. 
+The Event Loop's strict rule is: *It must completely drain the Microtask queue before it touches the Macrotask queue, and before the browser is allowed to repaint the screen.* If a Microtask recursively spawns more Microtasks, it will permanently starve the Macrotask queue and freeze the browser UI.
+
+---
+
+## 2. Memory Leaks
+
+**Q: How would you diagnose and fix a memory leak in a Single Page Application (SPA)?**
+
+**A:** 
+1. **Diagnosis:** I would open Chrome DevTools, go to the Memory tab, and take a **Heap Snapshot**. I would then perform the suspected leaky action (e.g., navigating to a page and navigating away). I'd force Garbage Collection using the trash can icon, and take a second Heap Snapshot. Using the "Comparison" view, I'd look for "Detached DOM elements" or massively growing arrays.
+2. **Common Causes:** 
+   - **Uncleared Event Listeners:** A global `window.addEventListener('resize', handler)` where `handler` is a closure referencing a 10MB React state. If the component unmounts but doesn't call `removeEventListener`, the 10MB state stays in memory forever.
+   - **Uncleared Timers:** `setInterval` continuing to run after a component dies.
+   - **Maps/Sets:** Storing objects in a standard `Map` prevents GC. I would switch to `WeakMap` if the keys are DOM nodes.
+
+---
+
+## 3. V8 Engine Performance
+
+**Q: What is a "Hidden Class" in V8, and how do you write code that avoids De-optimizations?**
+
+**A:** JavaScript objects are dynamic, making property lookups slow. V8 optimizes this by dynamically creating hidden C++ classes (Shapes) behind the scenes. If two objects have the exact same properties added in the exact same order, they share a Hidden Class, allowing V8 to use lightning-fast memory offsets (Inline Caching).
+To avoid de-optimizations:
+1. Always initialize object properties in the exact same order in constructors.
+2. Never dynamically add or delete properties (`delete obj.prop`) later. Deleting a property breaks the Hidden Class and forces V8 to downgrade the object to a slow hash-table (Dictionary Mode).
+
+---
+
+## 4. Module Systems
+
+**Q: Compare ES Modules (ESM) to CommonJS (CJS). Why is the industry moving to ESM?**
+
+**A:** 
+- **Execution:** CJS (`require`) is strictly synchronous. It blocks the thread to read the file. ESM (`import`) is asynchronous. 
+- **Parsing:** CJS is dynamic; you can `require()` inside an `if` statement. ESM is static; imports must be at the absolute top level of the file.
+- **The Core Benefit:** Because ESM is static, modern bundlers (Webpack, Vite) can read the import graph without executing the code. This enables **Tree Shaking**—identifying exported functions that are never actually imported anywhere, and stripping them entirely from the final production bundle, massively reducing file sizes for the end-user.
+
+---
+
+## 5. Security
+
+**Q: What is Prototype Pollution and how do you prevent it?**
+
+**A:** Prototype Pollution happens when an attacker passes malicious JSON payloads to vulnerable deep-merge or cloning functions. By passing a key named `__proto__`, they can trick the merge function into attaching properties directly to the global `Object.prototype` rather than the target object.
+If they send `{"__proto__": {"isAdmin": true}}`, suddenly every single object in the entire Node.js server evaluates `obj.isAdmin === true`.
+**Prevention:**
+1. Use `Object.create(null)` to create objects that do not have a prototype at all.
+2. Validate/Sanitize JSON inputs before merging.
+3. Freeze the prototype chain using `Object.freeze(Object.prototype)` (though this can break some legacy libraries).

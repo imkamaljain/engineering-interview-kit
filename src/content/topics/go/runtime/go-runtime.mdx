@@ -1,0 +1,80 @@
+---
+title: "The Go Runtime"
+description: "The invisible engine embedded in every Go application."
+importance: "HIGH"
+revisionTime: 4
+category: "Go"
+subcategory: "Runtime"
+order: 34
+---
+
+## TL;DR
+
+Go does not use a virtual machine (like Java's JVM) or an interpreter (like Node.js/V8). Go compiles directly to a native machine code binary. However, inside that binary, the compiler injects a mini operating system called the **Go Runtime**. It handles the Garbage Collector, Goroutine Scheduling, and memory allocation.
+
+## Mental Model
+
+```mermaid
+flowchart TD
+    subgraph Compiled Go Binary (.exe / elf)
+        subgraph Your Code
+            App["main()\nfetchDB()\nhandleHTTP()"]
+        end
+        
+        subgraph The Go Runtime (Embedded)
+            Scheduler["Goroutine Scheduler"]
+            GC["Garbage Collector"]
+            Allocator["Memory Allocator"]
+        end
+        
+        App <-->|Invisible function calls| The Go Runtime
+    end
+    
+    Compiled Go Binary <-->|Syscalls| OS["Operating System\n(Linux / Windows)"]
+```
+
+## How It Works
+
+Languages like C or Rust have virtually zero runtime; when you call `malloc()`, it directly asks the OS for memory. When you spawn a thread, it directly asks the OS kernel. 
+
+Go abstracts the OS.
+When you type `go myFunc()`, you are not making an OS syscall. Your code calls the embedded Go Runtime's Scheduler, which puts the function in a queue.
+When you do `make([]byte, 10)`, your code calls the embedded Go Runtime's Memory Allocator.
+
+This runtime is incredibly small (adding about 1-2MB to the compiled binary size), but it provides massive features like stack-growth management, panic recovery, and race detection.
+
+## Example
+
+You usually interact with the runtime invisibly. However, the `runtime` package exposes manual controls if you need them for extreme performance tuning or debugging.
+
+```go
+package main
+
+import (
+	"fmt"
+	"runtime"
+)
+
+func main() {
+	// Print the version of the Go compiler/runtime used to build this binary
+	fmt.Println("Go Version:", runtime.Version())
+
+	// Print the number of logical CPUs available to the Go Scheduler
+	fmt.Println("CPUs:", runtime.NumCPU())
+
+	// Print the number of currently active goroutines
+	fmt.Println("Active Goroutines:", runtime.NumGoroutine())
+
+	// You can manually tell the Go Scheduler to pause the current goroutine
+	// and let other goroutines run. (Usually handled automatically!)
+	runtime.Gosched()
+}
+```
+
+## Common Interview Questions
+
+### Does Go have a JIT (Just-In-Time) compiler like Java or C#?
+No. Go is entirely **AOT (Ahead-Of-Time)** compiled. The Go compiler translates your source code directly into OS-specific machine code (Assembly) during the `go build` step. There is no intermediate bytecode, and no compilation happens while the app is running. This makes Go startup times virtually instantaneous (excellent for serverless/Lambda functions).
+
+### Why are Go binaries so large compared to C binaries?
+A simple "Hello World" in C might be 50KB. In Go, it will be around 2MB. This is because every single Go binary is statically linked and contains a full copy of the Go Runtime (the Scheduler, the Garbage Collector, and the Memory Allocator). 

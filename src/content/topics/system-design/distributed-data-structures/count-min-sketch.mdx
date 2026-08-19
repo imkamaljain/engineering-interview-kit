@@ -1,0 +1,70 @@
+---
+title: "Count-Min Sketch"
+description: "Counting to infinity using almost zero RAM."
+importance: "MEDIUM"
+revisionTime: 3
+category: "System Design"
+subcategory: "Distributed Data Structures"
+order: 82
+---
+
+## Concept
+
+Imagine you are building YouTube, and you need to track the view count of every single video. You have 5 billion videos. If you use a standard Hash Map in RAM (`{"video_id": view_count}`), storing 5 billion integer pairs will require roughly 40 Gigabytes of RAM. 
+If you only have 2 Megabytes of RAM available, how do you track the views?
+You use a **Count-Min Sketch**. It is a probabilistic data structure that estimates the frequency (count) of events using a tiny, fixed amount of memory. 
+
+**The Golden Rule of Count-Min Sketch:**
+- It will never *under-count* an item.
+- It will occasionally *over-count* an item (due to hash collisions).
+
+## Mental Model
+
+It works similarly to a Bloom Filter, but instead of a single array of Bits (1s and 0s), it uses a 2D matrix of Integer Counters.
+
+```mermaid
+flowchart TD
+    subgraph Count-Min Sketch Matrix (Starts at 0)
+        Row1["Hash 1: [ 0, 0, 0, 0, 0 ]"]
+        Row2["Hash 2: [ 0, 0, 0, 0, 0 ]"]
+        Row3["Hash 3: [ 0, 0, 0, 0, 0 ]"]
+    end
+    
+    subgraph Adding 'Video A'
+        VidA["'Video A'"] --> H1["Hash 1 -> Col 2"]
+        VidA --> H2["Hash 2 -> Col 4"]
+        VidA --> H3["Hash 3 -> Col 1"]
+        
+        H1 --> Add1["Row 1, Col 2: Add 1"]
+        H2 --> Add2["Row 2, Col 4: Add 1"]
+        H3 --> Add3["Row 3, Col 1: Add 1"]
+    end
+```
+
+## How It Works
+
+1. **The Matrix:** You create a fixed-size 2D array of integers. (e.g., 3 rows, 10,000 columns). This uses exactly 120 KB of RAM, and will *never* grow larger, regardless of how many billions of items you track.
+2. **Incrementing a Count:** When "Video A" gets a view, you run the ID through 3 different hash functions. 
+   - Hash 1 outputs `2`. You increment Row 1, Column 2.
+   - Hash 2 outputs `4`. You increment Row 2, Column 4.
+   - Hash 3 outputs `1`. You increment Row 3, Column 1.
+3. **Reading the Count (The "Min" part):** To find the view count for "Video A", you run the hashes again. You look at the values in those 3 specific cells. (e.g., the cells contain the numbers 150, 155, and 148). 
+   Because of hash collisions, another viral video might have accidentally incremented the cell holding 155. Therefore, the highest numbers are corrupted. You simply take the **Minimum** value of the 3 cells (148). It is mathematically guaranteed to be the most accurate estimate.
+
+## Trade-Offs
+
+- **Pros:** Phenomenal memory efficiency. Bounded RAM usage (it never grows). $O(1)$ read and write speeds. Perfect for streaming analytics where approximate numbers are acceptable.
+- **Cons:** It cannot give you an exact number. It only provides an estimate with a mathematical error bound (e.g., "The true count is within 2% of this estimate"). You cannot iterate over it (you cannot ask "Give me the top 10 videos", you can only ask "What is the score of Video A?").
+
+## Real-World Usage
+
+- **Heavy Hitters (Top K):** Used extensively in network routers and API Gateways to detect DDoS attacks. The router maintains a Count-Min sketch of incoming IP addresses. If the sketch estimates an IP has made 50,000 requests in a minute, the router drops the packets.
+- **NLP / Machine Learning:** Used to count word frequencies in massive terabyte-sized text datasets without running out of RAM.
+
+## Interview Questions
+
+**Q: In a Count-Min Sketch, why are we mathematically guaranteed that the system will never *under-count* an item?**
+**A:** Because we strictly *add* to the counters. When an event happens, we increment the mapped cells by 1. The only thing that can happen to a cell is that another random item's hash collides with it and increments it *further*. Therefore, the cell can only contain the true count, or the true count + collision noise. It is mathematically impossible for the cell to contain a number lower than the true count.
+
+**Q: A developer wants to use a Count-Min Sketch to track the exact bank account balances of users to save RAM. What do you tell them?**
+**A:** Absolutely not. Probabilistic data structures cannot be used for financial systems, security access controls, or any domain requiring perfect accuracy. If a hash collision occurs, the Sketch will over-count the balance, accidentally granting a user thousands of dollars they don't possess. It should only be used for analytics, rate limiting, and trend tracking.

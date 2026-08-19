@@ -1,0 +1,100 @@
+---
+title: "The HTTP Client"
+description: "Making external API calls correctly."
+importance: "HIGH"
+revisionTime: 4
+category: "Go"
+subcategory: "Networking"
+order: 40
+---
+
+## TL;DR
+
+Just like the default HTTP server, the default HTTP client (`http.Get()`) is dangerous in production because it has **no timeout**. If the external API hangs, your goroutine will block forever. Always create a custom `http.Client` with a timeout, and **always close the response body**.
+
+## Mental Model
+
+```mermaid
+flowchart TD
+    Client["Custom http.Client\nTimeout: 5s"]
+    
+    Req["http.NewRequest()"]
+    Do["client.Do(req)"]
+    Body["defer res.Body.Close()"]
+    
+    Client --> Req
+    Req --> Do
+    Do -->|External API| API["api.stripe.com"]
+    API -->|Response| Body
+    
+    Note right of Body: Failing to close the body\ncauses a massive memory\nand connection leak!
+```
+
+## How It Works
+
+1. **Custom Client**: Instantiate `&http.Client{Timeout: time.Second * 5}`. You should reuse this client globally!
+2. **The Request**: Use `http.NewRequestWithContext` to create the request. This allows you to set HTTP headers, pass a body, and attach a Context for granular cancellation.
+3. **Execution**: Call `client.Do(req)`.
+4. **Cleanup**: You **MUST** call `defer res.Body.Close()`. If you don't read and close the body, the underlying TCP connection cannot be returned to the connection pool. It will leak until your server crashes from "Too many open files".
+
+## Example
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"net/http"
+	"time"
+)
+
+// 1. Create a reusable global client (It is thread-safe!)
+var apiClient = &http.Client{
+	Timeout: 10 * time.Second,
+}
+
+func fetchStatus() error {
+	// 2. Create the request
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, "GET", "https://httpstat.us/200", nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", "application/json")
+
+	// 3. Execute the request
+	res, err := apiClient.Do(req)
+	if err != nil {
+		return err
+	}
+	
+	// 4. CRITICAL: Close the body to prevent connection leaks
+	defer res.Body.Close()
+
+	if res.StatusCode != http.StatusOK {
+		return fmt.Errorf("bad status: %d", res.StatusCode)
+	}
+
+	// 5. Read the body
+	body, _ := io.ReadAll(res.Body)
+	fmt.Printf("Response: %s\n", body)
+	
+	return nil
+}
+
+func main() {
+	_ = fetchStatus()
+}
+```
+
+## Common Interview Questions
+
+### Should I create a new `http.Client` for every request?
+**No.** `http.Client` manages an internal TCP connection pool (Keep-Alive connections). If you create a new client for every request, you destroy the pool, forcing Go to perform a slow DNS lookup and 3-way TCP handshake for every single API call. You should create one global `http.Client` (or one per external service) and reuse it concurrently.
+
+### What happens if I forget to close `res.Body`?
+The Go HTTP client tries to reuse TCP connections. To do this, it needs to know when you are finished reading the HTTP response. `res.Body.Close()` signals to the underlying `http.Transport` that the TCP connection is free and can be returned to the pool. If you don't close it, the connection stays open indefinitely, leaking a file descriptor and memory.

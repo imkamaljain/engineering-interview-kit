@@ -1,0 +1,89 @@
+---
+title: "The Context Package"
+description: "Propagating request-scoped data, cancellations, and timeouts."
+importance: "HIGH"
+revisionTime: 4
+category: "Go"
+subcategory: "Context"
+order: 22
+---
+
+## TL;DR
+
+The `context` package is fundamental to writing robust Go servers. A `context.Context` object is passed down through the entire call stack (usually as the very first argument). It allows you to forcefully cancel database queries or HTTP requests if the client disconnects or if a timeout is reached, saving your server from wasting CPU and database connections.
+
+## Mental Model
+
+```mermaid
+flowchart TD
+    Client["Client Request"]
+    
+    Handler["HTTP Handler\n(Creates ctx)"]
+    
+    DB["Database Query\n(Uses ctx)"]
+    API["External API Call\n(Uses ctx)"]
+    
+    Client -.->|Disconnects!| Handler
+    Handler -->|ctx.Cancel()| DB & API
+    
+    Note over DB,API: Both instantly abort\ninstead of wasting time.
+```
+
+## How It Works
+
+A `Context` is immutable. When you want to add a timeout or a value to it, you wrap the parent context in a new child context (creating a tree). If the parent context is canceled, *all* of its children are instantly canceled as well.
+
+**Core Context Creators:**
+1. `context.Background()`: The empty, root context. Usually only used at the very top level of `main()` or in tests.
+2. `context.TODO()`: An empty context you use when you aren't sure what context to use yet (acts as a placeholder).
+3. `context.WithCancel(parent)`: Creates a child that can be manually canceled.
+4. `context.WithTimeout(parent, duration)`: Creates a child that cancels itself automatically after X seconds.
+5. `context.WithValue(parent, key, val)`: Attaches request-scoped data (like a User ID or Trace ID).
+
+## Example
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"time"
+)
+
+// A function simulating a database query
+// Notice how ctx is the first argument (Go standard practice!)
+func queryDatabase(ctx context.Context) error {
+	select {
+	case <-time.After(2 * time.Second): // Simulating a slow 2-second query
+		fmt.Println("Database query completed!")
+		return nil
+	case <-ctx.Done(): // The Context cancellation channel
+		fmt.Println("Query aborted! Reason:", ctx.Err())
+		return ctx.Err()
+	}
+}
+
+func main() {
+	// Create a root context
+	bg := context.Background()
+
+	// Wrap it in a timeout context (1 second)
+	ctx, cancel := context.WithTimeout(bg, 1*time.Second)
+	defer cancel() // Always defer the cancel function to prevent memory leaks!
+
+	// Pass the context into the heavy operation
+	err := queryDatabase(ctx)
+	if err != nil {
+		fmt.Println("Operation failed.")
+	}
+}
+```
+
+## Common Interview Questions
+
+### Why is `context.Context` always the first argument in a function?
+It is a strictly enforced community convention. Any function that crosses an API boundary, does I/O, or might take a long time to run should accept a `context.Context` as its very first argument, typically named `ctx`. 
+
+### Can I use `context.WithValue` to pass optional function arguments?
+**No.** This is a massive anti-pattern. Values passed via Context are completely untyped (`any`) and invisible to the compiler. Passing configuration or required parameters via context ruins Go's strong typing. You should *only* use it for request-scoped metadata like a trace ID, a correlation ID, or an authenticated User token (things that middleware extracts and passes to handlers).

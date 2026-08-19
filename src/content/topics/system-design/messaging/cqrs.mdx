@@ -1,0 +1,62 @@
+---
+title: "CQRS"
+description: "Splitting reads from writes for ultimate optimization."
+importance: "HIGH"
+revisionTime: 4
+category: "System Design"
+subcategory: "Messaging"
+order: 48
+---
+
+## Concept
+
+**CQRS** (Command Query Responsibility Segregation) is an architectural pattern that states that the data structures (and often the databases) used to *Write* data should be completely separated from the data structures used to *Read* data.
+Why? Because writing data is complex (validating business rules, ensuring ACID compliance). Reading data should be simple and blisteringly fast.
+
+## Mental Model
+
+```mermaid
+flowchart TD
+    User -->|HTTP POST (Command)| WriteAPI[Write API]
+    WriteAPI -->|Validates & Writes| WriteDB[(Write DB\ne.g., PostgreSQL)]
+    
+    WriteDB -->|Async Event Stream\n(Kafka)| Sync[Data Synchronizer]
+    Sync -->|Transforms Data| ReadDB[(Read DB\ne.g., Elasticsearch)]
+    
+    User -->|HTTP GET (Query)| ReadAPI[Read API]
+    ReadAPI -->|Reads| ReadDB
+```
+
+## How It Works
+
+1. **Commands (Writes):** Operations that change state. They are processed by the Write API, which uses a database optimized for strict consistency and transactions (like PostgreSQL or an Event Store).
+2. **The Synchronization:** Once the Write DB saves the data, it fires an event to a message broker (like Kafka). A background worker picks up the event, heavily transforms the data, and saves it into the Read DB.
+3. **Queries (Reads):** Operations that only retrieve data without modifying it. They are processed by the Read API, which queries a database optimized purely for speed and searching (like Elasticsearch, MongoDB, or Redis). The data in the Read DB is heavily denormalized (pre-computed and flattened) so no `JOIN`s are required.
+
+## The Problem CQRS Solves
+
+In a standard application, you use PostgreSQL for both reads and writes.
+- **The Write Problem:** You normalize your tables to 3NF to ensure data integrity during writes.
+- **The Read Problem:** The UI needs a complex dashboard. Because the tables are highly normalized, rendering the dashboard requires a massive 7-table SQL `JOIN` that takes 3 seconds to run.
+- **The CQRS Solution:** You keep PostgreSQL for the Writes. But whenever data changes, a background worker pre-calculates the exact JSON needed for the dashboard and saves it directly into a MongoDB "Read Model". When the UI requests the dashboard, MongoDB returns the pre-calculated JSON in 2 milliseconds.
+
+## Trade-Offs
+
+- **Pros:** 
+  - **Independent Scaling:** In an app with a 100:1 Read-to-Write ratio, you can scale the Read DB across 50 servers while keeping the Write DB on 1 server.
+  - **Optimized Tech Stacks:** You use the perfect database for the job (SQL for ACID transactions, Elasticsearch for full-text search, Neo4j for relationship mapping).
+- **Cons:** 
+  - **Eventual Consistency:** When a user submits a Command, it takes time for the event to propagate to the Read DB. The user might refresh the page and see stale data.
+  - **Insane Complexity:** You now have to maintain two different databases, write synchronization workers, and handle network failures between them.
+
+## Real-World Usage
+
+CQRS is almost always implemented alongside **Event Sourcing**, because an Event Store (an append-only log of facts) is fundamentally impossible to query for complex reads. The Event Store acts as the Write DB, and workers project those events into a separate Read DB (like PostgreSQL) so the frontend can actually display the state to the user.
+
+## Interview Questions
+
+**Q: You use CQRS. A user updates their profile picture (Command) and is redirected to their profile page (Query). Because of the background synchronization delay, they still see their old picture. They assume it broke and upload it 5 more times. How do you fix this UI/UX nightmare?**
+**A:** This is the inherent flaw of Eventual Consistency in CQRS. There are three common fixes:
+1. **Optimistic UI:** When the user clicks upload, the frontend Javascript instantly changes the picture on the screen *locally*, assuming the backend will succeed.
+2. **Polling:** The Write API returns a `transaction_id`. The frontend displays a spinner and polls the Read API every 500ms using the `transaction_id` until the Read DB confirms it has synchronized the data.
+3. **Targeted Read-Your-Own-Writes:** You maintain a fast cache (Redis) on the Write side. For the next 5 seconds, the user's specific Read API requests bypass the lagging Read DB and fetch the fresh data directly from the cache.

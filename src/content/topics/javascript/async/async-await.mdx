@@ -1,0 +1,111 @@
+---
+title: "Async / Await"
+description: "Syntactic sugar that makes Promises look synchronous."
+importance: "HIGH"
+revisionTime: 4
+category: "JavaScript"
+subcategory: "Async"
+order: 29
+---
+
+## TL;DR
+
+Introduced in ES8 (2017), `async/await` is syntactic sugar built directly on top of Promises. It allows you to write asynchronous, non-blocking code that reads top-to-bottom like standard synchronous code, completely eliminating `.then()` chains.
+
+## Mental Model
+
+```mermaid
+flowchart TD
+    subgraph Promise Chain (.then)
+        P1["fetchUser()"] -->|Returns Promise| T1[".then(user => fetchPosts(user.id))"]
+        T1 -->|Returns Promise| T2[".then(posts => console.log(posts))"]
+    end
+    
+    subgraph Async/Await
+        A1["const user = await fetchUser()"]
+        A2["const posts = await fetchPosts(user.id)"]
+        A3["console.log(posts)"]
+        A1 --> A2 --> A3
+    end
+    
+    Note right of Async/Await: Under the hood, 'await' literally pauses the function execution\nand yields control back to the Event Loop!
+```
+
+## How It Works
+
+1. **`async`**: When placed before a function, it guarantees that the function will always return a Promise. Even if you `return 5`, JavaScript secretly wraps it in `Promise.resolve(5)`.
+2. **`await`**: Can only be used inside an `async` function. When the engine hits an `await` keyword, it evaluates the Promise to its right. It then **pauses** the execution of that specific function until the Promise settles. While the function is paused, the Call Stack is free to do other work.
+
+**Error Handling:**
+Instead of appending `.catch()`, you wrap `await` statements in standard synchronous `try/catch` blocks.
+
+## Example
+
+```javascript
+// A mock network request
+function getCoffee() {
+  return new Promise(resolve => setTimeout(() => resolve("☕"), 1000));
+}
+
+// --- The Old Way ---
+function makeBreakfastThen() {
+  getCoffee()
+    .then(coffee => {
+      console.log(`Got ${coffee}`);
+    })
+    .catch(err => console.error(err));
+}
+
+// --- The Modern Way ---
+async function makeBreakfastAsync() {
+  try {
+    // Execution pauses here for 1 second!
+    const coffee = await getCoffee(); 
+    
+    // This line won't run until the promise above resolves.
+    console.log(`Got ${coffee}`); 
+  } catch (err) {
+    console.error("Failed to get coffee", err);
+  }
+}
+```
+
+## Common Output Question
+
+```javascript
+async function test() {
+  return 1;
+}
+
+const result = test();
+console.log(result === 1);
+```
+**Q: What does this output and why?**
+**A:** `false`.
+An `async` function ALWAYS returns a Promise. The `result` variable does not hold the number `1`. It holds a pending Promise object. `console.log(Promise === 1)` is false. To get the `1`, you must do `result.then(val => console.log(val))` or `await test()`.
+
+## Senior Interview Question
+
+**Q: Look at the following code. How long does it take to execute, and how would you optimize it?**
+```javascript
+async function fetchDashboard() {
+  const users = await fetch('/api/users');
+  const posts = await fetch('/api/posts');
+  const stats = await fetch('/api/stats');
+  return { users, posts, stats };
+}
+```
+
+**A:** Assuming each fetch takes 1 second, this code takes **3 seconds** to execute. Because of `await`, the second fetch cannot start until the first one is completely finished. This is a massive performance bottleneck known as "Sequential Awaiting".
+Since the three requests do not depend on each other, they should be fired concurrently using `Promise.all()`.
+**Optimized (takes 1 second):**
+```javascript
+async function fetchDashboard() {
+  const [users, posts, stats] = await Promise.all([
+    fetch('/api/users'),
+    fetch('/api/posts'),
+    fetch('/api/stats')
+  ]);
+  return { users, posts, stats };
+}
+```

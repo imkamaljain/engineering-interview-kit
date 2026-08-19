@@ -1,0 +1,72 @@
+---
+title: "Event Loop Lag"
+description: "Understanding and measuring the delay caused by blocking the event loop."
+importance: "HIGH"
+revisionTime: 3
+category: "Node.js"
+subcategory: "Performance"
+order: 32
+---
+
+## TL;DR
+
+**Event Loop Lag** (or Delay) is the time it takes between a callback being scheduled (e.g., via `setTimeout`) and the moment it actually executes. High lag means your Node.js application is doing too much synchronous CPU work, preventing the loop from processing incoming network requests.
+
+## Mental Model
+
+```mermaid
+flowchart LR
+    Timer["setTimeout(fn, 100ms)"]
+    HeavyWork["Synchronous Loop\n(Takes 500ms)"]
+    Callback["fn() executes"]
+
+    Timer -->|Scheduled for T+100| HeavyWork
+    HeavyWork -->|Blocks Event Loop!| Callback
+    
+    Note over Timer, Callback: Actual execution happens at T+500ms.<br/>Event Loop Lag = 400ms!
+```
+
+## How It Works
+
+Because Node.js executes JavaScript on a single thread, if a function takes 500ms to run synchronously (like parsing a massive JSON file or calculating primes), the Event Loop is completely "blocked" for 500ms. 
+During this time, it cannot accept new HTTP connections, and it cannot trigger scheduled timers. The difference between when a timer *should* have run and when it *actually* ran is the **Event Loop Lag**.
+
+## Example
+
+```javascript
+// How to manually measure Event Loop Lag
+const INTERVAL = 100;
+let lastTime = Date.now();
+
+setInterval(() => {
+    const currentTime = Date.now();
+    const lag = currentTime - lastTime - INTERVAL;
+    
+    console.log(`Event Loop Lag: ${lag}ms`);
+    
+    lastTime = currentTime;
+}, INTERVAL);
+
+// Simulating a blocking operation
+setTimeout(() => {
+    console.log('Starting heavy work...');
+    const start = Date.now();
+    while (Date.now() - start < 1000) {} // Blocks for 1 second!
+}, 500);
+
+/* Output:
+Event Loop Lag: 1ms
+Event Loop Lag: 0ms
+Starting heavy work...
+Event Loop Lag: 987ms  <-- Massive lag detected!
+*/
+```
+
+## Common Interview Questions
+
+### How do you fix high event loop lag?
+1. **Partitioning**: Break the synchronous task into smaller chunks and use `setImmediate` to yield control back to the event loop between chunks.
+2. **Offloading**: Move the heavy synchronous CPU task to a `Worker Thread` or an external microservice (like a Python process or AWS Lambda).
+
+### How do you monitor Event Loop Lag in production?
+You can use the built-in `perf_hooks` module, specifically `perf_hooks.monitorEventLoopDelay()`, which accurately measures lag natively without the inaccuracies of `setInterval`. APM tools like Datadog or New Relic also track this metric.

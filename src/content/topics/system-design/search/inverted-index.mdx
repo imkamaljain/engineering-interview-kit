@@ -1,0 +1,76 @@
+---
+title: "The Inverted Index"
+description: "The data structure that makes search engines fast."
+importance: "HIGH"
+revisionTime: 4
+category: "System Design"
+subcategory: "Search"
+order: 77
+---
+
+## Concept
+
+If a traditional SQL database needs to find the word "Apple" in a massive text column, it must scan every single row on the hard drive, opening the text, and checking if the substring exists (a Full Table Scan, $O(N)$). This takes minutes.
+An **Inverted Index** flips this relationship. Instead of a list of Documents containing words, it is a dictionary of Words pointing to the Documents that contain them. This allows search engines like Elasticsearch and Google to find results in milliseconds ($O(1)$ lookup).
+
+## Mental Model
+
+Imagine we have three Documents (e.g., three Tweets):
+- **Doc 1:** "The quick brown fox"
+- **Doc 2:** "The fast brown dog"
+- **Doc 3:** "A quick dog"
+
+**Traditional Forward Index (SQL style):**
+| Doc ID | Content |
+| :--- | :--- |
+| 1 | the, quick, brown, fox |
+| 2 | the, fast, brown, dog |
+| 3 | a, quick, dog |
+*(To find "dog", you must read all 3 rows).*
+
+**The Inverted Index (Search Engine style):**
+| Term (Word) | Posting List (Doc IDs) |
+| :--- | :--- |
+| a | [3] |
+| brown | [1, 2] |
+| dog | [2, 3] |
+| fast | [2] |
+| fox | [1] |
+| quick | [1, 3] |
+| the | [1, 2] |
+
+*(To find "dog", you instantly jump to the 'dog' key, and it hands you the array `[2, 3]`).*
+
+## Boolean Operations (AND / OR)
+
+The true power of the Inverted Index is how fast it performs complex multi-word searches using simple set mathematics (Intersection and Union) on the Posting Lists.
+
+**User Searches for: "quick AND dog"**
+1. Engine looks up "quick" -> `[1, 3]`
+2. Engine looks up "dog" -> `[2, 3]`
+3. Engine performs an Intersection (Find the IDs that exist in BOTH arrays).
+4. Result: `[3]`. Document 3 is returned instantly.
+
+**User Searches for: "brown OR fox"**
+1. Engine looks up "brown" -> `[1, 2]`
+2. Engine looks up "fox" -> `[1]`
+3. Engine performs a Union (Combine arrays and remove duplicates).
+4. Result: `[1, 2]`.
+
+## Immutability and Segments
+
+The primary rule of the Inverted Index (specifically in Apache Lucene) is that **it is strictly Immutable**. Once an index file is written to disk, it can NEVER be modified. You cannot add a new word to it, and you cannot delete a word from it.
+
+Why? 
+Because modifying a highly compressed, tightly packed B-Tree dictionary on disk is incredibly slow and would require locking the entire search engine from being read while the update happens. By keeping it immutable, the Operating System can aggressively cache the file in RAM, knowing it will never change.
+
+## Trade-Offs
+
+- **Pros:** Blisteringly fast read queries. The cornerstone of all text search.
+- **Cons:** Very slow writes. Because the index is immutable, every time a new document is added, Elasticsearch must create a brand new mini-index (a Segment) in memory, and eventually write it to disk. Searching requires querying the old index AND the new mini-index, and merging the results. Eventually, background processes must merge these hundreds of mini-indexes into one large index (Segment Compaction), which burns massive amounts of CPU and I/O.
+
+## Interview Questions
+
+**Q: If an Inverted Index is strictly immutable (cannot be changed), how does Elasticsearch handle a user deleting a Document?**
+**A:** Since Lucene cannot go into the Inverted Index and remove the Document ID from the arrays, it uses a **Deletion Bitmap** (a separate tombstone file). It simply appends the Document ID to a list of "Deleted IDs". 
+When a user performs a search, Elasticsearch queries the Inverted Index normally, gets the results (e.g., `[1, 2, 3]`), and then checks the Deletion Bitmap. If Document 2 is in the bitmap, Elasticsearch silently filters it out before returning the results to the user. The deleted data physically remains on the hard drive until the next major background Segment Merge operation cleans it up.

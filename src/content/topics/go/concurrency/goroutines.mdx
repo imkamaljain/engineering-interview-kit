@@ -1,0 +1,89 @@
+---
+title: "Goroutines"
+description: "Lightweight, user-space threads managed by the Go runtime."
+importance: "HIGH"
+revisionTime: 4
+category: "Go"
+subcategory: "Concurrency"
+order: 11
+---
+
+## TL;DR
+
+A **Goroutine** is a lightweight thread managed by the Go runtime, not the Operating System. You can spawn hundreds of thousands of goroutines simultaneously because they start with a tiny 2KB stack (compared to OS threads which consume 1-2MB).
+
+## Mental Model
+
+```mermaid
+flowchart TD
+    subgraph OS
+        Thread1["OS Thread (Core 1)"]
+        Thread2["OS Thread (Core 2)"]
+    end
+    
+    subgraph Go Runtime Scheduler
+        Goroutine1["Goroutine A"]
+        Goroutine2["Goroutine B"]
+        Goroutine3["Goroutine C"]
+        Goroutine4["Goroutine D"]
+    end
+    
+    Goroutine1 --> Thread1
+    Goroutine2 --> Thread1
+    Goroutine3 --> Thread2
+    Goroutine4 --> Thread2
+    
+    Note right of Go Runtime Scheduler: The Go Scheduler multiplexes\nthousands of Goroutines\nonto a few OS Threads.
+```
+
+## How It Works
+
+To start a new goroutine, you simply put the `go` keyword in front of a function call. 
+The function will instantly execute concurrently in the background, and the main thread will continue to the next line of code.
+
+**Crucial Rule:** When the `main()` function finishes, the entire program exits immediately. It does not wait for background goroutines to finish!
+
+## Example
+
+```go
+package main
+
+import (
+	"fmt"
+	"time"
+)
+
+func printNumbers() {
+	for i := 1; i <= 3; i++ {
+		fmt.Printf("Number: %d\n", i)
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func main() {
+    // 1. Spawning a named function
+	go printNumbers() 
+
+	// 2. Spawning an anonymous function (closure)
+	go func() {
+		fmt.Println("Running from anonymous goroutine!")
+	}()
+
+	fmt.Println("Main thread finished executing setup.")
+	
+	// DANGER: If we don't sleep, main() exits instantly, 
+	// killing the two goroutines before they even print anything!
+	// (In real code, use a WaitGroup instead of Sleep).
+	time.Sleep(50 * time.Millisecond)
+}
+```
+
+## Common Interview Questions
+
+### What is the difference between a Goroutine and an OS Thread?
+- **Creation Cost**: Goroutines start with a 2KB stack that grows dynamically. OS threads start with a massive fixed 1MB+ stack.
+- **Context Switching**: The Go Scheduler switches between goroutines in user space (very fast). OS thread context switching requires a kernel trap (very slow).
+- **Mapping**: Go uses an M:N scheduling model. 'M' goroutines are multiplexed onto 'N' OS threads.
+
+### How do you gracefully wait for Goroutines to finish?
+Never use `time.Sleep()`! You should use a `sync.WaitGroup` to wait for a known number of goroutines to finish, or use Channels to signal completion.

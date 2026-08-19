@@ -1,0 +1,83 @@
+---
+title: "Pointers & Memory Allocation"
+description: "How pointers interact with the Stack and the Heap."
+importance: "HIGH"
+revisionTime: 4
+category: "Go"
+subcategory: "Memory"
+order: 30
+---
+
+## TL;DR
+
+In Go, **Pointers** dictate how memory is managed behind the scenes. Passing by value usually keeps variables on the **Stack** (fast, zero garbage collection). Passing by pointer often causes variables to "escape" to the **Heap** (slower, requires garbage collection).
+
+## Mental Model
+
+```mermaid
+flowchart TD
+    subgraph The Stack
+        direction TB
+        MainFunc["main() Frame\nx = 10"]
+        FastAlloc["Memory freed instantly\nwhen function exits"]
+    end
+    
+    subgraph The Heap
+        direction TB
+        GlobalMem["Shared Memory Pool\n*User Struct"]
+        GC["Garbage Collector\n(Scans for dead objects)"]
+    end
+    
+    CodeValue["func byValue(x int)"] -->|Allocated on| The Stack
+    CodePointer["func byPointer() *User"] -->|Escapes to| The Heap
+```
+
+## How It Works
+
+**The Stack**: Every goroutine has its own Stack. When a function is called, memory for its local variables is instantly pushed onto the stack. When the function returns, that memory is instantly popped and freed. It is incredibly fast and completely invisible to the Garbage Collector.
+
+**The Heap**: A massive, shared pool of memory. If you return a pointer from a function, the local variable cannot be destroyed when the function exits (because the caller still needs the pointer). The compiler detects this and moves the variable to the Heap. The variable lives on the Heap until the Garbage Collector proves no one is using it anymore.
+
+## Example
+
+```go
+package main
+
+import "fmt"
+
+type User struct {
+	Name string
+}
+
+// 1. Stack Allocation (Fast)
+// The User struct is created on the Stack. 
+// When the function finishes, it is copied to the caller, 
+// and the original memory is instantly destroyed.
+func createUserValue() User {
+	u := User{Name: "Alice"}
+	return u 
+}
+
+// 2. Heap Allocation (Slower)
+// The User struct is created, but we return a POINTER to it.
+// The compiler says: "Wait, the caller needs this memory address after this function dies!"
+// So, the compiler moves 'u' to the Heap.
+func createUserPointer() *User {
+	u := User{Name: "Bob"}
+	return &u 
+}
+
+func main() {
+	u1 := createUserValue()
+	u2 := createUserPointer()
+	fmt.Println(u1, u2)
+}
+```
+
+## Common Interview Questions
+
+### If pointers are faster to pass around, why not use them for everything?
+In C/C++, passing a 100-byte struct by value is slow, so you always use pointers. In Go, passing a 100-byte struct by value is extremely fast because it stays on the Stack. If you use a pointer, it escapes to the Heap, forcing the Garbage Collector to track it, scan it, and eventually sweep it. For small-to-medium structs, pass-by-value is actually *faster* overall because it spares the GC.
+
+### Is `new(T)` guaranteed to allocate on the Heap?
+No! Go does not care *how* you declare a variable (`new(T)`, `make()`, or `&T{}`). The compiler ignores your syntax and uses **Escape Analysis** to determine if the variable *needs* to survive longer than the function it was created in. If it doesn't, even `new(T)` might be allocated on the fast Stack!

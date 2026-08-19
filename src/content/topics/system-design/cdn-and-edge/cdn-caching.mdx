@@ -1,0 +1,56 @@
+---
+title: "CDN Caching Strategies"
+description: "Push vs Pull, and TTL Management."
+importance: "MEDIUM"
+revisionTime: 3
+category: "System Design"
+subcategory: "CDN & Edge"
+order: 13
+---
+
+## Concept
+
+When designing a system that uses a CDN, you must decide *how* the data gets onto the CDN servers. There are two primary strategies: **Pull Zones** (the default lazy approach) and **Push Zones** (the proactive approach). You also must rigorously manage how long the data is allowed to stay there.
+
+## Mental Model
+
+```mermaid
+flowchart LR
+    subgraph Pull Strategy (Lazy)
+        User1 -->|1. Request| CDN1[CDN]
+        CDN1 -->|2. Fetch on demand| Origin1[(Origin)]
+    end
+
+    subgraph Push Strategy (Proactive)
+        Origin2[(Origin)] -->|1. Upload| CDN2[CDN]
+        User2 -->|2. Request| CDN2
+    end
+```
+
+## The Strategies
+
+### 1. Pull Strategy (Lazy Loading)
+This is how 95% of websites use CDNs. The CDN node is completely empty. It only fetches a file from the Origin when a user explicitly requests it.
+- **Pros:** Zero setup. You just point your DNS to the CDN. You only pay for storage/bandwidth for files that users actually care about.
+- **Cons:** The very first user to request a file experiences high latency (a Cache Miss penalty). If a file is rarely accessed, it will expire from the cache, meaning the next user takes the penalty again.
+
+### 2. Push Strategy (Proactive)
+Your deployment pipeline or backend server actively uploads files directly to the CDN before users ever ask for them. The Origin is never queried by the CDN.
+- **Pros:** The Cache Hit rate is 100%. Users never experience a Cache Miss penalty. Excellent for massive software updates (e.g., pushing a 50GB Call of Duty patch to all global nodes before midnight).
+- **Cons:** Complex to manage. You pay to store files on Edge Nodes even if no one in that region ever downloads them.
+
+## Cache Invalidation & TTL
+
+A CDN uses HTTP Headers sent by your Origin server to know how long to keep a file. The most important header is `Cache-Control`.
+
+- `Cache-Control: max-age=31536000`: Tells the CDN to keep the file for 1 year (TTL - Time To Live). Use this for versioned files (`app.v1.js`).
+- `Cache-Control: no-cache`: Tells the CDN it *can* store the file, but it must make a tiny, fast network request to the Origin every single time to ask "Has this file changed?" before serving it to the user.
+- `Cache-Control: no-store`: Tells the CDN and the user's browser to never save the file to disk. Used for highly sensitive data (bank statements).
+
+## Interview Questions
+
+**Q: You are designing a system like Netflix. A highly anticipated movie releases at midnight. Would you use a Push or Pull CDN strategy for the video files?**
+**A:** You must use a **Push** strategy. If millions of users hit "Play" at exactly midnight, and the CDN uses a Pull strategy, the CDN Edge Nodes will all experience Cache Misses simultaneously. They will forward millions of requests back to the Origin server to fetch the video chunks, instantly crushing the Origin in a "Thundering Herd" attack. By proactively pushing the video to the Edge Nodes at 11:00 PM, the Edge handles 100% of the traffic at midnight.
+
+**Q: A user deletes their account and profile picture on your site. Their picture is still visible on the CDN. Do you use an automated Purge request, or wait for the TTL to expire?**
+**A:** Generally, automated CDN Purges should be used sparingly because they are slow and rate-limited by providers. However, for user-deleted data (especially regarding privacy laws like GDPR), you must issue an explicit Purge API request to the CDN to remove the asset immediately, rather than waiting days for a TTL to expire.

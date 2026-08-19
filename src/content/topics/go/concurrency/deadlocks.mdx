@@ -1,0 +1,92 @@
+---
+title: "Deadlocks"
+description: "When goroutines wait on each other forever."
+importance: "HIGH"
+revisionTime: 3
+category: "Go"
+subcategory: "Concurrency"
+order: 21
+---
+
+## TL;DR
+
+A **Deadlock** occurs when a group of goroutines are all blocked, waiting for an event (like a channel message or a mutex unlock) that can only be triggered by another blocked goroutine in the same group. Because everyone is waiting, nobody can proceed. The program freezes forever.
+
+## Mental Model
+
+```mermaid
+flowchart TD
+    G1["Goroutine 1"]
+    G2["Goroutine 2"]
+    
+    LockA["Resource A (Mutex)"]
+    LockB["Resource B (Mutex)"]
+    
+    G1 -->|Holds| LockA
+    G2 -->|Holds| LockB
+    
+    G1 -.->|Waiting for| LockB
+    G2 -.->|Waiting for| LockA
+    
+    Note over G1,G2: Cyclic Dependency!\nNeither can proceed.
+```
+
+## How It Works
+
+Go has a built-in global deadlock detector. If **all** goroutines in your entire application are asleep/blocked, the Go runtime detects that the program can never recover. It will instantly crash the app with: `fatal error: all goroutines are asleep - deadlock!`.
+
+*Warning:* If even one goroutine is still running (like an HTTP server listening for requests), the runtime will NOT crash the app. The deadlocked goroutines will simply sit in memory forever (a Goroutine Leak).
+
+## Example: Channel Deadlock
+
+```go
+package main
+
+import "fmt"
+
+func main() {
+    // 1. Unbuffered channel
+	ch := make(chan int)
+
+    // 2. The main thread attempts to write to the channel.
+    // Because it is unbuffered, it BLOCKS until a receiver takes the value.
+	ch <- 42 
+
+    // 3. This line is NEVER reached, because the main thread is blocked.
+    // There are no other background goroutines running to read the channel.
+    // Result: DEADLOCK!
+	fmt.Println(<-ch)
+}
+```
+
+## Example: Mutex Deadlock
+
+```go
+package main
+
+import "sync"
+
+func main() {
+	var mu sync.Mutex
+
+	mu.Lock()
+	
+	// Doing some work...
+	
+	// A bug! We try to acquire the lock again before unlocking it.
+	// We block waiting for ourselves to unlock it. DEADLOCK!
+	mu.Lock() 
+
+	mu.Unlock()
+}
+```
+
+## Common Interview Questions
+
+### How do you fix an Unbuffered Channel deadlock?
+You have two options:
+1. Wrap the sender (or the receiver) in a new goroutine: `go func() { ch <- 42 }()`. Now the sender blocks in the background, allowing the main thread to proceed and eventually read from the channel.
+2. Change the channel to a Buffered Channel: `make(chan int, 1)`. The sender won't block because the buffer has room.
+
+### How do you prevent complex Mutex deadlocks in large codebases?
+The golden rule is **Lock Ordering**. If Goroutine A needs Lock 1 then Lock 2, and Goroutine B needs Lock 2 then Lock 1, they can deadlock. You must ensure that throughout your entire codebase, all goroutines always acquire locks in the exact same alphabetical or numerical order.

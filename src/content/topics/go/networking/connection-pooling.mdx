@@ -1,0 +1,88 @@
+---
+title: "HTTP Connection Pooling"
+description: "Tuning the http.Transport for high-throughput."
+importance: "MEDIUM"
+revisionTime: 4
+category: "Go"
+subcategory: "Networking"
+order: 41
+---
+
+## TL;DR
+
+An `http.Client` uses an underlying `http.Transport` to actually send the bytes over the network. The `Transport` is responsible for caching and reusing TCP connections (Connection Pooling). If you are sending thousands of requests per second to the same API, you must tune the Transport's connection limits, otherwise Go will silently choke your throughput.
+
+## Mental Model
+
+```mermaid
+flowchart TD
+    Client["http.Client"]
+    
+    subgraph http.Transport (Connection Pool)
+        MaxIdle["MaxIdleConns: 100\n(Total pool size)"]
+        MaxHost["MaxIdleConnsPerHost: 100\n(Pool size for api.stripe.com)"]
+        
+        Conn1["TCP Conn (Keep-Alive)"]
+        Conn2["TCP Conn (Keep-Alive)"]
+    end
+    
+    Client -->|Executes Do(req)| http.Transport
+    http.Transport -->|Reuses| Conn1
+```
+
+## How It Works
+
+Opening a new HTTPS connection requires DNS resolution, TCP handshake, and TLS negotiation. This takes dozens of milliseconds. Connection pooling keeps the connection open after the request finishes so the next request can use it instantly.
+
+The default `http.Transport` has a massive bottleneck for high-throughput microservices:
+`MaxIdleConnsPerHost` is set to **2** by default.
+This means if you send 100 concurrent requests to `api.stripe.com`, Go can only cache 2 connections. It will constantly create and tear down 98 connections per second, destroying your performance and exhausting ephemeral ports (causing `TIME_WAIT` socket errors).
+
+## Example
+
+```go
+package main
+
+import (
+	"net/http"
+	"time"
+)
+
+func createOptimizedClient() *http.Client {
+	// Create a highly tuned Transport
+	t := &http.Transport{
+		// 1. Max connections across all hosts
+		MaxIdleConns: 100,
+		
+		// 2. CRITICAL: Max connections to a single host (e.g., your DB API)
+		// Default is 2! We bump it to 100.
+		MaxIdleConnsPerHost: 100,
+		
+		// 3. Close connections if they sit idle for too long
+		IdleConnTimeout: 90 * time.Second,
+		
+		// 4. Force connections to reconnect after a while to balance load
+		// across external load balancers (Optional but good for microservices)
+		// ForceAttemptHTTP2: true,
+	}
+
+	return &http.Client{
+		Transport: t,
+		Timeout:   10 * time.Second,
+	}
+}
+
+func main() {
+    // Reuse this client globally across your app!
+	client := createOptimizedClient()
+	_ = client
+}
+```
+
+## Common Interview Questions
+
+### What is the "TIME_WAIT" socket issue?
+When a TCP connection is closed, the OS keeps the socket in a `TIME_WAIT` state for about 60 seconds to catch any lingering packets. A server only has ~65,000 ephemeral ports. If you don't use connection pooling (or if `MaxIdleConnsPerHost` is too low), your high-throughput Go app will open and close thousands of connections per second. Within a minute, you will run out of ports, and all new HTTP requests will fail with `bind: address already in use`.
+
+### Why does reading the entire response body matter for connection pooling?
+If you read the headers, but you *don't* read the body completely before calling `res.Body.Close()`, the Go HTTP Transport cannot safely reuse the TCP connection (because there are still unread bytes sitting in the OS buffer). It will forcefully discard the connection. If you don't care about the body, you should explicitly drain it: `io.Copy(io.Discard, res.Body)` before closing it to ensure the connection goes back to the pool.

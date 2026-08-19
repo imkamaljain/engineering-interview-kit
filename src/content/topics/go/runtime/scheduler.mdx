@@ -1,0 +1,84 @@
+---
+title: "The Scheduler"
+description: "How Go multiplexes thousands of Goroutines onto a few OS threads."
+importance: "HIGH"
+revisionTime: 4
+category: "Go"
+subcategory: "Runtime"
+order: 35
+---
+
+## TL;DR
+
+The **Go Scheduler** is an M:N scheduler. It multiplexes **M** Goroutines onto **N** OS Threads. Its primary job is to ensure that all OS Threads are kept constantly busy, minimizing expensive context switches into the kernel, while guaranteeing that no single Goroutine hogs the CPU.
+
+## Mental Model
+
+```mermaid
+flowchart TD
+    G1["Goroutine 1"]
+    G2["Goroutine 2 (Blocked on Network)"]
+    G3["Goroutine 3"]
+    
+    Scheduler["Go Scheduler\n(User Space)"]
+    
+    Thread1["OS Thread 1"]
+    Thread2["OS Thread 2"]
+    
+    G1 --> Scheduler
+    G2 --> Scheduler
+    G3 --> Scheduler
+    
+    Scheduler -->|Assigns to| Thread1
+    Scheduler -->|Assigns to| Thread2
+    
+    Note left of Scheduler: If G2 blocks on a DB call,\nScheduler instantly swaps G3 onto Thread1!
+```
+
+## How It Works
+
+If an OS Thread blocks (e.g., waiting for a network response or a file read), that CPU core sits idle. The OS is slow to switch threads.
+
+Go solves this entirely in "User Space". If a Goroutine makes a network request (`http.Get`), the Go Scheduler intercepts the call. It tells the OS to use non-blocking I/O (epoll/kqueue). It marks the Goroutine as "Waiting", immediately takes it off the OS Thread, and swaps in a fresh, "Runnable" Goroutine. 
+
+As far as the OS is concerned, the OS Thread never went to sleep; it was just doing different work. This is why Go servers can handle 10,000 simultaneous connections on a 2-core machine.
+
+## Example: Forcing a Context Switch
+
+Before Go 1.14, the scheduler was **Cooperative**. It only switched goroutines during function calls or I/O. If you wrote an infinite `for{}` loop that just added numbers, it would hog the core forever.
+Since Go 1.14, the scheduler is **Asynchronously Preemptive**. A background monitor (sysmon) watches for goroutines that have been running for more than 10 milliseconds. If it finds one, it fires a Unix hardware signal to forcefully pause it and let others run!
+
+```go
+package main
+
+import (
+	"fmt"
+	"runtime"
+	"time"
+)
+
+func main() {
+	// Let's force Go to only use 1 CPU Core
+	runtime.GOMAXPROCS(1)
+
+	go func() {
+		// Infinite CPU loop!
+		// Pre-1.14: This would freeze the app forever.
+		// Modern Go: The sysmon forces it to pause every 10ms.
+		for {
+			_ = 1 + 1 
+		}
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+	fmt.Println("Main thread survived the infinite loop!")
+}
+```
+
+## Common Interview Questions
+
+### What is `runtime.GOMAXPROCS`?
+It is a setting that dictates exactly how many OS Threads the Go Scheduler is allowed to execute user-level Go code on simultaneously. By default, it is set to the number of logical CPU cores on the machine. If you deploy a Go app into a Docker container with strict CPU quotas (e.g., 0.5 CPU limits in Kubernetes), you should use a library like `automaxprocs` to ensure Go doesn't spin up too many threads and thrash the container.
+
+### What happens if a Goroutine calls a C library (cgo) that blocks?
+The Go Scheduler cannot intercept C code. If the C code blocks, the underlying OS Thread is truly blocked. The Go Scheduler detects this, detaches the blocked OS Thread, and spins up a brand new OS Thread from a pool to continue running the remaining Go code.

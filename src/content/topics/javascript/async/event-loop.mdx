@@ -1,0 +1,109 @@
+---
+title: "The Event Loop"
+description: "How single-threaded JavaScript handles concurrency."
+importance: "HIGH"
+revisionTime: 5
+category: "JavaScript"
+subcategory: "Async"
+order: 26
+---
+
+## TL;DR
+
+JavaScript has only one Call Stack, meaning it can only do one thing at a time. The **Event Loop** is the orchestrator that allows JavaScript to perform non-blocking asynchronous operations. It constantly monitors the Call Stack and the Task Queues, moving callbacks into the Call Stack for execution only when the stack is completely empty.
+
+## Mental Model
+
+```mermaid
+flowchart TD
+    subgraph JavaScript Engine
+        Stack["Call Stack\n(Executes Code)"]
+    end
+    
+    subgraph Web APIs / Node C++ APIs
+        Timer["setTimeout()"]
+        Net["fetch()"]
+        DOM["DOM Events"]
+    end
+    
+    subgraph Queues
+        Micro["Microtask Queue\n(Promises) - ⭐ High Priority"]
+        Macro["Macrotask Queue\n(Timers) - ⬇️ Low Priority"]
+    end
+    
+    Stack -->|1. Offloads async work| Timer & Net
+    Timer -->|2. Pushes callback when done| Macro
+    Net -->|2. Pushes .then() when done| Micro
+    
+    Loop{"Event Loop"}
+    
+    Micro -->|3. Loop moves to Stack if Stack is empty| Loop
+    Macro -->|4. Loop moves to Stack if Micro is empty| Loop
+    Loop --> Stack
+```
+
+## How It Works
+
+1. **Synchronous code** is executed immediately on the Call Stack.
+2. When an **async operation** (like `setTimeout` or `fetch`) is encountered, the Call Stack instantly offloads it to the Web APIs and continues running the next line of code.
+3. When the Web API finishes its work (e.g., the timer hits 0), it pushes the associated callback function into a Queue.
+   - Promise callbacks go to the **Microtask Queue**.
+   - `setTimeout` and DOM events go to the **Macrotask Queue**.
+4. The **Event Loop** constantly checks the Call Stack. If the stack is NOT empty, the loop waits. 
+5. The moment the Call Stack is empty, the Event Loop takes the oldest callback from the Microtask Queue and pushes it onto the Call Stack. It empties the *entire* Microtask queue first before ever touching the Macrotask queue.
+
+## Example
+
+```javascript
+console.log("1. Start (Sync)");
+
+setTimeout(() => {
+  console.log("2. Timeout (Macrotask)");
+}, 0);
+
+Promise.resolve().then(() => {
+  console.log("3. Promise (Microtask)");
+});
+
+console.log("4. End (Sync)");
+```
+
+**Execution Order:**
+1. `console.log("1. Start")` runs on Stack.
+2. `setTimeout` is sent to Web API. Web API instantly sends the callback to the Macrotask Queue (because time is 0).
+3. `Promise.resolve` instantly sends its `.then` callback to the Microtask Queue.
+4. `console.log("4. End")` runs on Stack.
+5. Stack is now empty!
+6. Event loop checks Microtask Queue. It finds the Promise callback. Pushes it. Prints "3. Promise".
+7. Stack is empty. Microtask queue is empty.
+8. Event loop checks Macrotask Queue. Finds the Timeout callback. Pushes it. Prints "2. Timeout".
+
+**Final Output:** `1`, `4`, `3`, `2`.
+
+## Common Output Question
+
+```javascript
+setTimeout(() => console.log("A"), 0);
+
+Promise.resolve().then(() => {
+  console.log("B");
+  setTimeout(() => console.log("C"), 0);
+});
+
+Promise.resolve().then(() => console.log("D"));
+
+console.log("E");
+```
+**Q: What is the exact output order?**
+**A:** `E, B, D, A, C`.
+- `E` is sync.
+- Promises resolve next. `B` and `D` are in the Microtask queue.
+- When `B` runs, it queues *another* timeout (`C`).
+- Now the Microtask queue is empty. The Event loop moves to the Macrotask queue.
+- `A` was queued first. Then `C` was queued second. So it prints `A`, then `C`.
+
+## Senior Interview Question
+
+**Q: If `setTimeout(fn, 0)` is supposed to run immediately after the stack clears, why is it sometimes delayed by several milliseconds in the browser?**
+
+**A:** The HTML5 specification dictates that if `setTimeout` is nested more than 5 levels deep, the browser will enforce a minimum delay of `4ms`, even if you specify `0`. Furthermore, `setTimeout` is NOT a guaranteed exact execution time; it is a *minimum* delay. If the Call Stack is blocked by a heavy `while` loop (or React rendering a massive DOM tree), the Event Loop cannot move the `setTimeout` callback onto the stack. A `0ms` timer might actually take 500ms to execute if the main thread is blocked.

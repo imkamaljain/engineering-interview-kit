@@ -1,0 +1,77 @@
+---
+title: "Retries & Exponential Backoff"
+description: "Handling the chaos of unreliable networks."
+importance: "HIGH"
+revisionTime: 4
+category: "System Design"
+subcategory: "Reliability"
+order: 68
+---
+
+## Concept
+
+In a distributed system, "The network is reliable" is the ultimate fallacy. Packets drop, routers reboot, and temporary microsecond glitches happen millions of times a day.
+If your Node.js server tries to call the Stripe API and it fails, you shouldn't instantly return a 500 Error to the user. The glitch might resolve itself in 100 milliseconds. You must implement an automated **Retry Strategy** to mask these transient failures from the user.
+
+## The Thundering Herd Problem
+
+The most naive way to implement a retry is a simple `for` loop: "If it fails, try again immediately, up to 3 times."
+
+**The Disaster:** Imagine Stripe is actually down. 10,000 users click "Checkout" on your site. All 10,000 requests fail. Because of your naive retry loop, your servers instantly generate 30,000 *more* requests in the next millisecond, hammering the struggling Stripe API and guaranteeing it stays down. This is the **Thundering Herd**.
+
+## The Solution: Exponential Backoff and Jitter
+
+To prevent the Thundering Herd, you must space out your retries, and you must add randomness.
+
+### 1. Exponential Backoff
+Instead of retrying immediately, you multiply the wait time exponentially.
+- Retry 1: Wait 1 second.
+- Retry 2: Wait 2 seconds.
+- Retry 3: Wait 4 seconds.
+- Retry 4: Wait 8 seconds.
+This gives the struggling downstream server exponentially more time to recover its CPU and reboot.
+
+### 2. Jitter (Randomness)
+Even with exponential backoff, if 10,000 requests failed at the exact same millisecond, they will all wait exactly 1 second, and then 10,000 requests will slam the server again simultaneously.
+**Jitter** adds a randomized mathematical spread to the wait time.
+- Retry 1: Wait 1 second `+ Math.random(0 to 1000ms)`.
+- Request A retries at 1.2 seconds. Request B retries at 1.8 seconds. The traffic spike is perfectly smoothed out into a flat, manageable curve.
+
+## Mental Model
+
+```mermaid
+flowchart TD
+    subgraph Without Jitter (Spikes)
+        Time1[1s: 10k Retries]
+        Time2[2s: 10k Retries]
+        Time3[4s: 10k Retries]
+    end
+
+    subgraph With Jitter (Smoothed)
+        Time1A[1.1s: 2k]
+        Time1B[1.4s: 3k]
+        Time1C[1.8s: 5k]
+        Note["The load is spread out evenly."]
+    end
+```
+
+## Idempotency: The Absolute Requirement for Retries
+
+You can **ONLY** safely retry a network request if the destination API is **Idempotent**.
+Idempotency means that executing the exact same request 5 times has the exact same effect as executing it 1 time.
+
+- `GET` is naturally idempotent. You can fetch a user 50 times, nothing changes.
+- `PUT` is idempotent. Replacing a user's name with "Alice" 50 times leaves the name as "Alice".
+- `POST` is **NOT** idempotent. If you `POST /checkout` 5 times, you might charge the user's credit card 5 times.
+
+**How to safely retry POST requests:**
+The client must generate a unique UUID (an `Idempotency-Key`) and include it in the HTTP headers. The server receives the request, charges the card, and saves the UUID to its database. If the network drops the HTTP response, the client retries the exact same request with the exact same UUID. The server sees the UUID in the database, realizes it already charged the card, and simply returns the cached success response without double-charging the user.
+
+## Interview Questions
+
+**Q: You wrap your microservice HTTP calls in both a Circuit Breaker and an Exponential Backoff Retry loop. Which one wraps the other?**
+**A:** The **Retry loop must wrap the Circuit Breaker**. 
+If the HTTP call fails, the Circuit Breaker records the failure. The Retry loop waits 2 seconds, then tries again. It makes the call *through* the Circuit Breaker. If the Circuit Breaker has received 5 failures and tripped to the OPEN state, the Retry loop's subsequent attempts will be instantly rejected by the Circuit Breaker in 1 millisecond, correctly preventing the network calls from leaving the server.
+
+**Q: How does a Message Queue (like RabbitMQ) naturally implement Exponential Backoff?**
+**A:** When a Consumer crashes or fails to process a message, it can NACK (Negative Acknowledge) the message. Modern queues can be configured to use a "Dead Letter Exchange" with a TTL (Time To Live). The failed message is routed to a delay queue for 1 minute, then re-enters the main queue. If it fails again, it is routed to a 5-minute delay queue, effectively building highly durable exponential backoff directly into the infrastructure without blocking application threads.

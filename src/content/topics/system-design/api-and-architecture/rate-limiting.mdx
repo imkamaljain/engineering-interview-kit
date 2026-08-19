@@ -1,0 +1,49 @@
+---
+title: "Rate Limiting"
+description: "Protecting your API from abusive traffic."
+importance: "HIGH"
+revisionTime: 5
+category: "System Design"
+subcategory: "API & Architecture"
+order: 60
+---
+
+## Concept
+
+A public API is a massive liability. A malicious bot (or a junior developer who accidentally wrote an infinite `while` loop) can send 100,000 HTTP requests per second to your server, consuming all your CPU and database connections, crashing the system for legitimate users.
+**Rate Limiting** is the defensive mechanism that restricts the number of requests a specific user or IP address can make within a given time window (e.g., "100 requests per minute").
+
+## The 4 Rate Limiting Algorithms
+
+### 1. Token Bucket
+- **How it works:** Imagine a bucket that holds 100 tokens. Every time a user makes an API request, you remove 1 token. A background process adds 10 new tokens to the bucket every second. If the bucket is empty, the request is dropped.
+- **Pros:** Allows for short "bursts" of traffic (the user can spend all 100 tokens instantly), but enforces a long-term steady rate. Very memory efficient.
+- **Used by:** Amazon and Stripe APIs.
+
+### 2. Leaky Bucket
+- **How it works:** Requests enter a queue (the bucket) from the top at any speed. The queue leaks (processes) the requests from the bottom at a strict, perfectly constant rate (e.g., exactly 10 requests per second). If the queue is full, new requests overflow and are dropped.
+- **Pros:** Smooths out bursty traffic perfectly, guaranteeing your internal database is never overwhelmed by a sudden spike.
+- **Used by:** Shopify API.
+
+### 3. Fixed Window Counter
+- **How it works:** You create a counter for a specific time window (e.g., 12:00:00 to 12:01:00). If the counter hits 100, reject requests. At exactly 12:01:00, the counter resets to 0.
+- **The Flaw:** The "Edge Case Spike". A user can send 100 requests at 12:00:59, the counter resets, and they send another 100 requests at 12:01:01. They just bypassed the limit and sent 200 requests in 2 seconds, potentially crashing your server.
+
+### 4. Sliding Window Log / Counter
+- **How it works:** Solves the Fixed Window flaw. Instead of rigid time blocks, it looks backward exactly 60 seconds from the *current millisecond*. It uses a Redis Sorted Set to track the exact timestamp of every single request made by the user, dynamically calculating the rate.
+- **Pros:** The most perfectly accurate rate limiting possible.
+- **Cons:** Consumes a massive amount of RAM in Redis because you must store the timestamp of every single request.
+
+## Where to implement it?
+
+Rate limiting should almost always be implemented at the **API Gateway** or **Load Balancer** level (or even further out at Cloudflare). If you implement it deep inside your Node.js application, the malicious HTTP requests have already consumed network bandwidth and server RAM just reaching your application code.
+
+## Interview Questions
+
+**Q: You implement a Token Bucket rate limiter using Redis. To check and update the token count, your Node.js server does `GET user_tokens`, calculates the new value, and runs `SET user_tokens`. Under heavy load, users are managing to bypass the limit. Why?**
+**A:** This is a classic **Race Condition**. If the user sends 5 concurrent HTTP requests, Node.js fires 5 `GET` commands to Redis simultaneously. They all read the value as `100`. They all subtract `1` and run `SET 99`. The user made 5 requests, but the token count only dropped by 1.
+**Fix:** You must execute the check-and-subtract logic atomically in Redis. You either use a Lua script executed directly on the Redis server, or use Redis's native atomic commands like `DECR`.
+
+**Q: A legitimate user is hitting the rate limit. What HTTP Status Code should you return, and what specific HTTP Header should you include to help them?**
+**A:** You must return **HTTP 429 Too Many Requests**. 
+Crucially, you should include the `Retry-After: 30` HTTP header. This tells the client application exactly how many seconds it needs to wait before the rate limit bucket refills, allowing the frontend code to automatically pause and retry gracefully.

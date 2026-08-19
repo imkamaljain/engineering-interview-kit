@@ -1,0 +1,79 @@
+---
+title: "Channels"
+description: "The primary mechanism for communicating safely between Goroutines."
+importance: "HIGH"
+revisionTime: 5
+category: "Go"
+subcategory: "Concurrency"
+order: 12
+---
+
+## TL;DR
+
+*"Do not communicate by sharing memory; instead, share memory by communicating."*
+A **Channel** is a typed, thread-safe conduit that allows one goroutine to send data to another goroutine safely, without needing explicit locks or mutexes.
+
+## Mental Model
+
+```mermaid
+flowchart LR
+    G1["Goroutine A\n(Producer)"]
+    G2["Goroutine B\n(Consumer)"]
+    
+    Channel["Channel\n(ch := make(chan int))"]
+    
+    G1 -->|ch <- 42\n(Send)| Channel
+    Channel -->|val := <-ch\n(Receive)| G2
+```
+
+## How It Works
+
+You create a channel using `make(chan Type)`. 
+- **Send**: `ch <- value`
+- **Receive**: `value := <-ch`
+
+Channels can be **Unbuffered** or **Buffered**:
+1. **Unbuffered** (`make(chan int)`): The sender completely blocks (freezes) until a receiver is ready to take the value. It forces synchronization.
+2. **Buffered** (`make(chan int, 3)`): The channel has an internal queue. The sender only blocks if the queue is totally full.
+
+## Example
+
+```go
+package main
+
+import "fmt"
+
+func worker(done chan bool) {
+	fmt.Println("Worker working...")
+	// Do heavy work...
+	fmt.Println("Worker finished!")
+	
+	// Send a signal on the channel
+	done <- true 
+}
+
+func main() {
+    // 1. Create an unbuffered channel
+	doneSignal := make(chan bool)
+
+	// 2. Start the background worker
+	go worker(doneSignal)
+
+	// 3. Wait for the signal
+	// The main thread BLOCKS here until data arrives!
+	<-doneSignal 
+	
+	fmt.Println("Main thread exiting cleanly.")
+}
+```
+
+## Common Interview Questions
+
+### What happens if you read from a closed channel?
+If you read from a closed channel, it does **not** panic. It immediately returns the zero value of the channel's type. This is why you should use the comma-ok idiom: `val, ok := <-ch`. If `ok` is false, the channel is closed and completely empty.
+
+### What happens if you write to a closed channel?
+It causes a fatal panic. The rule of thumb in Go is: **The sender should close the channel, never the receiver.** If there are multiple senders, you must orchestrate the closure carefully (often using a `sync.Once` or context cancellation).
+
+### How do you prevent a function from writing to a channel?
+You can restrict channel direction in function signatures. `func readOnly(ch <-chan int)` means the function can only read. `func writeOnly(ch chan<- int)` means it can only write. This provides compile-time safety.
