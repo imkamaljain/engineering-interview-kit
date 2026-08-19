@@ -1,0 +1,62 @@
+---
+title: "Load Balancing"
+description: "How to distribute incoming network traffic across a group of backend servers."
+importance: "HIGH"
+revisionTime: 4
+category: "System Design"
+---
+
+## TL;DR
+
+A Load Balancer sits in front of your servers and routes client requests across all servers capable of fulfilling them in a manner that maximizes speed and capacity utilization, ensuring no one server is overworked.
+
+## Mental Model
+
+```mermaid
+flowchart TD
+    Client1["Client 1"]
+    Client2["Client 2"]
+    Client3["Client 3"]
+    
+    LB{"Load Balancer"}
+    
+    ServerA["Server A (Healthy)"]
+    ServerB["Server B (Healthy)"]
+    ServerC["Server C (Dead)"]
+    
+    Client1 --> LB
+    Client2 --> LB
+    Client3 --> LB
+    
+    LB -->|Route| ServerA
+    LB -->|Route| ServerB
+    LB -. "Health Check Fails" .x ServerC
+```
+
+## Layer 4 vs Layer 7 Load Balancing
+
+- **Layer 4 (Transport)**: Routes traffic based only on network and transport layer data (IP address, TCP port). It does not inspect the contents of the message. Extremely fast.
+- **Layer 7 (Application)**: Routes traffic based on the contents of the message (HTTP headers, URL path, cookies). Allows for complex routing (e.g., `/api` goes to Server A, `/images` goes to Server B). Slightly slower but much more flexible.
+
+## Algorithms
+
+1. **Round Robin**: Distributes requests sequentially. Good for servers of equal specs.
+2. **Least Connections**: Sends requests to the server with the fewest active connections. Good for long-lived requests (like WebSockets or heavy DB queries).
+3. **IP Hash**: Calculates a hash based on the client's IP address to ensure the same client always connects to the same server. Good for stateful sessions.
+
+## Interview Questions
+
+### What happens if the Load Balancer fails?
+The Load Balancer becomes a Single Point of Failure (SPOF). To fix this, you run *two* load balancers in an Active-Passive (or Active-Active) cluster. If the primary goes down, the secondary takes over the Virtual IP via a heartbeat protocol.
+
+### How does the Load Balancer know if a server is dead?
+It performs **Health Checks** (e.g., pinging a `/health` endpoint every 5 seconds). If a server fails the check, the LB stops sending traffic to it until it recovers.
+
+## Common Gotchas
+
+*   **Sticky Sessions**: If you store user login state locally on Server A, and the LB routes their next request to Server B, they will be logged out. 
+    *   *Fix*: Move session state to a centralized Redis cache, or use IP Hash (Sticky Sessions). Centralized caching is vastly preferred for stateless architecture.
+
+## Remember
+
+> Scale out (horizontal), not up (vertical). Load balancers are what make horizontal scaling possible.

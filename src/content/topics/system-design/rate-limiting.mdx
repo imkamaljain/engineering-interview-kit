@@ -1,0 +1,65 @@
+---
+title: "Rate Limiting"
+description: "How to protect APIs from abuse and DDoS attacks using rate limiting algorithms."
+importance: "HIGH"
+revisionTime: 4
+category: "System Design"
+---
+
+## TL;DR
+
+Rate Limiting is a technique used to control the rate of traffic sent or received on a network. It protects backend services from being overwhelmed by too many requests (either malicious or accidental) by blocking excess traffic.
+
+## Mental Model
+
+```mermaid
+flowchart LR
+    Client["Client"]
+    Gateway{"API Gateway\nRate Limiter"}
+    Redis[("Redis\n(Counter Store)")]
+    App["Application Server"]
+    
+    Client -->|Request| Gateway
+    Gateway -->|Check Limit| Redis
+    
+    Gateway -->|Allowed| App
+    Gateway -. "Blocked (HTTP 429)" .x Client
+```
+
+## Common Algorithms
+
+### 1. Token Bucket
+- **Analogy**: A bucket holds a maximum of $N$ tokens. Tokens are added to the bucket at a fixed rate. Every request costs 1 token. If the bucket is empty, the request is dropped.
+- **Pros**: Allows for short bursts of traffic. Simple to implement.
+- **Cons**: Bursts can temporarily overwhelm backend servers.
+
+### 2. Leaky Bucket
+- **Analogy**: Requests enter the bucket. The bucket leaks requests at a fixed, constant rate to the backend server. If the bucket fills up, new requests are dropped.
+- **Pros**: Smooths out traffic. Backend servers receive a perfectly consistent load.
+- **Cons**: Cannot handle bursts. A sudden spike of legitimate traffic might get dropped.
+
+### 3. Fixed Window Counter
+- **Analogy**: Divides time into fixed windows (e.g., 1:00 to 1:01). A counter increments per request. If it hits the limit, requests are dropped until the next window.
+- **Pros**: Very memory efficient.
+- **Cons**: "Thundering Herd" problem at the edge of windows. If the limit is 100/min, a user could send 100 requests at 1:00:59 and 100 at 1:01:00, effectively sending 200 requests in 2 seconds.
+
+### 4. Sliding Window Log
+- **Analogy**: Stores the timestamp of every single request in a Redis Sorted Set. To evaluate a request, it deletes timestamps older than the window, and counts the remaining logs.
+- **Pros**: 100% accurate. No window edge spikes.
+- **Cons**: Massive memory footprint (storing millions of timestamps).
+
+## Interview Questions
+
+### Where should the rate limiter be deployed?
+Usually at the edge of the network, inside an API Gateway (like Kong or Nginx) or a CDN (like Cloudflare). You do not want malicious traffic to even reach your application servers.
+
+### In a distributed system, where do you store the rate limiting counters?
+In a centralized, high-speed, in-memory cache like **Redis**. If each API gateway keeps local counters, a user could bypass the limit by hitting different load-balanced gateways.
+
+## Common Gotchas
+
+*   **Race Conditions**: When multiple servers check and increment a Redis counter simultaneously, you can get race conditions. Use Redis Lua scripts or `INCR` to ensure atomicity.
+
+## Remember
+
+> Rate limiters return HTTP Status **429 Too Many Requests**. Always include an `X-RateLimit-Reset` header so the client knows when to retry.

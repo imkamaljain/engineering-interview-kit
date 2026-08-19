@@ -1,0 +1,131 @@
+---
+import { getCollection, render } from 'astro:content';
+import Layout from '../../layouts/Layout.astro';
+
+export async function getStaticPaths() {
+  const topics = await getCollection('topics');
+  
+  return topics.map((topic) => {
+    // Find all topics in the same category to determine prev/next
+    const categoryTopics = topics.filter(t => t.data.category === topic.data.category);
+    const currentIndex = categoryTopics.findIndex(t => t.id === topic.id);
+    
+    const prevTopic = currentIndex > 0 ? categoryTopics[currentIndex - 1] : null;
+    const nextTopic = currentIndex < categoryTopics.length - 1 ? categoryTopics[currentIndex + 1] : null;
+
+    return {
+      params: { slug: topic.id },
+      props: { topic, prevTopic, nextTopic },
+    };
+  });
+}
+
+const { topic, prevTopic, nextTopic } = Astro.props;
+const { Content } = await render(topic);
+
+const getImportanceColor = (importance) => {
+  switch(importance) {
+    case 'HIGH': return 'bg-rose-500/10 text-rose-400 border-rose-500/20';
+    case 'MEDIUM': return 'bg-blue-500/10 text-blue-400 border-blue-500/20';
+    case 'LOW': return 'bg-gray-500/10 text-gray-400 border-gray-500/20';
+    default: return 'bg-gray-500/10 text-gray-400 border-gray-500/20';
+  }
+};
+
+const slugify = (str) => str.toLowerCase().replace(/\s+/g, '-').replace(/\./g, '');
+---
+
+<Layout title={`${topic.data.title} | Engineering Interview Kit`}>
+  <article class="max-w-none">
+    <!-- Breadcrumbs -->
+    <nav class="text-sm text-gray-400 mb-8 flex items-center space-x-2">
+      <a href="/" class="hover:text-white transition-colors">Home</a>
+      <span>/</span>
+      <a href={`/topics/${slugify(topic.data.category)}`} class="hover:text-white transition-colors capitalize">{topic.data.category}</a>
+      <span>/</span>
+      <span class="text-gray-200">{topic.data.title}</span>
+    </nav>
+
+    <!-- Top Navigation -->
+    <div class="flex justify-between items-center mb-8 pb-8 border-b border-gray-800">
+      {prevTopic ? (
+        <a href={`/topics/${prevTopic.id}`} class="group flex items-center text-sm text-gray-400 hover:text-white transition-colors">
+          <span class="mr-2 group-hover:-translate-x-1 transition-transform">←</span>
+          <span>{prevTopic.data.title}</span>
+        </a>
+      ) : <div></div>}
+      
+      {nextTopic ? (
+        <a href={`/topics/${nextTopic.id}`} class="group flex items-center text-sm text-gray-400 hover:text-white transition-colors">
+          <span>{nextTopic.data.title}</span>
+          <span class="ml-2 group-hover:translate-x-1 transition-transform">→</span>
+        </a>
+      ) : <div></div>}
+    </div>
+
+    <header class="mb-10">
+      <h1 class="text-4xl font-extrabold text-white mb-6 tracking-tight">{topic.data.title}</h1>
+      
+      <div class="flex flex-wrap items-center gap-4 text-sm font-medium">
+        <div class={`px-3 py-1.5 rounded-full border flex items-center ${getImportanceColor(topic.data.importance)}`}>
+          <span class="mr-1.5">⭐</span> Interview Importance: {topic.data.importance}
+        </div>
+        <div class="px-3 py-1.5 rounded-full border bg-emerald-500/10 text-emerald-400 border-emerald-500/20 flex items-center">
+          <span class="mr-1.5">⏱️</span> Revision Time: {topic.data.revisionTime} min
+        </div>
+      </div>
+    </header>
+
+    <!-- MDX Content -->
+    <div class="prose prose-invert prose-blue max-w-none mb-16">
+      <Content />
+    </div>
+
+    <!-- Bottom Navigation -->
+    <div class="flex justify-between items-center pt-8 border-t border-gray-800">
+      {prevTopic ? (
+        <a href={`/topics/${prevTopic.id}`} class="group flex items-center text-gray-400 hover:text-white transition-colors">
+          <div class="flex flex-col">
+            <span class="text-xs uppercase tracking-wider mb-1">Previous Topic</span>
+            <span class="font-medium flex items-center"><span class="mr-2 group-hover:-translate-x-1 transition-transform">←</span> {prevTopic.data.title}</span>
+          </div>
+        </a>
+      ) : <div></div>}
+      
+      {nextTopic ? (
+        <a href={`/topics/${nextTopic.id}`} class="group flex items-center text-right text-gray-400 hover:text-white transition-colors text-right">
+          <div class="flex flex-col items-end">
+            <span class="text-xs uppercase tracking-wider mb-1">Next Topic</span>
+            <span class="font-medium flex items-center">{nextTopic.data.title} <span class="ml-2 group-hover:translate-x-1 transition-transform">→</span></span>
+          </div>
+        </a>
+      ) : <div></div>}
+    </div>
+  </article>
+
+  <!-- Script to enhance code blocks with copy button -->
+  <script>
+    document.addEventListener('astro:page-load', () => {
+      const preBlocks = document.querySelectorAll('pre');
+      preBlocks.forEach((pre) => {
+        if(pre.querySelector('.copy-btn')) return;
+        
+        const btn = document.createElement('button');
+        btn.className = 'copy-btn absolute top-3 right-3 bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs px-2 py-1 rounded transition-colors border border-gray-700';
+        btn.innerText = 'Copy';
+        
+        pre.style.position = 'relative';
+        pre.appendChild(btn);
+
+        btn.addEventListener('click', () => {
+          const code = pre.querySelector('code');
+          if(code) {
+            navigator.clipboard.writeText(code.innerText);
+            btn.innerText = 'Copied!';
+            setTimeout(() => { btn.innerText = 'Copy'; }, 2000);
+          }
+        });
+      });
+    });
+  </script>
+</Layout>
