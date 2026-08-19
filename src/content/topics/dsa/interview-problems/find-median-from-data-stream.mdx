@@ -1,0 +1,115 @@
+---
+title: "Find Median from Data Stream"
+description: "The dual heaps."
+importance: "HIGH"
+revisionTime: 1
+category: "DSA"
+subcategory: "Interview Problems"
+order: 154
+---
+
+## Concept
+
+LeetCode #295.
+*Problem: The median is the middle value in an ordered integer list. If the size of the list is even, there is no middle value, and the median is the mean of the two middle values. Implement the `MedianFinder` class:*
+- `addNum(num)`: Adds the integer `num` from the data stream to the data structure.
+- `findMedian()`: Returns the median of all elements so far.
+
+`Input: addNum(1), addNum(2), findMedian() -> 1.5, addNum(3), findMedian() -> 2.0`
+
+## The Naive Approach
+
+You could just push the numbers into a standard Array. 
+When `findMedian()` is called, you run `array.sort()`, find the middle index, and return it.
+Because `addNum` will be called thousands of times, running an $O(N \log N)$ sort on a massive array every single time you need the median will completely freeze the application.
+
+If you optimize it by doing an Insertion Sort (shifting elements when `addNum` is called to keep the array permanently sorted), `addNum` takes $O(N)$ time. This is better, but still too slow for massive data streams.
+
+## The Two Heaps Strategy
+
+We want to find the middle number instantly in $O(1)$ time. 
+To do this, we literally cut the data stream in half!
+
+We use two Priority Queues (Heaps):
+1. **Max-Heap (Left Side):** Stores the smaller half of the numbers. Because it's a Max-Heap, the absolute *largest* number in this smaller half bubbles perfectly to the top.
+2. **Min-Heap (Right Side):** Stores the larger half of the numbers. Because it's a Min-Heap, the absolute *smallest* number in this larger half bubbles perfectly to the top.
+
+The tops of the two heaps are literally the two exact middle numbers of the entire data stream!
+- If the total amount of numbers is **Even**: The median is `(MaxHeap.top() + MinHeap.top()) / 2`.
+- If the total amount of numbers is **Odd**: We forcefully make the Max-Heap hold the extra number. The median is just `MaxHeap.top()`!
+
+## Implementation
+
+*Note: JavaScript does not have built-in Heaps. In an interview, you are allowed to assume a `PriorityQueue` class exists, but you must define its expected behavior.*
+
+```typescript
+// Assume PriorityQueue exists. 
+// Syntax: new PriorityQueue({ compare: (a, b) => a - b }) // Min-Heap
+// Syntax: new PriorityQueue({ compare: (a, b) => b - a }) // Max-Heap
+
+class MedianFinder {
+    // Left side (Smaller half). The largest number sits on top.
+    private maxHeap: PriorityQueue<number>;
+    
+    // Right side (Larger half). The smallest number sits on top.
+    private minHeap: PriorityQueue<number>;
+
+    constructor() {
+        this.maxHeap = new PriorityQueue({ compare: (a, b) => b - a });
+        this.minHeap = new PriorityQueue({ compare: (a, b) => a - b });
+    }
+
+    // Time Complexity: O(log N)
+    public addNum(num: number): void {
+        // Step 1: Blindly throw the number into the Left side (Max-Heap)
+        this.maxHeap.enqueue(num);
+
+        // Step 2: Ensure the math is correct!
+        // Did we accidentally put a massive number into the "Smaller Half"?
+        // If the top of the Left side is bigger than the top of the Right side,
+        // it doesn't belong there! Move it to the Right side!
+        if (this.minHeap.size() > 0 && this.maxHeap.front() > this.minHeap.front()) {
+            this.minHeap.enqueue(this.maxHeap.dequeue());
+        }
+
+        // Step 3: Balance the sizes!
+        // We enforce the rule: The Max-Heap can be larger by AT MOST 1 element.
+        if (this.maxHeap.size() > this.minHeap.size() + 1) {
+            this.minHeap.enqueue(this.maxHeap.dequeue());
+        } else if (this.minHeap.size() > this.maxHeap.size()) {
+            this.maxHeap.enqueue(this.minHeap.dequeue());
+        }
+    }
+
+    // Time Complexity: O(1)
+    public findMedian(): number {
+        // If sizes are equal, it's an Even amount of numbers. Average the two tops!
+        if (this.maxHeap.size() === this.minHeap.size()) {
+            return (this.maxHeap.front() + this.minHeap.front()) / 2.0;
+        }
+
+        // It's Odd. Our balancing logic guarantees Max-Heap has the extra number!
+        return this.maxHeap.front();
+    }
+}
+```
+
+Let's trace `addNum(1)`, `addNum(2)`, `addNum(3)`:
+1. **add(1)**: `MaxHeap` gets 1. `MaxHeap=[1]`, `MinHeap=[]`. Median = `1`.
+2. **add(2)**: `MaxHeap` gets 2. `MaxHeap=[2, 1]`. 
+   - Is `Max(2) > Min(null)`? No. 
+   - Is `Max.size(2) > Min.size(0) + 1`? YES!
+   - Move `2` to `MinHeap`. `MaxHeap=[1]`, `MinHeap=[2]`. Median = `(1+2)/2 = 1.5`.
+3. **add(3)**: `MaxHeap` gets 3. `MaxHeap=[3, 1]`.
+   - Is `Max(3) > Min(2)`? YES! Move 3!
+   - `MaxHeap=[1]`, `MinHeap=[2, 3]`.
+   - Is `Min.size(2) > Max.size(1)`? YES! Move 2 back to Max!
+   - `MaxHeap=[2, 1]`, `MinHeap=[3]`. Median = `2`.
+
+## Interview Questions
+
+**Q: What if 99% of the stream data falls between 0 and 100? Can we optimize?**
+**A:** Yes! If the numbers are strictly bounded within a tiny range, you don't need Heaps at all. You can use **Counting Sort**. Create an array of size 101 (`const counts = new Array(101).fill(0)`). When `addNum(50)` is called, just do `counts[50]++`. This is pure $O(1)$ time! To find the median, you just iterate through the `counts` array until you mathematically hit the middle number.
+
+**Q: Why not use a Binary Search Tree (BST) instead of two Heaps?**
+**A:** A Self-Balancing BST (like an AVL Tree or Red-Black Tree) is functionally perfect for this. The root of the tree is the median! However, writing a Red-Black Tree from scratch requires 300 lines of complex rotation logic, making it impossible in a 45-minute interview. The Two Heaps approach requires zero complex rotation logic and perfectly emulates the median-finding capability of a BST.

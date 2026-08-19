@@ -1,0 +1,126 @@
+---
+title: "Basic Calculator"
+description: "Parsing the math."
+importance: "MEDIUM"
+revisionTime: 1
+category: "DSA"
+subcategory: "Interview Problems"
+order: 156
+---
+
+## Concept
+
+LeetCode #224.
+*Problem: Given a string `s` representing a valid expression, implement a basic calculator to evaluate it, and return the result of the evaluation. The string consists of digits, `'+'`, `'-'`, `'('`, `')'`, and spaces.*
+
+`Input: s = "(1+(4+5+2)-3)+(6+8)"`
+`Output: 23`
+
+Because this string can contain massively nested parenthesis, you cannot simply parse left-to-right. Parentheses represent an isolated sub-problem that must be evaluated first. This nested, LIFO (Last-In-First-Out) architecture perfectly dictates the use of a **Stack**.
+
+## The Stack Strategy
+
+We use a Stack, but not to store individual numbers. We use the Stack to store **The State of the Universe** exactly right before we enter a parenthesis!
+
+Variables we need to track:
+- `currentNumber`: The multi-digit number we are currently building (e.g., parsing "1", then "2" to make "12").
+- `result`: The running total of the math for the current parenthesis scope.
+- `sign`: Is the number we are building positive or negative? (`1` or `-1`).
+
+**The Rules:**
+1. **Digits (`0-9`):** Multiply the `currentNumber` by 10 and add the new digit. (This correctly parses `1` then `2` into `12`).
+2. **Plus (`+`) / Minus (`-`):** The current number has officially ended! We multiply the `currentNumber` by the `sign` and add it to our `result`. Then we reset the `currentNumber` to `0`, and update the `sign` to match the new operator!
+3. **Open Parenthesis (`(`):** We are about to enter a brand new nested scope! We MUST save our current `result` and our current `sign` so we don't forget them! We push them onto the Stack. Then, we completely reset `result = 0` and `sign = 1` so the new parenthesis can calculate its own isolated math.
+4. **Close Parenthesis (`)`):** The isolated math is done! We add the final `currentNumber` to the isolated `result`. Then, we pop the old `sign` off the stack and multiply it. Finally, we pop the old `result` off the stack and add it together! The nested math has successfully merged back into the main universe.
+
+## Implementation
+
+```typescript
+// Time Complexity: O(N) (One single pass through the string)
+// Space Complexity: O(N) (For the stack, in the worst case of "(((((((((1)))))))))")
+
+function calculate(s: string): number {
+    const stack: number[] = [];
+    
+    let result = 0;
+    let currentNumber = 0;
+    let sign = 1; // 1 represents Positive, -1 represents Negative
+
+    for (let i = 0; i < s.length; i++) {
+        const char = s[i];
+
+        if (char >= '0' && char <= '9') {
+            // It's a digit! Build the multi-digit number!
+            // charCodeAt is slightly faster than parseInt, but parseInt is fine.
+            currentNumber = (currentNumber * 10) + parseInt(char, 10);
+            
+        } else if (char === '+') {
+            // Add the previous number to the result
+            result += sign * currentNumber;
+            // Reset for the new number
+            currentNumber = 0;
+            sign = 1; // The next number will be positive
+            
+        } else if (char === '-') {
+            // Add the previous number to the result
+            result += sign * currentNumber;
+            // Reset for the new number
+            currentNumber = 0;
+            sign = -1; // The next number will be negative!
+            
+        } else if (char === '(') {
+            // SAVE THE UNIVERSE!
+            // Push the current running result, then push the sign!
+            stack.push(result);
+            stack.push(sign);
+            
+            // Wipe the universe clean for the new isolated parenthesis scope
+            result = 0;
+            sign = 1;
+            
+        } else if (char === ')') {
+            // 1. Finish the isolated math!
+            result += sign * currentNumber;
+            currentNumber = 0;
+            
+            // 2. Restore the universe!
+            // Pop the old sign, and multiply it against our isolated result
+            result *= stack.pop()!;
+            
+            // Pop the old running total, and add it!
+            result += stack.pop()!;
+        }
+        // If it's a space ' ', the loop just ignores it!
+    }
+
+    // CRITICAL: When the string ends, the final number sitting in currentNumber 
+    // hasn't been added to the result yet because there is no trailing '+' sign!
+    result += sign * currentNumber;
+
+    return result;
+}
+```
+
+## Basic Calculator II (Multiplication and Division)
+
+LeetCode #227. *Problem: What if the string has `*` and `/`, but NO parenthesis?*
+
+This completely changes the logic because of **PEMDAS (Order of Operations)**. Multiplication must be evaluated *before* addition.
+
+Instead of keeping a running `result`, we push every single number onto a Stack!
+- If we see a `+`, we push the number.
+- If we see a `-`, we push the negative number.
+- If we see a `*`, we **pop** the top number off the stack, multiply it by our current number, and push the result back onto the stack!
+- If we see a `/`, we **pop** the top number, divide it, truncate it to zero (use `Math.trunc()` in JS, not `Math.floor()`), and push it back!
+
+At the very end, the Stack is completely free of multiplication/division. It's just a stack of isolated numbers. You run a `while` loop, pop everything off the stack, add them together, and return the final answer.
+
+## Interview Questions
+
+**Q: `eval(s)` solves this in one line. Can I use it?**
+**A:** `eval()` executes a string as arbitrary JavaScript code. In an interview, using `eval()` will result in an instant failure. In real-world software engineering, using `eval()` on unsanitized user input allows an attacker to type `process.exit()` or `fs.rmdirSync('/')` into the calculator and instantly destroy your entire server. It is a massive security vulnerability.
+
+**Q: In Basic Calculator II (Multiplication/Division), why use `Math.trunc()` instead of `Math.floor()` for division?**
+**A:** `Math.floor()` always rounds DOWN to the nearest whole integer.
+If you divide `3 / 2`, it equals `1.5`. `Math.floor(1.5)` correctly rounds down to `1`.
+But what if the number is negative? `-3 / 2` equals `-1.5`. `Math.floor(-1.5)` rounds DOWN to **`-2`**. This completely breaks the math! You just want to chop the decimals off. `Math.trunc(-1.5)` flawlessly drops the `.5` and correctly returns `-1`.

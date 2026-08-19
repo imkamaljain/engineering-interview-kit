@@ -1,0 +1,99 @@
+---
+title: "Kth Largest Element in an Array"
+description: "QuickSelect vs Heap."
+importance: "HIGH"
+revisionTime: 2
+category: "DSA"
+subcategory: "Heap"
+order: 63
+---
+
+## Concept
+
+LeetCode #215. This is one of the most frequently asked problems in Meta/Facebook interviews.
+*Problem: Given an integer array `nums` and an integer `k`, return the `k`th largest element in the array.*
+(Note: It asks for the exact Kth element, not the Top K elements array).
+
+There are three ways to solve this. You must be able to discuss the trade-offs of all three.
+
+## Approach 1: Sorting ($O(N \log N)$)
+
+The most trivial solution.
+```typescript
+function findKthLargest(nums: number[], k: number): number {
+    nums.sort((a, b) => b - a); // Sort descending
+    return nums[k - 1];
+}
+```
+**Pros:** 2 lines of code.
+**Cons:** Too slow. $O(N \log N)$ time. The interviewer will ask for a faster solution.
+
+## Approach 2: Min-Heap ($O(N \log K)$)
+
+We use the "K-Sized Min-Heap" trick from the previous section.
+We push numbers into a Min-Heap. If the size exceeds K, we pop the smallest.
+At the end, the Heap contains exactly the Top K largest elements. Because it is a Min-Heap, the absolute *smallest* of those top elements (which is exactly the Kth largest overall!) is sitting right at the Root.
+
+```typescript
+function findKthLargestHeap(nums: number[], k: number): number {
+    const minHeap = new MinPriorityQueue();
+    for (let num of nums) {
+        minHeap.enqueue(num);
+        if (minHeap.size() > k) {
+            minHeap.dequeue();
+        }
+    }
+    // The Kth largest is sitting right at the front!
+    return minHeap.front().element;
+}
+```
+**Pros:** Excellent if K is small. Can process massive streaming data that cannot fit into RAM all at once.
+**Cons:** If K is very large (e.g., $K = N/2$), the time complexity degrades to $O(N \log N)$.
+
+## Approach 3: QuickSelect ($O(N)$ Average)
+
+This is the mathematically optimal solution expected in Hard interviews.
+**QuickSelect** uses the exact same logic as Quick Sort.
+
+1. Pick a random `Pivot` number.
+2. Partition the array into three buckets: numbers `Greater` than pivot, `Equal` to pivot, and `Less` than pivot.
+3. If the `Greater` bucket is larger than K, we know the Kth largest number MUST be inside the `Greater` bucket! We throw away the `Less` and `Equal` buckets entirely, and recurse only on the `Greater` bucket.
+4. Because we throw away massive chunks of the array at every step (like Binary Search), the average time complexity drops to exactly **$O(N)$**.
+
+```typescript
+function findKthLargestQuickSelect(nums: number[], k: number): number {
+    const pivot = nums[Math.floor(Math.random() * nums.length)];
+    
+    const left: number[] = [];  // Greater than pivot
+    const mid: number[] = [];   // Equal to pivot
+    const right: number[] = []; // Less than pivot
+    
+    for (let num of nums) {
+        if (num > pivot) left.push(num);
+        else if (num === pivot) mid.push(num);
+        else right.push(num);
+    }
+    
+    // Is the Kth element hiding in the Greater bucket?
+    if (k <= left.length) {
+        return findKthLargestQuickSelect(left, k);
+    }
+    
+    // Is it in the Equal bucket? (We found it!)
+    if (k > left.length && k <= left.length + mid.length) {
+        return pivot;
+    }
+    
+    // It must be in the Less bucket.
+    // Adjust K because we threw away the Left and Mid buckets!
+    return findKthLargestQuickSelect(right, k - left.length - mid.length);
+}
+```
+
+## Interview Questions
+
+**Q: What is the absolute worst-case time complexity of QuickSelect?**
+**A:** The worst-case is **$O(N^2)$**. This happens if the pivot randomly chosen is the absolute minimum or maximum element every single time, meaning the array is never split in half, and you only reduce the search space by 1 item per recursion. To prevent this, professional implementations use Median-of-Medians pivot selection, or ensure a highly randomized pivot.
+
+**Q: If QuickSelect is $O(N)$ and the Heap is $O(N \log K)$, why would you ever use the Heap approach in production?**
+**A:** QuickSelect requires having the entire dataset loaded into physical RAM so you can partition it into arrays. If you have 1 Terabyte of server log data streaming over a network, and you want to find the Top 100 errors, you cannot use QuickSelect. The Heap approach processes data one piece at a time and only uses exactly $O(K)$ RAM (e.g., holding exactly 100 integers). The Heap is the only viable architecture for big-data streams.

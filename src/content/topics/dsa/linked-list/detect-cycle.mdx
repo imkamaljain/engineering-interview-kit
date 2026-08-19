@@ -1,0 +1,113 @@
+---
+title: "Detect Cycle"
+description: "Finding infinite loops."
+importance: "HIGH"
+revisionTime: 2
+category: "DSA"
+subcategory: "Linked List"
+order: 27
+---
+
+## Concept
+
+*Problem: Given `head`, the head of a linked list, determine if the linked list has a cycle in it.*
+
+A cycle occurs when a node's `next` pointer accidentally points backwards to a node we have already visited. If we try to traverse this list using a standard `while (current !== null)` loop, the program will run infinitely and crash the application.
+
+## Approach 1: Hash Set (The O(N) Space Way)
+
+The most intuitive way to solve this is to drop a "breadcrumb" on every node we visit. If we ever step on a breadcrumb, we know we've walked in a circle.
+
+```typescript
+function hasCycleSet(head: ListNode | null): boolean {
+    const visited = new Set<ListNode>();
+    let current = head;
+
+    while (current !== null) {
+        if (visited.has(current)) {
+            return true; // We've been here before!
+        }
+        visited.add(current);
+        current = current.next;
+    }
+
+    return false;
+}
+```
+**Drawback:** This takes $O(N)$ extra memory to store the memory addresses in the Set.
+
+## Approach 2: Floyd's Tortoise and Hare (The O(1) Space Way)
+
+To solve it in $O(1)$ space, we use the **Fast and Slow Pointers** technique.
+If there is a cycle, the Fast pointer will enter the cycle and run in circles. Eventually, the Slow pointer will also enter the cycle. Because the Fast pointer moves 2 steps, and the Slow pointer moves 1 step, the Fast pointer is closing the gap by exactly 1 step per loop.
+**Mathematically, the Fast pointer is guaranteed to physically lap the Slow pointer and collide on the exact same node.**
+
+```typescript
+function hasCycle(head: ListNode | null): boolean {
+    let slow = head;
+    let fast = head;
+
+    while (fast !== null && fast.next !== null) {
+        slow = slow!.next;
+        fast = fast.next.next;
+
+        if (slow === fast) {
+            return true; // Collision!
+        }
+    }
+
+    return false; // Fast hit null. No cycle.
+}
+```
+
+## The Follow-Up: Find the Start of the Cycle
+
+Interviewers will often ask a much harder follow-up: *"Great, you found a cycle. Now, return the exact Node where the cycle begins."* (LeetCode 142).
+
+If you used the Hash Set, this is trivial (just return the node that triggered `visited.has()`). But how do you do it in $O(1)$ space using Floyd's algorithm?
+
+**The Math Trick:**
+1. Run the Tortoise and Hare until they collide. (Let's say they collide at Node Z).
+2. The collision point is *not* necessarily the start of the cycle.
+3. To find the start of the cycle, **leave the Slow pointer at the collision point**. **Teleport a brand new pointer to the Head of the list.**
+4. Move both pointers exactly **1 step** at a time.
+5. Due to the geometry of the cycle distances, they are mathematically guaranteed to collide exactly at the node where the cycle begins!
+
+```typescript
+function detectCycleStart(head: ListNode | null): ListNode | null {
+    let slow = head;
+    let fast = head;
+    let hasCycle = false;
+
+    // Phase 1: Detect Cycle
+    while (fast !== null && fast.next !== null) {
+        slow = slow!.next;
+        fast = fast.next.next;
+        if (slow === fast) {
+            hasCycle = true;
+            break;
+        }
+    }
+
+    if (!hasCycle) return null;
+
+    // Phase 2: Find the exact start node
+    let pointer1 = head;
+    let pointer2 = slow;
+
+    while (pointer1 !== pointer2) {
+        pointer1 = pointer1!.next;
+        pointer2 = pointer2!.next;
+    }
+
+    return pointer1; // This is the start of the cycle!
+}
+```
+
+## Interview Questions
+
+**Q: In Floyd's algorithm, why does the `Fast` pointer move exactly 2 steps? Could it move 3 steps?**
+**A:** Yes, moving 3 steps (or 4, or 5) would also mathematically guarantee a collision eventually. However, 2 steps is optimal. Moving 3 steps might cause the Fast pointer to "jump over" the Slow pointer repeatedly, taking longer to land on the *exact* same node simultaneously. Moving 2 steps guarantees that the distance between them shrinks by exactly 1 step per loop, ensuring the fastest possible collision.
+
+**Q: A developer suggests modifying the physical `ListNode` class to add a `visited: boolean` property to solve the cycle problem in $O(1)$ space. Is this a good idea?**
+**A:** In a pure algorithmic vacuum, yes, marking `current.visited = true` takes $O(1)$ space and $O(N)$ time. However, in software engineering, mutating the underlying physical data structure just to run a read-only check is a terrible anti-pattern. If two different threads try to run `hasCycle` simultaneously, they will overwrite each other's `visited` flags and crash. The Two Pointer approach achieves $O(1)$ space without mutating the physical data.

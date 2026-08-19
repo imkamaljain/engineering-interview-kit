@@ -1,0 +1,108 @@
+---
+title: "The Knapsack Problem"
+description: "The 0/1 Choice."
+importance: "MEDIUM"
+revisionTime: 1
+category: "DSA"
+subcategory: "Dynamic Programming"
+order: 119
+---
+
+## Concept
+
+The **0/1 Knapsack Problem** is the most famous theoretical Dynamic Programming problem in computer science.
+
+*Problem: You are a thief with a knapsack (backpack) that can hold a maximum weight capacity `W`. You are in a vault with `N` items. Each item has a `weight` and a `value`. What is the maximum value you can steal without breaking your backpack?*
+
+`Weights = [1, 2, 3]`
+`Values = [10, 15, 40]`
+`Capacity = 5`
+
+**Why 0/1?** Because you cannot split items in half. You either take the whole item (1) or you leave it behind (0). 
+
+Because a Greedy algorithm (sort by value/weight ratio) completely fails on 0/1 constraints, we MUST use Dynamic Programming.
+
+## The 2D DP Strategy
+
+We create a 2D Matrix: `dp[item][capacity]`.
+The rows represent the items we are allowed to look at. The columns represent the current capacity of our backpack.
+`dp[i][w]` answers: *"If I am only allowed to steal from the first `i` items, and my backpack has a capacity of `w`, what is my max profit?"*
+
+For every item `i`, we have two choices:
+1. **Leave it:** We don't take the item. Our profit is exactly the profit we had using the previous items. `dp[i-1][w]`.
+2. **Take it:** We take the item! We gain its `value`. BUT, it takes up `weight` in our backpack. We must look back at the previous row to see what the max profit was for a backpack that was *smaller* by exactly that much weight. `value + dp[i-1][w - weight]`.
+
+We take the `Math.max()` of those two choices.
+
+## Implementation
+
+```typescript
+// Time Complexity: O(N * W) (Items * Capacity)
+// Space Complexity: O(N * W) (The 2D Matrix)
+
+function knapsack01(weights: number[], values: number[], capacity: number): number {
+    const numItems = weights.length;
+
+    // Create a 2D Matrix of (Items + 1) rows and (Capacity + 1) columns
+    const dp = Array.from({ length: numItems + 1 }, () => new Array(capacity + 1).fill(0));
+
+    // Loop through every item
+    for (let i = 1; i <= numItems; i++) {
+        const currentWeight = weights[i - 1];
+        const currentValue = values[i - 1];
+
+        // Loop through every possible backpack capacity
+        for (let w = 1; w <= capacity; w++) {
+            
+            if (currentWeight <= w) {
+                // Choice: Leave it vs Take it
+                dp[i][w] = Math.max(
+                    dp[i - 1][w], // Leave it
+                    currentValue + dp[i - 1][w - currentWeight] // Take it
+                );
+            } else {
+                // The item is too heavy for the current capacity! We MUST leave it.
+                dp[i][w] = dp[i - 1][w];
+            }
+        }
+    }
+
+    return dp[numItems][capacity];
+}
+```
+
+## State Reduction (1D Array)
+
+Notice the recurrence relation: `dp[i][w] = dp[i-1][w]`.
+Row `i` ONLY looks back at Row `i-1`. It never looks at `i-2`.
+Just like Longest Common Subsequence, we can drop this from a 2D Matrix into a 1D Array!
+
+**The Trick:** We just use a single 1D array `dp[w]`. However, we MUST loop through the capacities **backwards** (from `capacity` down to `0`). If we loop forwards, we will accidentally reuse the item we just picked up, turning the algorithm into the Unbounded Knapsack (Coin Change) problem! Looping backwards perfectly preserves the 0/1 constraint.
+
+```typescript
+// Time Complexity: O(N * W)
+// Space Complexity: O(W) (Brilliant!)
+
+function knapsack1D(weights: number[], values: number[], capacity: number): number {
+    const dp = new Array(capacity + 1).fill(0);
+
+    for (let i = 0; i < weights.length; i++) {
+        // Loop backwards!
+        for (let w = capacity; w >= weights[i]; w--) {
+            dp[w] = Math.max(dp[w], values[i] + dp[w - weights[i]]);
+        }
+    }
+
+    return dp[capacity];
+}
+```
+
+## Interview Questions
+
+**Q: Partition Equal Subset Sum (LeetCode 416) asks if you can split an array into two subsets with equal sums. Is this the Knapsack problem?**
+**A:** Yes! This is a legendary 0/1 Knapsack problem in disguise. 
+If the total sum of the array is 22, you want to see if you can pick a combination of items that exactly equals 11.
+The `Capacity` is 11. The `weights` of the items are their literal array values. You run the 1D Knapsack boolean logic (`dp[w] = dp[w] || dp[w - num]`). If `dp[11]` returns `true`, it means you successfully packed a backpack of size 11, perfectly splitting the array!
+
+**Q: Pseudo-Polynomial Time. The time complexity is $O(N \times W)$. Is this Polynomial time?**
+**A:** No, it is "Pseudo-Polynomial". $W$ is the literal numerical value of the capacity. If the capacity is $10^{12}$, the algorithm will run $10^{12}$ times and crash the computer, even if $N$ is only 3 items! True polynomial algorithms scale strictly based on the *length* of the input array, not the numerical size of the values inside it.

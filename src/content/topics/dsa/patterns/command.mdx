@@ -1,0 +1,120 @@
+---
+title: "Command Pattern"
+description: "Turning actions into objects."
+importance: "MEDIUM"
+revisionTime: 1
+category: "DSA"
+subcategory: "Patterns"
+order: 145
+---
+
+## Concept
+
+**Category:** Behavioral Pattern
+
+The **Command Pattern** encapsulates a request as a stand-alone object. 
+Instead of executing an action immediately (`light.turnOn()`), you create an object that *represents* the action (`new TurnOnLightCommand(light)`). 
+
+Why turn an action into an object? Because objects can be saved to an array!
+This allows you to create Queues, History logs, and the holy grail of text editors: **Undo/Redo functionality**.
+
+## The Mental Model
+
+Imagine you are at a Restaurant.
+You (the **Client**) tell the Waiter (the **Invoker**), "I want a steak."
+The Waiter does not run into the kitchen and cook the steak.
+The Waiter writes your order down on a piece of paper (The **Command Object**).
+The Waiter takes this piece of paper, puts it on a metal spike in the kitchen (The **Queue**), and walks away.
+Later, the Chef (the **Receiver**) grabs the paper, reads it, and cooks the steak.
+
+By turning your vocal request into a physical piece of paper, the restaurant can queue orders, delay them, or throw them in the trash if you cancel.
+
+## Implementation (Undo/Redo)
+
+Let's build a smart home system with Undo functionality.
+
+```typescript
+// 1. The Receiver (The actual device doing the work)
+class Light {
+    turnOn() { console.log("Light is ON"); }
+    turnOff() { console.log("Light is OFF"); }
+}
+
+// 2. The Command Interface
+// It MUST have an execute() method, and an undo() method!
+interface Command {
+    execute(): void;
+    undo(): void;
+}
+
+// 3. Concrete Commands
+class TurnOnCommand implements Command {
+    private light: Light;
+
+    constructor(light: Light) {
+        this.light = light;
+    }
+
+    execute() { this.light.turnOn(); }
+    undo() { this.light.turnOff(); } // The exact opposite!
+}
+
+class TurnOffCommand implements Command {
+    private light: Light;
+
+    constructor(light: Light) {
+        this.light = light;
+    }
+
+    execute() { this.light.turnOff(); }
+    undo() { this.light.turnOn(); } // The exact opposite!
+}
+
+// 4. The Invoker (The Remote Control)
+class RemoteControl {
+    private history: Command[] = []; // The Undo Stack!
+
+    public pressButton(command: Command) {
+        command.execute();           // Do the action!
+        this.history.push(command);  // Save it to history!
+    }
+
+    public pressUndoButton() {
+        if (this.history.length > 0) {
+            const lastCommand = this.history.pop()!;
+            console.log("-> UNDO TRIGGERED");
+            lastCommand.undo();      // Reverse the action!
+        }
+    }
+}
+
+// Usage:
+const livingRoomLight = new Light();
+const remote = new RemoteControl();
+
+// Turn the action into physical objects!
+const lightOn = new TurnOnCommand(livingRoomLight);
+const lightOff = new TurnOffCommand(livingRoomLight);
+
+remote.pressButton(lightOn);  // "Light is ON"
+remote.pressButton(lightOff); // "Light is OFF"
+
+remote.pressUndoButton();     // "-> UNDO TRIGGERED", "Light is ON"
+remote.pressUndoButton();     // "-> UNDO TRIGGERED", "Light is OFF"
+```
+
+## Macro Commands
+
+Because Commands are just objects, you can create a `MacroCommand` that holds an array of *other* Commands.
+When you call `macroCommand.execute()`, it loops through its array and executes 10 different commands at once!
+This is how "Routines" work in Smart Homes (e.g., "Goodnight Routine" executes `TurnOffLights`, `LockDoors`, `LowerThermostat` simultaneously).
+
+## Interview Questions
+
+**Q: Redux in React feels very similar to this. Is Redux the Command Pattern?**
+**A:** Yes! Redux is a legendary implementation of the Command Pattern. 
+In Redux, you don't mutate state directly. You `dispatch` an Action object: `{ type: "ADD_TODO", payload: "Buy milk" }`. 
+That Action object is literally a Command. Because every state change in Redux is represented by an object, Redux can easily save them to an array, allowing the famous "Redux DevTools Time Travel Debugging" (Undo/Redo)!
+
+**Q: What is the main drawback of the Command Pattern?**
+**A:** Class explosion. For every single tiny action in your application, you must write a brand new Class that implements `execute()` and `undo()`. If you have a complex UI with 50 different buttons, you will end up with 50 new command classes, heavily bloating the codebase.

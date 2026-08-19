@@ -1,0 +1,106 @@
+---
+title: "Dijkstra's Algorithm"
+description: "The shortest path on a weighted graph."
+importance: "HIGH"
+revisionTime: 3
+category: "DSA"
+subcategory: "Graphs"
+order: 74
+---
+
+## Concept
+
+In an Unweighted Graph (where every edge takes 1 step), Breadth-First Search (BFS) is the undisputed king of finding the Shortest Path. It ripples outward in perfect concentric circles.
+
+However, in a **Weighted Graph**, the shortest physical path might take longer than a winding path!
+- Path A: 1 Edge, Weight 100.
+- Path B: 3 Edges, Weights `10, 10, 10`. Total = 30.
+BFS will blindly choose Path A because it reaches the target in fewer "steps" (edges), completely ignoring the massive 100 toll cost.
+
+**Dijkstra's Algorithm** is the mathematical upgrade to BFS. It solves the "Single-Source Shortest Path" problem.
+Instead of using a standard FIFO Queue (which blindly pops the oldest node), it uses a **Min-Priority Queue** (which instantly pops the node with the lowest total driving cost).
+
+## The Core Logic (Relaxation)
+
+Dijkstra's relies on an array of `distances` initialized to `Infinity`. (We assume every city is infinitely far away until proven otherwise).
+The `startNode` has a distance of `0`.
+
+As we explore the map, we look at our neighbors. If my current total cost is `50`, and the toll road to my neighbor costs `10`, the total cost to reach them is `60`. 
+I check their `distances` array. If their current recorded distance is `Infinity` (or anything greater than `60`), I overwrite it with `60`! This mathematical overwrite is called **Relaxation**. I then push `{ neighbor, 60 }` into the Priority Queue so we can eventually explore outward from there.
+
+## Implementation
+
+```typescript
+// Time Complexity: O(E log V) (Where E is edges, V is vertices)
+// Space Complexity: O(V + E)
+
+function dijkstra(n: number, edges: number[][], startNode: number): number[] {
+    // 1. Build the Adjacency List (Must include weights!)
+    // Map: Node -> Array of { node: destination, weight: cost }
+    const adjList = new Map<number, { node: number, weight: number }[]>();
+    for (let i = 0; i < n; i++) adjList.set(i, []);
+    
+    for (let [src, dest, weight] of edges) {
+        adjList.get(src)!.push({ node: dest, weight });
+        // Include reverse if undirected: adjList.get(dest)!.push({ node: src, weight });
+    }
+
+    // 2. Initialize Distance Array with Infinity
+    const distances = new Array(n).fill(Infinity);
+    distances[startNode] = 0; // Distance to myself is 0
+
+    // 3. Initialize Min-Priority Queue
+    // (Assuming a MinPriorityQueue that sorts objects by the 'cost' property)
+    const pq = new MinPriorityQueue({ priority: (item: any) => item.cost });
+    pq.enqueue({ node: startNode, cost: 0 });
+
+    // 4. Process the Graph
+    while (!pq.isEmpty()) {
+        const current = pq.dequeue().element;
+        const currentNode = current.node;
+        const currentCost = current.cost;
+
+        // OPTIMIZATION: If we pulled a stale, slower path out of the PQ, ignore it!
+        // (A faster path already updated the distances array and was processed)
+        if (currentCost > distances[currentNode]) continue;
+
+        // Check all neighbors
+        for (let neighbor of adjList.get(currentNode)!) {
+            const nextNode = neighbor.node;
+            const edgeWeight = neighbor.weight;
+
+            // Calculate the total time to reach the neighbor via THIS path
+            const newTotalCost = currentCost + edgeWeight;
+
+            // RELAXATION: Did we just discover a FASTER path to the neighbor?
+            if (newTotalCost < distances[nextNode]) {
+                distances[nextNode] = newTotalCost; // Overwrite the old slow time!
+                
+                // Add the neighbor to the PQ to explore outward from its new faster time
+                pq.enqueue({ node: nextNode, cost: newTotalCost });
+            }
+        }
+    }
+
+    // The distances array now contains the absolute shortest path from 
+    // the startNode to EVERY SINGLE OTHER NODE in the graph!
+    return distances;
+}
+```
+
+## The Negative Weight Fatal Flaw
+
+Dijkstra's Algorithm is incredibly fast ($O(E \log V)$), but it has one catastrophic mathematical blindspot: **Negative Weights**.
+
+Imagine a graph where taking a specific road gives you a rebate of $-50$ minutes.
+Dijkstra's algorithm strictly operates on the assumption: *"Once I pop a node from the Min-PQ, I have definitively found the absolute shortest path to it forever."* It permanently locks in the shortest path and never looks back.
+If a negative weight exists later in the graph that loops backwards and miraculously lowers the cost of a previously locked-in node, Dijkstra's algorithm will completely ignore it, returning the wrong answer.
+
+If your interview problem contains Negative Weights, you MUST abandon Dijkstra's and use the **Bellman-Ford Algorithm** instead.
+
+## Interview Questions
+
+**Q: In the Dijkstra code, there is an "OPTIMIZATION" check: `if (currentCost > distances[currentNode]) continue;`. What does this do?**
+**A:** When exploring a graph, you might discover multiple paths to the exact same Node C. One path takes 100 minutes, one takes 50 minutes. Both of these paths get pushed into the Priority Queue at different times!
+The Priority Queue correctly bubbles the 50-minute path to the top. We process it, update the neighbors, and lock in the 50-minute time.
+Eventually, the PQ spits out the old, useless 100-minute path. The optimization check `100 > 50` catches this stale data and instantly `continue`s, bypassing the expensive `for` loop, ensuring we don't accidentally recalculate outward paths using a vastly inferior starting time.

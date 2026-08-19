@@ -1,0 +1,96 @@
+---
+title: "Serialize and Deserialize Tree"
+description: "Flattening the tree to a string."
+importance: "LOW"
+revisionTime: 1
+category: "DSA"
+subcategory: "Trees"
+order: 55
+---
+
+## Concept
+
+*Problem: Design an algorithm to serialize and deserialize a binary tree. Serialization is the process of converting a data structure into a sequence of bits (a string) so it can be stored in a file or memory buffer. Deserialization is reconstructing the tree from the string.* (LeetCode 297).
+
+This is a classic systems design implementation problem. How do you map a 2D hierarchical structure into a 1D flat string, and then parse it back perfectly?
+
+There are two primary ways to do this: 
+1. **BFS (Level-Order):** Converts the tree into a string exactly like LeetCode formats their test cases (`"[1,2,3,null,null,4,5]"`).
+2. **DFS (Pre-order):** The much easier and more elegant algorithm to write in an interview.
+
+## The DFS (Pre-order) Approach
+
+We will use a **Pre-order Traversal** (`Node -> Left -> Right`).
+
+**The Secret:** If we just print the numbers (`"1,2,3"`), deserialization is physically impossible because we don't know where the branches end. 
+To fix this, **we must explicitly record `null` pointers** as a special character (e.g., `"N"` or `"X"`). 
+
+When the deserializer reads `"N"`, it instantly knows: *"Ah, this branch has hit a dead end. I need to stop building and backtrack up the Call Stack."*
+
+### Serialization
+
+```typescript
+function serialize(root: TreeNode | null): string {
+    const result: string[] = [];
+
+    function dfs(node: TreeNode | null) {
+        if (node === null) {
+            result.push("N"); // Record the dead end!
+            return;
+        }
+        
+        result.push(node.val.toString()); // Process Node
+        dfs(node.left);                   // Go Left
+        dfs(node.right);                  // Go Right
+    }
+
+    dfs(root);
+    return result.join(","); // e.g., "1,2,N,N,3,4,N,N,5,N,N"
+}
+```
+
+### Deserialization
+
+To deserialize, we split the comma-separated string back into an Array. 
+We use a global pointer (or `shift()` off the front of the array) to read the values one by one. Because we serialized it using Pre-order (`Node -> Left -> Right`), we must reconstruct it in the exact same order!
+
+```typescript
+function deserialize(data: string): TreeNode | null {
+    const values = data.split(",");
+    let index = 0;
+
+    function buildTree(): TreeNode | null {
+        // Base case: We hit the end of the string
+        if (index >= values.length) return null;
+
+        const val = values[index];
+        index++; // Advance the global pointer
+
+        // If it's the dead end marker, return null to terminate this branch
+        if (val === "N") {
+            return null;
+        }
+
+        // 1. Create the Node
+        const node = new TreeNode(parseInt(val));
+
+        // 2. Recursively build the Left branch
+        node.left = buildTree();
+        
+        // 3. Recursively build the Right branch
+        node.right = buildTree();
+
+        return node;
+    }
+
+    return buildTree();
+}
+```
+
+## Interview Questions
+
+**Q: A developer uses an In-order traversal (`Left -> Node -> Right`) to serialize the tree. Why will their deserialization logic fail?**
+**A:** In-order traversal does not record the Root node first. When reconstructing the tree, the deserializer needs to instantiate the Parent node *before* it can attach the Left and Right children to it. Because In-order processes the extreme bottom-left leaf first, the deserializer receives a random leaf value at the start of the string, with absolutely no idea who its Parent is or where it belongs in the global tree structure. You must use Pre-order (or Level-order) for serialization.
+
+**Q: How does JSON.stringify() serialize trees?**
+**A:** `JSON.stringify()` essentially executes a Pre-order DFS traversal! It processes the parent key, and then recursively plunges into the nested objects (children). It inherently supports hierarchy by wrapping children in `{ }` or `[ ]` brackets. In fact, an entirely valid (though "hacky" and memory-heavy) way to solve this LeetCode problem is to simply `return JSON.stringify(root)` for serialize, and `return JSON.parse(data)` for deserialize!

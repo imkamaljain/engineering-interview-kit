@@ -1,0 +1,103 @@
+---
+title: "Longest Substring Without Repeating Characters"
+description: "The most famous Sliding Window problem."
+importance: "HIGH"
+revisionTime: 3
+category: "DSA"
+subcategory: "Strings"
+order: 21
+---
+
+## Concept
+
+This is LeetCode #3. It is arguably one of the most frequently asked String questions in software engineering interviews.
+
+*Problem: Given a string `s`, find the length of the longest substring without repeating characters.*
+`s = "abcabcbb"` -> Output: `3` (The substring is "abc").
+`s = "pwwkew"` -> Output: `3` (The substring is "wke").
+
+Because it asks for the "longest substring" under a specific constraint, this is a textbook **Dynamic Sliding Window** problem.
+
+## Mental Model
+
+String: `"abcabcbb"`
+
+1. `Left` pointer at 0. `Right` pointer at 0. Hash Set is empty.
+2. `Right` looks at 'a'. Not in set. Add 'a'. Window: `[a]`. Max Length: 1.
+3. `Right` looks at 'b'. Not in set. Add 'b'. Window: `[a, b]`. Max Length: 2.
+4. `Right` looks at 'c'. Not in set. Add 'c'. Window: `[a, b, c]`. Max Length: 3.
+5. **The Collision:** `Right` moves to 'a'. Wait, 'a' is already in the set!
+6. We must shrink the window from the left until the duplicate 'a' is removed.
+7. `Left` pointer is currently at 'a'. Remove it from the set. Move `Left` forward. 
+8. The duplicate is gone! The window is now `[b, c]`. `Right` can now safely add the new 'a' to the set. Window is `[b, c, a]`.
+
+## Implementation (The Set Approach)
+
+```typescript
+// Time Complexity: O(N) (Left and Right pointers only move forward)
+// Space Complexity: O(K) (where K is the size of the character set, e.g., 26)
+function lengthOfLongestSubstring(s: string): number {
+    const charSet = new Set<string>();
+    let left = 0;
+    let maxLength = 0;
+
+    // Expand the window
+    for (let right = 0; right < s.length; right++) {
+        // If we hit a duplicate, shrink from the left until it's gone
+        while (charSet.has(s[right])) {
+            charSet.delete(s[left]);
+            left++;
+        }
+        
+        // The window is now clean. Add the new character.
+        charSet.add(s[right]);
+        // Update the maximum length
+        maxLength = Math.max(maxLength, right - left + 1);
+    }
+
+    return maxLength;
+}
+```
+
+## The Optimization (The Hash Map Approach)
+
+The `Set` approach works perfectly, but there is a slight inefficiency.
+If the string is `"abxyzba"`, when the `Right` pointer hits the second 'a', the `Left` pointer is sitting at the first 'a'. 
+The `Left` pointer has to slowly chug along: remove 'a', remove 'b', remove 'x', remove 'y', remove 'z'... just to clean out the old 'a'.
+
+We can optimize this by using a **Hash Map** that stores the character and its *exact index*.
+If we hit a duplicate, we don't need to inch the `Left` pointer forward. We can instantly teleport the `Left` pointer to `previous_index + 1`.
+
+```typescript
+function lengthOfLongestSubstringOptimized(s: string): number {
+    // Map stores { character : the LAST SEEN index of that character }
+    const charMap = new Map<string, number>();
+    let left = 0;
+    let maxLength = 0;
+
+    for (let right = 0; right < s.length; right++) {
+        const char = s[right];
+
+        // If we've seen this character BEFORE, and its old position 
+        // is actually inside our current window...
+        if (charMap.has(char) && charMap.get(char)! >= left) {
+            // Teleport the Left pointer instantly past the old duplicate
+            left = charMap.get(char)! + 1;
+        }
+
+        charMap.set(char, right); // Update the map with the new index
+        maxLength = Math.max(maxLength, right - left + 1);
+    }
+
+    return maxLength;
+}
+```
+
+## Interview Questions
+
+**Q: In the Optimized Hash Map approach, why is the condition `charMap.get(char) >= left` strictly necessary? Can't we just teleport the Left pointer if the character exists in the map?**
+**A:** Imagine the string is `"abba"`.
+1. `Right` is at 'b' (index 2). Map has 'b' at index 1. We teleport `Left` to index 2. Window is `"b"`.
+2. `Right` moves to 'a' (index 3). Map has 'a' at index 0. 
+If we blindly teleported `Left` to `Map.get('a') + 1`, we would teleport `Left` *backwards* to index 1! Our window would instantly include the duplicate 'b's again.
+The check `charMap.get(char) >= left` ensures that we only care about duplicates that are *physically currently inside our active sliding window*. If the duplicate 'a' is sitting at index 0, and our `Left` pointer is already at index 2, the old 'a' is safely outside the window and cannot hurt us.

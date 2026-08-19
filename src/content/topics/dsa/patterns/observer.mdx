@@ -1,0 +1,110 @@
+---
+title: "Observer Pattern"
+description: "Subscribe and be notified."
+importance: "HIGH"
+revisionTime: 1
+category: "DSA"
+subcategory: "Patterns"
+order: 139
+---
+
+## Concept
+
+**Category:** Behavioral Pattern
+
+The **Observer Pattern** defines a one-to-many dependency between objects. When one object changes state, all its dependents are notified and updated automatically.
+
+This is the absolute most important design pattern in modern front-end engineering. It is the foundation of React's state management, Redux, Vue's reactivity, RxJS, and the native DOM Event Listener system.
+
+## The Mental Model
+
+Think of a YouTube Channel.
+You (the **Observer/Subscriber**) want to know when MKBHD (the **Subject/Publisher**) uploads a new video. 
+You *could* refresh his page every 5 seconds (This is called "Polling". It is horribly inefficient and burns CPU cycles).
+Instead, you click the "Subscribe" button. MKBHD adds you to a list. When he uploads a video, his server loops through the list and sends a push notification to everyone on it. 
+
+You do nothing. The data comes to you when it is ready.
+
+## Implementation
+
+The pattern requires two interfaces:
+1. **Subject (Publisher):** Holds a list of Observers. Has methods to `subscribe`, `unsubscribe`, and `notify`.
+2. **Observer (Subscriber):** Has an `update()` method that the Subject will call.
+
+```typescript
+// 1. The Observer Interface
+interface Observer {
+    update(videoTitle: string): void;
+}
+
+// 2. The Subject Interface
+interface Subject {
+    subscribe(observer: Observer): void;
+    unsubscribe(observer: Observer): void;
+    notify(videoTitle: string): void;
+}
+
+// 3. The Concrete Publisher
+class YouTubeChannel implements Subject {
+    private subscribers: Observer[] = [];
+
+    public subscribe(observer: Observer): void {
+        this.subscribers.push(observer);
+    }
+
+    public unsubscribe(observer: Observer): void {
+        this.subscribers = this.subscribers.filter(sub => sub !== observer);
+    }
+
+    public notify(videoTitle: string): void {
+        // Broadcast the update to EVERYONE in the list!
+        for (const sub of this.subscribers) {
+            sub.update(videoTitle);
+        }
+    }
+
+    public uploadVideo(title: string): void {
+        console.log(`\nChannel uploaded: ${title}`);
+        this.notify(title); // Trigger the broadcast!
+    }
+}
+
+// 4. The Concrete Subscribers
+class User implements Observer {
+    constructor(private name: string) {}
+
+    public update(videoTitle: string): void {
+        console.log(`[Notification for ${this.name}] New video available: ${videoTitle}`);
+    }
+}
+
+// Usage:
+const mkbhd = new YouTubeChannel();
+
+const user1 = new User("Alice");
+const user2 = new User("Bob");
+
+mkbhd.subscribe(user1);
+mkbhd.subscribe(user2);
+
+mkbhd.uploadVideo("iPhone 20 Review");
+// Output: 
+// Channel uploaded: iPhone 20 Review
+// [Notification for Alice] New video available: iPhone 20 Review
+// [Notification for Bob] New video available: iPhone 20 Review
+```
+
+## Push vs Pull Architecture
+
+The example above uses **Push Architecture**. The Subject physically pushes the new data (`videoTitle`) through the `update(data)` method directly into the Observer's hands.
+
+In **Pull Architecture**, the Subject just says: *"Hey, I changed! I'm not telling you what changed, but something changed."* The Observer must then physically reach back out to the Subject and call `subject.getState()` to figure out what happened. Pull is often preferred in complex systems (like React) because an Observer might only care about a very specific piece of the state, and pushing the entire massive state object every time is inefficient.
+
+## Interview Questions
+
+**Q: What is a "Memory Leak" in the context of the Observer pattern?**
+**A:** If an Observer (like a UI Component) subscribes to a long-living Subject (like a Global WebSocket connection), the Subject holds a strong memory reference to that UI component in its array. If the UI component is destroyed (e.g., the user navigates to a different page), but fails to call `unsubscribe()` before dying, the Subject's array will physically prevent the Garbage Collector from deleting the dead component from RAM! Over time, the RAM fills up with thousands of dead components, crashing the browser. This is why you MUST always call `removeEventListener` in React's `useEffect` cleanup function.
+
+**Q: What is the difference between the Observer Pattern and the Pub/Sub (Publish/Subscribe) Pattern?**
+**A:** In the standard Observer pattern, the Subject and the Observer are completely aware of each other. The Observer explicitly calls `subject.subscribe(this)`. 
+In the Pub/Sub pattern, there is a third-party "Event Bus" (Broker) sitting in the middle. The Publisher just throws a message into the void (`bus.publish('event')`). The Subscriber just listens to the void (`bus.subscribe('event')`). They never touch each other, achieving absolute total decoupling. (e.g., Redux, Kafka, RabbitMQ).

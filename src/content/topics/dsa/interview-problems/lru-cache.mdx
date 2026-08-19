@@ -1,0 +1,177 @@
+---
+title: "LRU Cache"
+description: "Least Recently Used."
+importance: "HIGH"
+revisionTime: 1
+category: "DSA"
+subcategory: "Interview Problems"
+order: 149
+---
+
+## Concept
+
+LeetCode #146.
+*Problem: Design a data structure that follows the constraints of a Least Recently Used (LRU) cache. It must support `get(key)` and `put(key, value)` in $O(1)$ average time complexity.*
+
+An **LRU Cache** is a temporary storage area with a maximum capacity. 
+When the cache gets full, and you want to insert a new item, you must delete an existing item to make room. Which one do you delete? The one that hasn't been accessed (Read or Written) in the longest amount of time! (The "Least Recently Used" item).
+
+## The Architecture ($O(1)$ Time)
+
+To achieve $O(1)$ time for `get()` and `put()`, we must combine two data structures:
+1. **Hash Map:** Provides $O(1)$ instant lookups for `get()`.
+2. **Doubly Linked List:** Provides $O(1)$ instant insertions and deletions to track the "Age" of items.
+
+**The Strategy:**
+- The front of the Linked List represents the "Most Recently Used" (Newest).
+- The back of the Linked List represents the "Least Recently Used" (Oldest).
+- Every time we `get()` or `put()` an item, we physically rip that Node out of the Linked List, and re-insert it at the very Front!
+- If we exceed the capacity, we just rip the final Node off the absolute Back of the Linked List, and delete it from the Hash Map.
+
+To avoid nasty null-pointer checks, we create two dummy nodes: `Head` and `Tail`. They act as permanent anchors. All real data nodes are inserted exactly between them.
+
+## Implementation
+
+```typescript
+class ListNode {
+    key: number;
+    val: number;
+    prev: ListNode | null = null;
+    next: ListNode | null = null;
+    
+    constructor(key: number, val: number) {
+        this.key = key;
+        this.val = val;
+    }
+}
+
+class LRUCache {
+    private capacity: number;
+    private map: Map<number, ListNode>;
+    
+    // The Dummy Anchors
+    private head: ListNode;
+    private tail: ListNode;
+
+    constructor(capacity: number) {
+        this.capacity = capacity;
+        this.map = new Map();
+        
+        this.head = new ListNode(0, 0);
+        this.tail = new ListNode(0, 0);
+        this.head.next = this.tail;
+        this.tail.prev = this.head;
+    }
+
+    // --- LINKED LIST HELPER METHODS ---
+    
+    // Always insert directly after the Dummy Head (Making it Newest)
+    private insertAtFront(node: ListNode): void {
+        const firstRealNode = this.head.next!;
+        
+        this.head.next = node;
+        node.prev = this.head;
+        
+        node.next = firstRealNode;
+        firstRealNode.prev = node;
+    }
+
+    // Rip the node out of the list
+    private removeNode(node: ListNode): void {
+        const prevNode = node.prev!;
+        const nextNode = node.next!;
+        
+        prevNode.next = nextNode;
+        nextNode.prev = prevNode;
+    }
+
+    // --- CORE CACHE METHODS ---
+
+    public get(key: number): number {
+        if (!this.map.has(key)) return -1;
+
+        const node = this.map.get(key)!;
+        
+        // It was just used! Rip it out and move it to the front!
+        this.removeNode(node);
+        this.insertAtFront(node);
+        
+        return node.val;
+    }
+
+    public put(key: number, value: number): void {
+        // If it already exists, update the value and rip it out
+        if (this.map.has(key)) {
+            const existingNode = this.map.get(key)!;
+            this.removeNode(existingNode);
+        }
+
+        // Create the new node and put it at the front
+        const newNode = new ListNode(key, value);
+        this.insertAtFront(newNode);
+        this.map.set(key, newNode);
+
+        // Did we exceed capacity?
+        if (this.map.size > this.capacity) {
+            // The oldest node is sitting directly in front of the Dummy Tail!
+            const oldestNode = this.tail.prev!;
+            
+            // Delete it from the list
+            this.removeNode(oldestNode);
+            
+            // CRITICAL: Delete it from the Hash Map!
+            this.map.delete(oldestNode.key);
+        }
+    }
+}
+```
+
+## The Modern JavaScript Trick (Map Object)
+
+If an interviewer asks you to build an LRU Cache in JavaScript, you can technically cheat using the native `Map` object.
+
+In JavaScript, a `Map` explicitly guarantees that it maintains the **Insertion Order** of its keys! (When you iterate over a `Map`, it strictly returns keys in the exact order they were inserted).
+If you delete a key, and then instantly re-insert it, it moves to the absolute back of the Map!
+
+```typescript
+class LRUCacheCheat {
+    private capacity: number;
+    private map: Map<number, number>;
+
+    constructor(capacity: number) {
+        this.capacity = capacity;
+        this.map = new Map();
+    }
+
+    get(key: number): number {
+        if (!this.map.has(key)) return -1;
+        
+        const val = this.map.get(key)!;
+        // Delete and re-insert to push it to the "Most Recent" position!
+        this.map.delete(key);
+        this.map.set(key, val);
+        
+        return val;
+    }
+
+    put(key: number, value: number): void {
+        if (this.map.has(key)) {
+            this.map.delete(key);
+        }
+        
+        this.map.set(key, value);
+
+        if (this.map.size > this.capacity) {
+            // To get the first (oldest) item in a JS Map, you grab its Iterator!
+            const oldestKey = this.map.keys().next().value;
+            this.map.delete(oldestKey);
+        }
+    }
+}
+```
+*Note: While brilliant, you should absolutely clarify with the interviewer before using this trick. They are usually testing your ability to write the Doubly Linked List manually.*
+
+## Interview Questions
+
+**Q: In the Doubly Linked List approach, why do the `ListNode` objects need to store the `key`? Isn't storing the `value` enough?**
+**A:** When the cache exceeds capacity, we must delete the oldest Node. But we MUST ALSO delete that item from the `Map`! If the Node only holds the value `100`, how do we tell the Hash Map which Key to delete? We can't! The Node MUST store the `key` so that we can execute `this.map.delete(oldestNode.key)`.

@@ -1,0 +1,103 @@
+---
+title: "Course Schedule"
+description: "Detecting Deadlocks."
+importance: "HIGH"
+revisionTime: 3
+category: "DSA"
+subcategory: "Graphs"
+order: 72
+---
+
+## Concept
+
+LeetCode #207. Course Schedule is the absolute gold standard for testing your knowledge of **Directed Graphs** and **Cycle Detection**.
+
+*Problem: You have `numCourses` to take, labeled from `0` to `numCourses - 1`. You are given an array `prerequisites` where `prerequisites[i] = [a, b]` indicates that you must take course `b` first if you want to take course `a`. Return true if you can finish all courses. Otherwise, return false.*
+
+`Input: numCourses = 2, prerequisites = [[1,0]]`
+*Translation:* To take Course 1, you must first take Course 0. (Valid).
+
+`Input: numCourses = 2, prerequisites = [[1,0],[0,1]]`
+*Translation:* To take Course 1, you must take Course 0. To take Course 0, you must take Course 1. (Deadlock! Invalid).
+
+This problem is asking one simple mathematical question: **"Is there a Cycle in this Directed Graph?"**
+
+## The DFS Approach (Cycle Detection)
+
+In an Undirected Graph, you just use a `visited` Hash Set. If you hit a visited node, there's a cycle.
+In a **Directed Graph**, hitting a visited node does NOT necessarily mean there's a cycle! Two different prerequisite paths might just lead to the same foundational course (e.g., both Calculus and Physics require Algebra).
+
+To detect a true cycle, you must track the **Current Active Path**.
+We use an array of `states` for every node:
+- `0 = UNVISITED`
+- `1 = VISITING` (Currently in the recursive call stack)
+- `2 = FULLY PROCESSED` (We verified this course and all its descendants are 100% safe)
+
+If we ever stumble onto a node that is currently `VISITING` (state 1), we have found a back-edge loop. Deadlock detected!
+
+## Implementation (DFS)
+
+```typescript
+function canFinishDFS(numCourses: number, prerequisites: number[][]): boolean {
+    // 1. Build the Adjacency List
+    // Map: Course -> Array of courses that REQUIRE this course
+    const adjList = new Map<number, number[]>();
+    for (let i = 0; i < numCourses; i++) adjList.set(i, []);
+    for (let [course, preReq] of prerequisites) {
+        adjList.get(preReq)!.push(course);
+    }
+
+    // 2. Initialize State Array (0: Unvisited, 1: Visiting, 2: Safe)
+    const state = new Array(numCourses).fill(0);
+
+    // DFS returns TRUE if a cycle is detected
+    function hasCycle(node: number): boolean {
+        // If it's currently in the stack, CYCLE DETECTED!
+        if (state[node] === 1) return true;
+        
+        // If it's already verified safe, no cycle here.
+        if (state[node] === 2) return false;
+
+        // Mark as VISITING (Put it on the stack)
+        state[node] = 1;
+
+        // Plunge down the prerequisite paths
+        for (let nextCourse of adjList.get(node)!) {
+            if (hasCycle(nextCourse)) return true;
+        }
+
+        // We survived the paths! Mark as FULLY PROCESSED (Safe)
+        state[node] = 2;
+        return false;
+    }
+
+    // Outer loop: We must check every course (in case the graph is disconnected)
+    for (let i = 0; i < numCourses; i++) {
+        if (state[i] === 0) {
+            if (hasCycle(i)) return false; // If cycle detected, we CANNOT finish.
+        }
+    }
+
+    return true; // No cycles found. We can graduate!
+}
+```
+
+## The BFS Approach (Kahn's Algorithm)
+
+While DFS is great for cycle detection, most interviewers prefer you solve Course Schedule using **Breadth-First Search (Kahn's Algorithm)**, because Kahn's Algorithm natively outputs the exact order you should take the courses in! (Which solves Course Schedule II).
+
+Kahn's Algorithm relies on **In-Degree** (the number of arrows pointing AT a node).
+1. If a Course has an In-Degree of 0, it has no prerequisites! It is safe to take right now.
+2. We put all `0` In-Degree courses into a Queue.
+3. We take a course from the Queue. We then tell all courses that depended on it: *"I just finished your prerequisite! Reduce your In-Degree by 1!"*
+4. If any course's In-Degree drops to 0, push it into the Queue!
+
+If the Queue empties, but we didn't take all `N` courses, it means the remaining courses are locked in a cyclic dependency (their In-Degrees will never reach 0).
+
+## Interview Questions
+
+**Q: In the DFS approach, why do we need State 2 (Fully Processed)? Why not just use `Visiting` and `Unvisited`?**
+**A:** State 2 is a massive performance optimization called **Memoization**. 
+Imagine Course A is extremely difficult and has a massive tree of 1,000 prerequisites beneath it. We run `hasCycle(A)`, verify it's safe, and mark it `Fully Processed`. 
+Later in the outer loop, we might check Course B, which happens to also require Course A. 
+If we didn't have State 2, the algorithm would plunge down Course A's 1,000-prerequisite tree *again*, doing massive redundant work. Because we marked it `Fully Processed`, Course B instantly returns `false` in $O(1)$ time, keeping the overall time complexity at exactly $O(V + E)$.

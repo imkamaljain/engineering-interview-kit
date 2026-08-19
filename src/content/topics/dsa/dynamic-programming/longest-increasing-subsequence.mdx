@@ -1,0 +1,115 @@
+---
+title: "Longest Increasing Subsequence"
+description: "Finding the hidden sequence."
+importance: "HIGH"
+revisionTime: 2
+category: "DSA"
+subcategory: "Dynamic Programming"
+order: 116
+---
+
+## Concept
+
+LeetCode #300.
+*Problem: Given an integer array `nums`, return the length of the longest strictly increasing subsequence.*
+
+`Input: nums = [10, 9, 2, 5, 3, 7, 101, 18]`
+`Output: 4` (The sequence is `[2, 3, 7, 101]`).
+
+**Subarray vs Subsequence:**
+- A **Subarray** must be perfectly contiguous (side-by-side elements). `[2, 5, 3]` is a subarray.
+- A **Subsequence** can skip elements! `[2, 3, 7]` skips the `5` in the middle.
+
+Because subsequences can skip elements, there are mathematically $2^N$ possible subsequences in an array (Include/Exclude every item). Using Backtracking to find them all will cause a Time Limit Exceeded error.
+
+## The DP Strategy ($O(N^2)$)
+
+We create a `dp` array where `dp[i]` represents: **"The length of the Longest Increasing Subsequence that strictly ENDS with the number at index i."**
+
+Because a single number by itself is technically an increasing sequence of length 1, we initialize the entire `dp` array with `1`s.
+
+Array: `[10, 9, 2, 5]`
+- **Index 0 (`10`):** `dp[0] = 1`.
+- **Index 1 (`9`):** Look backwards. Is `9 > 10`? No. `dp[1] = 1`.
+- **Index 2 (`2`):** Look backwards. Is `2 > 9`? No. Is `2 > 10`? No. `dp[2] = 1`.
+- **Index 3 (`5`):** Look backwards. Is `5 > 2`? YES! Because 5 is greater than 2, 5 can legally attach itself to the end of 2's subsequence! `dp[3] = dp[2] + 1 = 2`. The sequence is `[2, 5]`.
+
+**Recurrence Relation:**
+For every `i`, loop backward from `j = 0` to `i - 1`. 
+If `nums[i] > nums[j]`, then `dp[i] = Math.max(dp[i], dp[j] + 1)`.
+
+## Implementation (Tabulation)
+
+```typescript
+// Time Complexity: O(N^2) (Nested loops)
+// Space Complexity: O(N) (The DP Array)
+
+function lengthOfLIS(nums: number[]): number {
+    if (nums.length === 0) return 0;
+
+    // Every number is a valid sequence of length 1 by itself
+    const dp = new Array(nums.length).fill(1);
+    
+    let absoluteMaxLength = 1;
+
+    for (let i = 1; i < nums.length; i++) {
+        // Look back at all previous numbers!
+        for (let j = 0; j < i; j++) {
+            
+            // Can we legally attach ourselves to this previous sequence?
+            if (nums[i] > nums[j]) {
+                // Yes! If we do, our length becomes their length + 1.
+                // Keep the Math.max in case another sequence was longer!
+                dp[i] = Math.max(dp[i], dp[j] + 1);
+            }
+        }
+
+        // Keep track of the biggest sequence found anywhere in the array
+        absoluteMaxLength = Math.max(absoluteMaxLength, dp[i]);
+    }
+
+    return absoluteMaxLength;
+}
+```
+
+## The Binary Search Optimization ($O(N \log N)$)
+
+While the $O(N^2)$ DP solution is great and perfectly acceptable in an interview, LIS is famous because it has a legendary $O(N \log N)$ optimization using **Binary Search**.
+
+Instead of a `dp` array tracking lengths, we build an array called `subsequence` that physically builds the optimal sequence left-to-right.
+1. Iterate through `nums`.
+2. If the current number is strictly larger than the last number in `subsequence`, `push` it to the end! (The sequence physically grows!).
+3. **The Trick:** If the current number is *smaller*, we don't throw it away! We use Binary Search to find the exact index where this smaller number *belongs* inside the `subsequence` array, and we overwrite that spot!
+
+Why overwrite? Overwriting a large number with a smaller number doesn't change the length of the array, but it lowers the "ceiling", making it exponentially easier for future numbers to attach themselves!
+
+```typescript
+// The O(N log N) Masterpiece
+function lengthOfLISOptimized(nums: number[]): number {
+    const sub: number[] = [];
+
+    for (let num of nums) {
+        // If it's the first number, or larger than our current peak, just append it
+        if (sub.length === 0 || num > sub[sub.length - 1]) {
+            sub.push(num);
+        } else {
+            // Find the first element in 'sub' that is >= num, and overwrite it
+            let left = 0;
+            let right = sub.length - 1;
+            while (left <= right) {
+                const mid = left + Math.floor((right - left) / 2);
+                if (sub[mid] < num) left = mid + 1;
+                else right = mid - 1;
+            }
+            sub[left] = num; // The overwrite
+        }
+    }
+
+    return sub.length; // The length of 'sub' is the LIS!
+}
+```
+
+## Interview Questions
+
+**Q: In the $O(N \log N)$ approach, does the `sub` array contain the *exact* elements of the true Longest Increasing Subsequence?**
+**A:** NO! This is a massive trap. The `sub` array will definitively have the correct *length*, but the actual numbers inside might be a Frankenstein mix of different sequences due to the overwriting. If the interviewer asks you to return the exact elements of the true sequence, the Binary Search trick fails, and you must use the $O(N^2)$ DP array to explicitly trace the path backward.

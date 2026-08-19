@@ -1,0 +1,109 @@
+---
+title: "Word Ladder"
+description: "The BFS short path."
+importance: "MEDIUM"
+revisionTime: 1
+category: "DSA"
+subcategory: "Interview Problems"
+order: 155
+---
+
+## Concept
+
+LeetCode #127.
+*Problem: A transformation sequence from word `beginWord` to word `endWord` using a dictionary `wordList` is a sequence of words such that:*
+- *Every adjacent pair of words differs by exactly a single letter.*
+- *Every word in the sequence is in `wordList`.*
+
+*Given two words, `beginWord` and `endWord`, and a dictionary `wordList`, return the number of words in the shortest transformation sequence from `beginWord` to `endWord`, or 0 if no such sequence exists.*
+
+`Input: beginWord = "hit", endWord = "cog", wordList = ["hot","dot","dog","lot","log","cog"]`
+`Output: 5`
+(The shortest path is `"hit" -> "hot" -> "dot" -> "dog" -> "cog"`, which is 5 words).
+
+## The Graph Strategy
+
+This is secretly a **Graph** problem.
+Every word is a Node.
+An Edge exists between two Nodes if they differ by exactly one letter (e.g., `"hot"` connects to `"dot"`).
+The problem asks for the **"Shortest Sequence"**. The absolute best algorithm to find the shortest path in an unweighted graph is **Breadth-First Search (BFS)**.
+
+## The Adjacency Matrix Trap
+
+If the `wordList` has 5,000 words, you might try to build a massive Adjacency Matrix by comparing every single word to every other word to see if they differ by one letter.
+Comparing two 10-letter words takes 10 operations. Doing this $5000 \times 5000$ times takes 250 Million operations just to build the graph, before the BFS even starts! This will trigger a `Time Limit Exceeded` error.
+
+**The Clever Hack:**
+Don't build the graph upfront!
+If you are standing on the word `"hit"`, you don't need to scan the 5,000-word dictionary to find neighbors.
+Just generate the neighbors yourself!
+Replace the 'h' with 'a-z'. Replace the 'i' with 'a-z'. Replace the 't' with 'a-z'.
+`"ait", "bit", "cit"... "hat", "hbt", "hct"...`
+There are only 26 letters in the alphabet. If the word is length 3, there are only exactly $3 \times 26 = 78$ possible combinations!
+You instantly generate the 78 combinations, and then check in $O(1)$ time if they exist in a `Set(wordList)`. If they do, that's your neighbor! 
+
+## Implementation
+
+```typescript
+// Time Complexity: O(M^2 * N) (Where M is word length, N is number of words)
+// Space Complexity: O(N) (For the Set and the Queue)
+
+function ladderLength(beginWord: string, endWord: string, wordList: string[]): number {
+    // 1. Put the dictionary in a Set for O(1) instantaneous lookups
+    const wordSet = new Set(wordList);
+    
+    // If the target word isn't even in the dictionary, it's impossible!
+    if (!wordSet.has(endWord)) return 0;
+
+    // 2. Initialize BFS Queue. We store a Tuple: [Current Word, Current Step Count]
+    const queue: [string, number][] = [];
+    queue.push([beginWord, 1]);
+
+    const alphabet = "abcdefghijklmnopqrstuvwxyz";
+
+    // 3. Run the BFS!
+    while (queue.length > 0) {
+        // Shift is O(N) in JS arrays, but accepted in interviews.
+        // For pure O(1), use a proper Linked List Queue.
+        const [currentWord, steps] = queue.shift()!;
+
+        // Did we reach the target?
+        if (currentWord === endWord) {
+            return steps;
+        }
+
+        // 4. Generate all possible 1-letter mutations of the current word!
+        for (let i = 0; i < currentWord.length; i++) {
+            for (const char of alphabet) {
+                // If the character is the exact same, skip it!
+                if (char === currentWord[i]) continue;
+
+                // Splice the string to swap the character!
+                const mutatedWord = currentWord.slice(0, i) + char + currentWord.slice(i + 1);
+
+                // Is this mutated word a real word in the dictionary?
+                if (wordSet.has(mutatedWord)) {
+                    
+                    // We found a valid neighbor! Queue it up!
+                    queue.push([mutatedWord, steps + 1]);
+                    
+                    // CRITICAL: Delete it from the dictionary so we NEVER visit it again!
+                    // This perfectly prevents infinite graph loops.
+                    wordSet.delete(mutatedWord);
+                }
+            }
+        }
+    }
+
+    // The Queue emptied and we never found the endWord
+    return 0;
+}
+```
+
+## Interview Questions
+
+**Q: Why do we delete the `mutatedWord` from the `wordSet` immediately after finding it?**
+**A:** This is the equivalent of a `visited` set in a standard Graph BFS. If `"hot"` mutates into `"dot"`, we put `"dot"` in the Queue. Later, when we process `"dot"`, it will try to mutate *back* into `"hot"`! This creates an infinite loop. By deleting the word from the global dictionary the exact millisecond we discover it, we mathematically guarantee we will never visit it again, perfectly preventing cycles and drastically shrinking the search space!
+
+**Q: A developer asks if Depth-First Search (DFS) can solve this. Can it?**
+**A:** Technically yes, a DFS will eventually find the `endWord`. However, DFS blindly plunges down a single path. It might walk a massive, winding path of 1,000 words to reach the target. Because the problem explicitly asks for the *Shortest* sequence, a standard DFS will return the wrong answer. You would have to modify the DFS to explore *every single possible path* in the entire graph and then compare their lengths, which takes catastrophic $O(V!)$ time. BFS natively expands in concentric circles, mathematically guaranteeing that the absolute first time it touches the target, it took the shortest possible path.

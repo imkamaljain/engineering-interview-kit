@@ -1,0 +1,119 @@
+---
+title: "State Pattern"
+description: "The finite state machine."
+importance: "MEDIUM"
+revisionTime: 1
+category: "DSA"
+subcategory: "Patterns"
+order: 147
+---
+
+## Concept
+
+**Category:** Behavioral Pattern
+
+The **State Pattern** lets an object alter its behavior when its internal state changes. It appears as if the object changed its class.
+
+It is closely related to the concept of a **Finite-State Machine (FSM)**.
+
+## The Mental Model
+
+Think of a **Vending Machine**.
+It has distinct physical states:
+1. `WaitingForCoinState`
+2. `HasCoinState`
+3. `DispensingItemState`
+
+If you press the "Eject Coin" button while in the `WaitingForCoinState`, nothing happens.
+If you press the "Eject Coin" button while in the `HasCoinState`, it spits your coin out!
+The exact same button (`ejectCoin()`) executes radically different behavior depending on what State the machine is currently in.
+
+If you code this using massive `if (state === 'hasCoin')` blocks inside every single method of the Vending Machine, your code will quickly become an unreadable, bug-ridden disaster. The State Pattern extracts these states into their own independent Classes.
+
+## Implementation
+
+```typescript
+// 1. The Context (The Vending Machine itself)
+class VendingMachine {
+    private state: State; // The current equipped state
+
+    constructor() {
+        // Initialize to the default state!
+        // We pass 'this' so the State can talk back to the Machine!
+        this.state = new WaitingForCoinState(this); 
+    }
+
+    public transitionTo(state: State): void {
+        console.log(`[Machine] Swapped to ${state.constructor.name}.`);
+        this.state = state;
+    }
+
+    // The Machine blindly delegates all actions to its current State!
+    public insertCoin(): void { this.state.insertCoin(); }
+    public ejectCoin(): void { this.state.ejectCoin(); }
+    public dispenseItem(): void { this.state.dispenseItem(); }
+}
+
+// 2. The State Interface
+interface State {
+    insertCoin(): void;
+    ejectCoin(): void;
+    dispenseItem(): void;
+}
+
+// 3. Concrete States
+class WaitingForCoinState implements State {
+    constructor(private machine: VendingMachine) {}
+
+    insertCoin() {
+        console.log("Coin accepted!");
+        // The State triggers the transition to the next logical state!
+        this.machine.transitionTo(new HasCoinState(this.machine));
+    }
+    
+    ejectCoin() { console.log("ERROR: You haven't inserted a coin yet."); }
+    dispenseItem() { console.log("ERROR: Insert a coin first."); }
+}
+
+class HasCoinState implements State {
+    constructor(private machine: VendingMachine) {}
+
+    insertCoin() { console.log("ERROR: You already inserted a coin!"); }
+    
+    ejectCoin() {
+        console.log("Coin ejected.");
+        // Go back to the initial state!
+        this.machine.transitionTo(new WaitingForCoinState(this.machine));
+    }
+
+    dispenseItem() {
+        console.log("Dispensing candy bar...");
+        this.machine.transitionTo(new WaitingForCoinState(this.machine));
+    }
+}
+
+// Usage:
+const machine = new VendingMachine(); // Starts in WaitingForCoinState
+
+machine.ejectCoin();    // "ERROR: You haven't inserted a coin yet."
+machine.insertCoin();   // "Coin accepted!" -> Transitions to HasCoinState!
+machine.insertCoin();   // "ERROR: You already inserted a coin!"
+machine.dispenseItem(); // "Dispensing candy bar..." -> Transitions back to Waiting!
+```
+
+## Why is this so powerful?
+
+By extracting the states into classes, you completely eliminate all `if/else` logic!
+If you need to add a new `OutOfStockState`, you simply create a new class. You don't have to touch the `WaitingForCoinState` or the `HasCoinState`. The Open/Closed Principle is perfectly maintained.
+
+## Interview Questions
+
+**Q: State Pattern vs Strategy Pattern. What is the difference?**
+**A:** This is the most common follow-up question. Structurally, they are completely identical (A Context class delegating behavior to an Interface).
+The difference is **Awareness and Transitions**.
+- In the **Strategy Pattern**, the different Strategies (e.g., Credit Card, PayPal) are completely blind to each other. They do not know the other exists, and they NEVER trigger a transition to a different strategy. The User decides the strategy.
+- In the **State Pattern**, the States are intimately aware of each other. The `WaitingState` literally instantiates the `HasCoinState` and forces the Vending Machine to transition into it. The states themselves orchestrate the flow of the application.
+
+**Q: What is a modern frontend use case for the State pattern?**
+**A:** Video Players! A YouTube player has `PlayingState`, `PausedState`, `BufferingState`, and `EndedState`. If you press the "Spacebar" (Action) while in `PlayingState`, it pauses. If you press it in `PausedState`, it plays. If you press it in `BufferingState`, it queues the action or ignores it. 
+Also, XState (a popular React state machine library) is fundamentally built entirely on this pattern.

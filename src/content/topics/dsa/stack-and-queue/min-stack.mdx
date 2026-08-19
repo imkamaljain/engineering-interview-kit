@@ -1,0 +1,117 @@
+---
+title: "Min Stack"
+description: "Retrieving the minimum in O(1) time."
+importance: "HIGH"
+revisionTime: 2
+category: "DSA"
+subcategory: "Stack & Queue"
+order: 36
+---
+
+## Concept
+
+*Problem: Design a stack that supports `push`, `pop`, `top`, and retrieving the minimum element in constant $O(1)$ time.*
+
+A standard Stack can already `push` and `pop` in $O(1)$ time.
+The tricky part is `getMin()`. 
+
+If the stack is `[5, 8, 2, 9]`, the minimum is `2`. But what happens if we `pop()` the `9`, and then `pop()` the `2`? The new minimum reverts back to `5`. We cannot just use a single `min` variable, because when the minimum is popped, we lose the history of the *previous* minimums!
+
+## Approach 1: The Parallel Stack
+
+We solve this by keeping **two stacks running in parallel**.
+1. **Main Stack:** Holds all the normal numbers.
+2. **Min Stack:** Holds the historical record of minimums.
+
+When we push a new number, we check if it is smaller than or equal to the top of the Min Stack. If it is, we push it onto *both* stacks!
+When we pop a number, we check if it matches the top of the Min Stack. If it does, we pop it from *both* stacks, perfectly revealing the previous historical minimum.
+
+```typescript
+class MinStack {
+    private stack: number[] = [];
+    private minStack: number[] = []; // Stores the historical minimums
+
+    push(val: number): void {
+        this.stack.push(val);
+        
+        // If minStack is empty, or val is <= the current minimum, push it!
+        // (Must be <= to handle duplicate minimum values)
+        if (this.minStack.length === 0 || val <= this.minStack[this.minStack.length - 1]) {
+            this.minStack.push(val);
+        }
+    }
+
+    pop(): void {
+        const popped = this.stack.pop();
+        
+        // If the number we just popped was the current minimum, 
+        // we must pop it off the historical minStack as well!
+        if (popped === this.minStack[this.minStack.length - 1]) {
+            this.minStack.pop();
+        }
+    }
+
+    top(): number {
+        return this.stack[this.stack.length - 1];
+    }
+
+    getMin(): number {
+        // The absolute minimum is always sitting on top of the minStack
+        return this.minStack[this.minStack.length - 1];
+    }
+}
+```
+
+## Approach 2: The Object Stack (Slightly cleaner)
+
+Instead of managing two separate arrays and trying to keep them synchronized, we can use a single array where every element is an **Object** containing both the `val` and the `minSoFar`.
+
+Whenever we push a new number, we look at the `minSoFar` of the item below it, and calculate the new `minSoFar` for the new item.
+
+```typescript
+class MinStackObject {
+    // Array of objects: { value, minSoFar }
+    private stack: { val: number, min: number }[] = [];
+
+    push(val: number): void {
+        if (this.stack.length === 0) {
+            this.stack.push({ val: val, min: val });
+        } else {
+            // Calculate the minimum state at this exact layer of the stack
+            const currentMin = this.stack[this.stack.length - 1].min;
+            this.stack.push({
+                val: val,
+                min: Math.min(val, currentMin)
+            });
+        }
+    }
+
+    pop(): void {
+        this.stack.pop();
+    }
+
+    top(): number {
+        return this.stack[this.stack.length - 1].val;
+    }
+
+    getMin(): number {
+        return this.stack[this.stack.length - 1].min;
+    }
+}
+```
+
+## Interview Questions
+
+**Q: Between the Two-Stack approach and the Object Stack approach, which is more memory efficient?**
+**A:** The **Two-Stack** approach is significantly more memory efficient. 
+In the Object Stack, we duplicate the `min` data inside every single element, meaning the space complexity strictly scales at a 1:1 ratio with the stack size.
+In the Two-Stack approach, we only push to the `minStack` when a *new* minimum is found. If we push `[10, 11, 12, 13, 14]`, the `minStack` only holds a single number (`10`), saving massive amounts of memory.
+
+**Q: A developer suggests using the Two-Stack approach, but only pushing to the MinStack if `val < currentMin` (strictly less than). Why will this cause the MinStack to fail?**
+**A:** It fails on duplicates. 
+Imagine we push `[5, 8, 5]`. 
+Main stack: `[5, 8, 5]`. 
+If we use `<` instead of `<=`, the MinStack will only hold `[5]`. 
+If we then call `pop()`, the main stack pops `5`. The logic checks if `popped === MinStack.top` (`5 === 5`). It does! So it pops the MinStack.
+Now the main stack is `[5, 8]`, but the MinStack is completely `[]` empty! The application has lost the true minimum. 
+We *must* use `<=` to push duplicate minimums, so the MinStack holds `[5, 5]`.

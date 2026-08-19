@@ -1,0 +1,96 @@
+---
+title: "Hand of Straights"
+description: "Sorting and organizing."
+importance: "MEDIUM"
+revisionTime: 1
+category: "DSA"
+subcategory: "Greedy"
+order: 106
+---
+
+## Concept
+
+LeetCode #846.
+*Problem: Alice has some number of cards and she wants to rearrange the cards into groups so that each group is of size `groupSize`, and consists of `groupSize` consecutive cards. Return `true` if she can rearrange the cards, or `false` otherwise.*
+
+`Input: hand = [1,2,3,6,2,3,4,7,8], groupSize = 3`
+`Output: true` (Alice can form `[1,2,3]`, `[2,3,4]`, and `[6,7,8]`).
+
+`Input: hand = [1,2,3,4,5], groupSize = 4`
+`Output: false` (5 cards cannot be cleanly divided into groups of 4).
+
+## The Greedy Strategy
+
+The absolute first thing you must check is the total length. If the total number of cards is not perfectly divisible by `groupSize` (`hand.length % groupSize !== 0`), it is mathematically impossible. Return `false` immediately.
+
+Next, we must build the groups. 
+If we pick the smallest available card in the entire hand (e.g., `1`), what MUST follow it to form a valid group? It MUST be `2` and `3`. 
+This is the **Greedy Choice**. By always taking the absolute smallest available card, we mathematically lock in exactly what the next cards must be. If those specific cards don't exist in our hand, we instantly fail.
+
+**The Algorithm:**
+1. Count the frequencies of every card using a Hash Map.
+2. Extract the unique cards and **Sort** them in ascending order.
+3. Iterate through the sorted unique cards.
+4. If a card `X` has a frequency `count > 0`, we MUST form `count` number of groups starting with `X`.
+5. Check the Hash Map for `X+1`, `X+2`, etc., and physically subtract `count` from their frequencies.
+6. If any required card's frequency drops below 0 (meaning we didn't have enough of them to complete the group), return `false`.
+
+## Implementation
+
+```typescript
+// Time Complexity: O(N log N) (Due to sorting the unique keys)
+// Space Complexity: O(N) (For the Hash Map)
+
+function isNStraightHand(hand: number[], groupSize: number): boolean {
+    if (hand.length % groupSize !== 0) return false;
+
+    // 1. Build Frequency Map
+    const counts = new Map<number, number>();
+    for (const card of hand) {
+        counts.set(card, (counts.get(card) || 0) + 1);
+    }
+
+    // 2. Extract and Sort unique cards (The Greedy order)
+    const uniqueCards = Array.from(counts.keys()).sort((a, b) => a - b);
+
+    // 3. Process from smallest to largest
+    for (const card of uniqueCards) {
+        const currentCount = counts.get(card)!;
+
+        // If we already used up all instances of this card in previous groups, skip it.
+        if (currentCount === 0) continue;
+
+        // We have 'currentCount' number of this card. 
+        // This means we are FORCED to build 'currentCount' groups starting right now.
+        for (let i = 0; i < groupSize; i++) {
+            const nextCard = card + i;
+            const available = counts.get(nextCard) || 0;
+
+            // Do we have enough of the next sequential card to finish the groups?
+            if (available < currentCount) {
+                return false; // Impossible!
+            }
+
+            // Deduct the cards we just used!
+            counts.set(nextCard, available - currentCount);
+        }
+    }
+
+    return true;
+}
+```
+
+## Min-Heap Alternative
+
+Instead of sorting the unique keys once, you could push all the unique keys into a **Min-Priority Queue (Min-Heap)**.
+You pop the absolute smallest card from the heap. You check if the next consecutive cards exist in the Hash Map and deduct them. If a card's frequency hits 0, you verify it is at the top of the heap, and pop it off.
+
+While this approach works, the sorting approach (`Array.sort()`) is vastly preferred in JavaScript/TypeScript because JS does not have a native Min-Heap implementation, meaning you would have to write 100 lines of boilerplate heap code in the interview.
+
+## Interview Questions
+
+**Q: A developer uses a standard array to track the frequencies: `const counts = new Array(Math.max(...hand) + 1).fill(0)`. Why is this a catastrophic mistake?**
+**A:** This is the Counting Sort memory trap! If the `hand` is `[1, 1000000000]`, `Math.max` returns 1 Billion. The code will attempt to allocate a massive array of 1 Billion empty zeros in RAM just to track 2 cards, instantly crashing the server with an Out of Memory error. You MUST use a `Map` (Hash Map) to efficiently track sparse keys.
+
+**Q: In the inner loop, why do we deduct `currentCount` instead of just deducting `1`?**
+**A:** If `currentCount` is `3`, it means we have three `1`s. Because `1` is the absolute smallest card, it cannot be the middle or end of a group. It MUST be the start of three separate groups! Therefore, we mathematically require three `2`s and three `3`s to complete them. Deducting `currentCount` processes all three simultaneous groups in a single $O(1)$ math operation, massively speeding up the algorithm.

@@ -1,0 +1,126 @@
+---
+title: "Union-Find (Disjoint Set)"
+description: "The Cycle Detector."
+importance: "HIGH"
+revisionTime: 2
+category: "DSA"
+subcategory: "Graphs"
+order: 78
+---
+
+## Concept
+
+**Union-Find** (also called Disjoint Set) is a highly specialized data structure used to solve exactly one type of problem: **Grouping elements into clusters, and instantly answering if two elements belong to the same cluster.**
+
+It is heavily used in:
+- Kruskal's Minimum Spanning Tree Algorithm
+- Cycle Detection in Undirected Graphs
+- "Number of Connected Components" problems
+
+## The Mechanism (The Parent Array)
+
+Union-Find does not use Hash Maps or Adjacency Lists. It uses a single flat Array called `parent`.
+If there are 5 nodes (0 to 4), we initialize `parent = [0, 1, 2, 3, 4]`.
+**At the beginning, every node is its own boss (it points to itself).**
+
+The API has exactly two functions:
+1. **Find(x):** Returns the absolute "Supreme Boss" (Root) of node $x$.
+2. **Union(x, y):** Merges the cluster containing $x$ with the cluster containing $y$.
+
+If we call `Union(0, 1)`, Node 1 bends the knee to Node 0. The array becomes `parent = [0, 0, 2, 3, 4]`.
+If we ask `Find(1)`, it checks `parent[1]`, sees `0`, and checks `parent[0]`. Node 0 points to itself, so 0 is the Supreme Boss!
+
+## The Optimizations
+
+A naive Union-Find can degrade into a long linked list (e.g., 4 points to 3, 3 to 2, 2 to 1, 1 to 0), causing `Find()` to take $O(N)$ time.
+
+We use two legendary optimizations to flatten the structure, making operations run in **Amortized $O(\alpha(N))$ time** (Inverse Ackermann function), which is a mathematical concept that is functionally indistinguishable from instant **$O(1)$**.
+
+1. **Path Compression (Inside `Find`):** When Node 4 asks "Who is my Supreme Boss?", it traverses up to Node 0. Before returning, it permanently rewires Node 4 to point *directly* to Node 0! The next time Node 4 asks, the answer is instant.
+2. **Union by Rank (Inside `Union`):** We maintain a `rank` (height) array. When merging two trees, we always attach the shorter tree underneath the root of the taller tree. This mathematically prevents the trees from getting deeper.
+
+## Implementation
+
+```typescript
+class UnionFind {
+    private parent: number[];
+    private rank: number[]; // Tracks tree height to optimize merges
+
+    constructor(size: number) {
+        this.parent = new Array(size);
+        this.rank = new Array(size).fill(1);
+        
+        // Every node starts as its own absolute boss
+        for (let i = 0; i < size; i++) {
+            this.parent[i] = i;
+        }
+    }
+
+    // O(1) Amortized
+    find(x: number): number {
+        // If I am not my own boss...
+        if (this.parent[x] !== x) {
+            // Path Compression: Recursively find the Supreme Boss, 
+            // and permanently rewire my pointer directly to them!
+            this.parent[x] = this.find(this.parent[x]);
+        }
+        return this.parent[x];
+    }
+
+    // O(1) Amortized
+    union(x: number, y: number): boolean {
+        const rootX = this.find(x);
+        const rootY = this.find(y);
+
+        // They already have the exact same Supreme Boss. 
+        // They are already connected! (A Cycle is detected!)
+        if (rootX === rootY) {
+            return false;
+        }
+
+        // Union by Rank: Attach the smaller tree under the taller tree
+        if (this.rank[rootX] > this.rank[rootY]) {
+            this.parent[rootY] = rootX;
+        } else if (this.rank[rootX] < this.rank[rootY]) {
+            this.parent[rootX] = rootY;
+        } else {
+            // If they are exactly the same height, pick one to be the boss,
+            // and mathematically increment its height by 1.
+            this.parent[rootY] = rootX;
+            this.rank[rootX] += 1;
+        }
+
+        return true; // Successfully merged!
+    }
+}
+```
+
+## LeetCode Example: Redundant Connection
+
+LeetCode #684. *Problem: In a tree (an acyclic graph), one extra edge was added, creating a cycle. Find and return that extra edge.*
+
+If you use DFS, this is a nightmare of traversing and backtracking.
+If you use **Union-Find**, it is 5 lines of code.
+
+```typescript
+function findRedundantConnection(edges: number[][]): number[] {
+    // Edges are 1-indexed in this problem, so size is edges.length + 1
+    const uf = new UnionFind(edges.length + 1);
+    
+    for (let [u, v] of edges) {
+        // Try to merge the two nodes.
+        // If union() returns false, it means they were ALREADY connected!
+        // This specific edge just created a redundant loop!
+        if (!uf.union(u, v)) {
+            return [u, v];
+        }
+    }
+    
+    return [];
+}
+```
+
+## Interview Questions
+
+**Q: Can Union-Find detect cycles in a Directed Graph?**
+**A:** No. Union-Find is strictly for **Undirected Graphs**. In a Directed Graph (`A -> B -> C`, and `A -> D -> C`), Node `C` gets merged into `A`'s cluster twice. Union-Find will falsely flag this as a "cycle" because they share the same boss, even though it's just a legal cross-edge merge. For Directed Graphs, you MUST use DFS (with the `Visiting` state) or Kahn's Algorithm.

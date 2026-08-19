@@ -1,0 +1,104 @@
+---
+title: "Clone Graph"
+description: "The Deep Copy."
+importance: "MEDIUM"
+revisionTime: 1
+category: "DSA"
+subcategory: "Graphs"
+order: 71
+---
+
+## Concept
+
+LeetCode #133.
+*Problem: Return a deep copy (clone) of a graph. Each node in the graph contains a value and a list of its neighbors.*
+
+This problem perfectly tests your understanding of object references in memory.
+If you just do `const copy = originalNode`, you have created a Shallow Copy. You just created a pointer to the exact same physical memory address. If you alter `copy`, the original Graph breaks.
+
+A **Deep Copy** means you must physically instantiate brand new objects (`new Node()`) for every single node in the graph, and perfectly rewire their brand new neighbor arrays to point to the other brand new nodes.
+
+## The Infinite Loop Problem
+
+Graphs have cycles. A connects to B. B connects to A.
+If you try to clone A, you must first clone its neighbor B.
+To clone B, you must clone its neighbor A.
+To clone A, you must clone its neighbor B.
+*Stack Overflow.*
+
+**The Solution:** We must use a **Hash Map** that maps `Old Physical Node -> New Physical Node`.
+When we attempt to clone a node, we first check the Hash Map. "Have I already created a brand new clone for this specific old node?"
+If yes, we DO NOT clone it again. We simply return the already-created clone from the Map, successfully completing the cycle without infinite recursion!
+
+## Implementation (DFS)
+
+```typescript
+class _Node {
+    val: number
+    neighbors: _Node[]
+    constructor(val?: number, neighbors?: _Node[]) {
+        this.val = (val===undefined ? 0 : val)
+        this.neighbors = (neighbors===undefined ? [] : neighbors)
+    }
+}
+
+function cloneGraph(node: _Node | null): _Node | null {
+    if (node === null) return null;
+
+    // Map: Old Reference -> New Reference
+    const oldToNew = new Map<_Node, _Node>();
+
+    function dfs(currentNode: _Node): _Node {
+        // 1. Have we already cloned this node?
+        if (oldToNew.has(currentNode)) {
+            // Return the existing clone to wire up the connection!
+            return oldToNew.get(currentNode)!;
+        }
+
+        // 2. We haven't cloned it. Instantiate a BRAND NEW node.
+        const copy = new _Node(currentNode.val);
+        
+        // 3. VERY IMPORTANT: Add it to the map BEFORE exploring neighbors!
+        // This prevents the infinite cycle loop.
+        oldToNew.set(currentNode, copy);
+
+        // 4. Recursively clone all neighbors, and push them into the copy's array
+        for (let oldNeighbor of currentNode.neighbors) {
+            const clonedNeighbor = dfs(oldNeighbor);
+            copy.neighbors.push(clonedNeighbor);
+        }
+
+        return copy;
+    }
+
+    return dfs(node);
+}
+```
+
+## Why order matters in the Hash Map
+
+Look at Step 3 in the code:
+`oldToNew.set(currentNode, copy);`
+
+A junior developer might write the code like this:
+```typescript
+const copy = new _Node(currentNode.val);
+for (let oldNeighbor of currentNode.neighbors) {
+    copy.neighbors.push(dfs(oldNeighbor));
+}
+oldToNew.set(currentNode, copy); // Added AFTER the loop
+```
+**This will crash with a Stack Overflow.**
+Why? Because A calls `dfs(B)`. B calls `dfs(A)`. 
+When `dfs(A)` executes the second time, it checks `oldToNew.has(A)`. Because A hasn't finished its `for` loop yet, it hasn't added itself to the Map! It returns false, and tries to clone A again, triggering the infinite loop.
+
+You must add the blank `copy` object to the Hash Map *immediately* after creating it, even though its `neighbors` array is currently empty. As the recursion unwinds, JS object references will naturally fill up the empty array later.
+
+## Interview Questions
+
+**Q: Can you solve Clone Graph using BFS?**
+**A:** Yes. You initialize the `oldToNew` Hash Map, create the Root copy, put it in the map, and push the *old* Root into the Queue. 
+When you dequeue an old node, you loop through its old neighbors. If an old neighbor is not in the map, you clone it, put it in the map, and push the old neighbor to the Queue. Finally, you take the cloned parent (retrieved from the map) and push the cloned neighbor (retrieved from the map) into its array.
+
+**Q: In JavaScript, what does `structuredClone(graph)` do? Can I just use that in an interview?**
+**A:** `structuredClone` is a modern, native JavaScript global function that executes a deep copy of an object, perfectly handling circular references. In a real-world job, you would absolutely use `structuredClone()`. In a DSA interview, using it defeats the entire purpose of the question (testing your graph traversal and cycle-detection skills). The interviewer will smile and ask you to write the underlying C++ logic for `structuredClone` from scratch.
