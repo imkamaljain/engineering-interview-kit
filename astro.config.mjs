@@ -10,7 +10,8 @@ function remarkMermaid() {
     visit(tree, 'code', (node) => {
       if (node.lang === 'mermaid') {
         node.type = 'html';
-        node.value = `<div class="mermaid flex justify-center bg-gray-900/50 rounded-xl p-6 my-8 border border-gray-800 overflow-x-auto w-full">\n${node.value}\n</div>`;
+        const encoded = encodeURIComponent(node.value);
+        node.value = `<div class="mermaid-container flex justify-center bg-gray-900/50 rounded-xl p-6 my-8 border border-gray-800 overflow-x-auto w-full" data-mermaid-encoded="${encoded}"></div>`;
       }
     });
   };
