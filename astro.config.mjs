@@ -4,6 +4,9 @@ import tailwindcss from '@tailwindcss/vite';
 import mdx from '@astrojs/mdx';
 import netlify from '@astrojs/netlify';
 import { visit } from 'unist-util-visit';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
+import remarkBreaks from 'remark-breaks';
 
 function remarkMermaid() {
   return (tree) => {
@@ -23,7 +26,8 @@ export default defineConfig({
     plugins: [tailwindcss()]
   },
   markdown: {
-    remarkPlugins: [remarkMermaid],
+    remarkPlugins: [remarkMermaid, remarkMath, remarkBreaks],
+    rehypePlugins: [rehypeKatex],
   },
   integrations: [mdx()],
   adapter: netlify()
