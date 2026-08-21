@@ -8,7 +8,7 @@ Built with **Astro**, **Tailwind CSS**, and **MDX**, this project provides a lig
 
 - **High Signal-to-Noise Ratio**: Every topic follows a strict pattern: TL;DR, Mental Model (Mermaid diagram), Example, Interview Questions, and Gotchas.
 - **Mermaid Diagrams**: Native support for complex system design and architecture models.
-- **Dynamic Routing**: Content is dynamically generated from MDX files organized by category (JavaScript, TypeScript, Go, Node.js, SQL, System Design).
+- **Dynamic Routing**: Content is dynamically generated from MDX files organized by category (JavaScript, TypeScript, Go, Node.js, SQL, System Design, DSA).
 - **Premium Design**: Clean, modern dark UI built with Tailwind CSS.
 
 ## 📂 Project Structure
@@ -38,6 +38,8 @@ description: "A short description."
 importance: "HIGH" # HIGH, MEDIUM, LOW
 revisionTime: 5
 category: "JavaScript"
+subcategory: "Concepts" # Optional, groups topics in the sidebar
+order: 1 # Optional, determines sorting within the subcategory
 ---
 ```
 
