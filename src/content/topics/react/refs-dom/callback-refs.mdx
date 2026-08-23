@@ -1,0 +1,108 @@
+---
+title: "Callback Refs"
+description: "Callback Refs concept in React"
+importance: "MEDIUM"
+revisionTime: 2
+category: "React"
+subcategory: "Refs & DOM"
+order: 570
+---
+
+## Callback Refs
+
+While passing a `useRef` object directly to the `ref` attribute is the most common way to access DOM nodes, React provides an alternative approach known as **Callback Refs**.
+
+Instead of passing a ref object (like `{ current: null }`), you pass a **function** to the `ref` attribute. 
+
+React will call this function with the DOM node as its argument when the component mounts, and call it again with `null` when the component unmounts.
+
+### Syntax
+
+```jsx
+<div ref={(node) => { console.log(node) }}>
+```
+
+### Why use Callback Refs?
+
+The primary limitation of `useRef` is that it **does not notify you when its content changes**. Mutating the `.current` property doesn't trigger a render, and you can't attach an event listener to `.current`.
+
+If you need to execute some code *exactly* when a DOM node is attached to the screen (or detached), a Callback Ref is the only reliable way to do it.
+
+### Example: Measuring an element on mount
+
+Imagine you need to measure the height of a `<div>` the exact moment it renders, so you can adjust the layout.
+
+**❌ The wrong way (using `useEffect` and `useRef`):**
+If the `<div>` is conditionally rendered, the `useEffect` might run before the `<div>` actually exists.
+
+```jsx
+// This might fail if the div is rendered later!
+const ref = useRef(null);
+useEffect(() => {
+  if (ref.current) setHeight(ref.current.clientHeight);
+}, []); 
+```
+
+**✅ The right way (using a Callback Ref):**
+React guarantees this function is called immediately after the DOM node is created.
+
+```jsx
+function MeasureComponent() {
+  const [height, setHeight] = useState(0);
+
+  // We use useCallback so this function isn't recreated on every render,
+  // which would cause React to constantly detach and re-attach the ref.
+  const measuredRef = useCallback(node => {
+    if (node !== null) {
+      setHeight(node.getBoundingClientRect().height);
+    }
+  }, []); // No dependencies
+
+  return (
+    <>
+      <h1 ref={measuredRef}>Hello, world</h1>
+      <h2>The above header is {Math.round(height)}px tall</h2>
+    </>
+  );
+}
+```
+
+### Dynamic Lists
+
+Callback Refs are also incredibly useful when you need to manage an unknown number of refs (e.g., attaching a ref to every item in a dynamically generated list). You cannot call `useRef` inside a `.map()` loop (it violates the Rules of Hooks).
+
+Instead, you can use a single Callback Ref to populate a Map or an array of DOM nodes.
+
+```jsx
+function List({ items }) {
+  const itemsRef = useRef(new Map());
+
+  function getMap() {
+    if (!itemsRef.current) {
+      itemsRef.current = new Map();
+    }
+    return itemsRef.current;
+  }
+
+  return (
+    <ul>
+      {items.map(item => (
+        <li
+          key={item.id}
+          // The callback ref adds each node to our Map
+          ref={(node) => {
+            const map = getMap();
+            if (node) {
+              map.set(item.id, node);
+            } else {
+              map.delete(item.id);
+            }
+          }}
+        >
+          {item.name}
+        </li>
+      ))}
+    </ul>
+  );
+}
+```

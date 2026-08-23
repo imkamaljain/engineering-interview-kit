@@ -7,6 +7,7 @@ import { visit } from 'unist-util-visit';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import remarkBreaks from 'remark-breaks';
+import { unified } from '@astrojs/markdown-remark';
 
 function remarkMermaid() {
   return (tree) => {
@@ -22,12 +23,15 @@ function remarkMermaid() {
 
 // https://astro.build/config
 export default defineConfig({
+  prefetch: true,
   vite: {
     plugins: [tailwindcss()]
   },
   markdown: {
-    remarkPlugins: [remarkMermaid, remarkMath, remarkBreaks],
-    rehypePlugins: [rehypeKatex],
+    processor: unified({
+      remarkPlugins: [remarkMermaid, remarkMath, remarkBreaks],
+      rehypePlugins: [rehypeKatex],
+    }),
   },
   integrations: [mdx()],
   adapter: netlify()

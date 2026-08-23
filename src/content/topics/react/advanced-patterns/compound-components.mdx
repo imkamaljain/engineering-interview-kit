@@ -1,0 +1,108 @@
+---
+title: "Compound Components"
+description: "Compound Components concept in React"
+importance: "MEDIUM"
+revisionTime: 2
+category: "React"
+subcategory: "Advanced Patterns"
+order: 760
+---
+
+## Compound Components
+
+The **Compound Components** pattern is an advanced technique used to build expressive, flexible, and highly readable React components. 
+
+It is used when multiple components must work together to achieve a single task, and they need to share implicit state between them without forcing the user to manually pass props around.
+
+Classic examples from standard HTML include `<select>` and `<option>`, or `<table>`, `<tr>`, and `<td>`.
+
+### The Problem
+
+Imagine building an Accordion component. A basic implementation might look like this:
+
+```jsx
+// ❌ The Rigid Approach
+<Accordion 
+  items={[
+    { title: 'Item 1', content: 'Content 1' },
+    { title: 'Item 2', content: 'Content 2' }
+  ]} 
+/>
+```
+This is rigid. What if the user wants an icon next to 'Item 1' but not 'Item 2'? What if they want custom styling on specific content blocks? You would have to add an infinite number of configuration props (`renderIcon`, `contentClassName`, etc.), making the component bloated and hard to use.
+
+### The Compound Component Approach
+
+Instead of a single massive configuration object, you provide several smaller components that are designed to be composed together.
+
+```jsx
+// ✅ The Compound Approach
+<Accordion>
+  <Accordion.Item>
+    <Accordion.Header>Item 1 <Icon /></Accordion.Header>
+    <Accordion.Content>Content 1</Accordion.Content>
+  </Accordion.Item>
+  <Accordion.Item>
+    <Accordion.Header>Item 2</Accordion.Header>
+    <Accordion.Content>Content 2</Accordion.Content>
+  </Accordion.Item>
+</Accordion>
+```
+This is infinitely flexible. The user controls the exact JSX tree. But how do the header and content know whether they are expanded or collapsed without the user managing `isOpen` state manually?
+
+### How it Works (Using Context)
+
+Compound components rely on React Context to share state implicitly between the parent and its deeply nested children.
+
+```jsx
+import { createContext, useContext, useState } from 'react';
+
+// 1. Create a Context
+const AccordionContext = createContext();
+
+// 2. Create the Parent Component
+function Accordion({ children }) {
+  const [openIndex, setOpenIndex] = useState(null);
+  
+  return (
+    <AccordionContext.Provider value={{ openIndex, setOpenIndex }}>
+      <div className="accordion">{children}</div>
+    </AccordionContext.Provider>
+  );
+}
+
+// 3. Create the Child Components
+// They use the Context to read/write state without the user knowing
+function Item({ index, children }) {
+  return <div className="accordion-item">{/* ... */}</div>;
+}
+
+function Header({ index, children }) {
+  const { openIndex, setOpenIndex } = useContext(AccordionContext);
+  const isOpen = openIndex === index;
+  
+  return (
+    <button onClick={() => setOpenIndex(isOpen ? null : index)}>
+      {children} {isOpen ? '[-]' : '[+]'}
+    </button>
+  );
+}
+
+function Content({ index, children }) {
+  const { openIndex } = useContext(AccordionContext);
+  return openIndex === index ? <div>{children}</div> : null;
+}
+
+// 4. (Optional) Attach children to the parent for easier imports
+Accordion.Item = Item;
+Accordion.Header = Header;
+Accordion.Content = Content;
+
+export default Accordion;
+```
+
+### Benefits
+
+1. **API Elegance:** The API is declarative and readable.
+2. **Inversion of Control:** The user decides the structure and styling (putting an Icon inside the Header), while your library handles the complex internal state logic.
+3. **No Prop Drilling:** Users don't have to manually pass `isOpen` or `toggleOpen` to every child.

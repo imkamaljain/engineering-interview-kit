@@ -1,0 +1,104 @@
+---
+title: "React Query / TanStack Query"
+description: "React Query / TanStack Query concept in React"
+importance: "MEDIUM"
+revisionTime: 2
+category: "React"
+subcategory: "State Management"
+order: 900
+---
+
+## React Query / TanStack Query
+
+React Query (now officially named TanStack Query, as it supports other frameworks like Vue and Svelte) is the industry standard for fetching, caching, synchronizing, and updating Server State in React applications.
+
+### The Problem it Solves
+
+Without React Query, developers usually fetch data using a `useEffect` hook and store it in a `useState` variable. 
+
+```jsx
+// ❌ The old, painful way
+function Users() {
+  const [data, setData] = useState(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    setIsLoading(true);
+    fetch('/api/users')
+      .then(res => res.json())
+      .then(data => setData(data))
+      .catch(e => setError(e))
+      .finally(() => setIsLoading(false));
+  }, []);
+
+  // ... render logic
+}
+```
+This looks simple, but it lacks caching. If the user navigates away from this page and comes back 3 seconds later, the browser will show a loading spinner and fetch the exact same data from the API again. 
+
+If you want to implement caching, background refetching, or request deduplication manually, you will end up writing thousands of lines of complex logic.
+
+### The React Query Solution
+
+React Query replaces all of that boilerplate with a single `useQuery` hook.
+
+```jsx
+import { useQuery } from '@tanstack/react-query';
+
+function Users() {
+  const { data, isLoading, isError, error } = useQuery({
+    queryKey: ['users'], 
+    queryFn: () => fetch('/api/users').then(res => res.json())
+  });
+
+  if (isLoading) return <span>Loading...</span>;
+  if (isError) return <span>Error: {error.message}</span>;
+
+  return <ul>{data.map(user => <li key={user.id}>{user.name}</li>)}</ul>;
+}
+```
+
+### Core Concepts
+
+#### 1. Query Keys
+Every query must have a unique `queryKey` (an array). React Query uses this key to cache the data. 
+
+If you call `useQuery({ queryKey: ['users'] })` in five different components across your app at the exact same time, React Query is smart enough to only make **one** network request. It then shares the result with all five components.
+
+#### 2. Stale-While-Revalidate
+This is the magic of React Query. 
+- If a user visits the `/users` page, it fetches the data and caches it under the `['users']` key.
+- If they leave and come back, React Query instantly renders the UI using the *cached* data (no loading spinner!).
+- In the background, it silently makes a network request to check if the data has changed (revalidation). 
+- If the new data is different, it quietly updates the UI.
+
+#### 3. Mutations
+While `useQuery` is for *reading* data, `useMutation` is used for *creating, updating, or deleting* data on the server.
+
+```jsx
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+
+function AddUser() {
+  const queryClient = useQueryClient();
+
+  const mutation = useMutation({
+    mutationFn: (newUser) => fetch('/api/users', { method: 'POST', body: JSON.stringify(newUser) }),
+    onSuccess: () => {
+      // Invalidate the cache! This tells React Query that the ['users'] 
+      // data is stale, forcing it to instantly refetch the updated list.
+      queryClient.invalidateQueries({ queryKey: ['users'] });
+    },
+  });
+
+  return (
+    <button onClick={() => mutation.mutate({ name: 'Bob' })}>
+      Add Bob
+    </button>
+  );
+}
+```
+
+### Why it's essential
+
+React Query eliminates the need for massive Redux stores. By managing your Server State automatically, it leaves only pure, local UI state for you to manage, making your React codebase infinitely simpler and more performant.

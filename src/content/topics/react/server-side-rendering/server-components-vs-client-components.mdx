@@ -1,0 +1,96 @@
+---
+title: "Server Components vs Client Components"
+description: "Server Components vs Client Components concept in React"
+importance: "MEDIUM"
+revisionTime: 2
+category: "React"
+subcategory: "Server-Side Rendering"
+order: 1020
+---
+
+## Server Components vs Client Components
+
+Understanding the boundary between Server Components and Client Components is the key to mastering modern React architectures like the Next.js App Router.
+
+### Definitions
+
+1. **Server Components:** Run *only* on the server. They have direct access to databases and the filesystem, but they cannot use state or handle user interactions. (This is the default in Next.js App Router).
+2. **Client Components:** Run on *both* the server (during SSR) and the client (in the browser). They handle interactivity, state, and browser APIs. They are declared by adding `"use client"` to the top of the file.
+
+### When to use which?
+
+| Use Case | Server Component | Client Component (`"use client"`) |
+| :--- | :---: | :---: |
+| Fetch data directly from a database | ✅ | ❌ |
+| Access backend resources (file system) | ✅ | ❌ |
+| Keep sensitive information (API keys) on the server | ✅ | ❌ |
+| Keep large dependencies on the server to reduce client JS | ✅ | ❌ |
+| Add interactivity and event listeners (`onClick`, `onChange`) | ❌ | ✅ |
+| Use State and Lifecycle Hooks (`useState`, `useEffect`) | ❌ | ✅ |
+| Use browser-only APIs (`window`, `localStorage`) | ❌ | ✅ |
+
+### The Composition Rule (Crucial)
+
+**You can pass a Server Component as a child (or prop) to a Client Component, but you CANNOT import a Server Component directly into a Client Component.**
+
+If you import a Server Component into a Client Component file, the bundler is forced to bundle that Server Component and send it to the browser, completely ruining its purpose.
+
+#### ❌ The Wrong Way
+```jsx
+// ClientLayout.jsx
+"use client";
+import { useState } from 'react';
+// BAD: Importing a Server Component into a Client Component
+import ServerSidebar from './ServerSidebar'; 
+
+export default function ClientLayout() {
+  const [isOpen, setIsOpen] = useState(true);
+  return (
+    <div>
+      <button onClick={() => setIsOpen(!isOpen)}>Toggle</button>
+      {isOpen && <ServerSidebar />} 
+    </div>
+  );
+}
+```
+
+#### ✅ The Right Way (Composition)
+Instead, you pass the Server Component down as `children` or a prop. The Client component doesn't know *what* the children are, it just renders them.
+
+```jsx
+// ClientLayout.jsx
+"use client";
+import { useState } from 'react';
+
+// GOOD: We accept the server component as 'children'
+export default function ClientLayout({ children }) {
+  const [isOpen, setIsOpen] = useState(true);
+  return (
+    <div>
+      <button onClick={() => setIsOpen(!isOpen)}>Toggle</button>
+      {isOpen && children} 
+    </div>
+  );
+}
+```
+
+```jsx
+// page.jsx (This is a Server Component)
+import ClientLayout from './ClientLayout';
+import ServerSidebar from './ServerSidebar';
+
+export default function Page() {
+  // We compose them here on the server!
+  return (
+    <ClientLayout>
+      <ServerSidebar />
+    </ClientLayout>
+  );
+}
+```
+
+### Pushing "use client" to the Leaves
+
+The ultimate goal of RSC architecture is to keep the majority of your component tree as Server Components, and push `"use client"` down as far as possible into the "leaves" of the tree.
+
+Instead of making the entire `<BlogLayout>` a Client Component just because it needs a "Dark Mode" toggle button, you should make the layout a Server Component, and extract the toggle logic into a tiny `<DarkModeToggle>` Client Component.

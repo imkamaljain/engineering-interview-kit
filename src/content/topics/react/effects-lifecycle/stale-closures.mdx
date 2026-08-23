@@ -1,0 +1,90 @@
+---
+title: "Stale Closures"
+description: "Stale Closures concept in React"
+importance: "MEDIUM"
+revisionTime: 2
+category: "React"
+subcategory: "Effects & Lifecycle"
+order: 370
+---
+
+## Stale Closures
+
+A "stale closure" is one of the most common and frustrating bugs encountered when using React Hooks, particularly `useEffect` and `setInterval`.
+
+It occurs when a function (like a timer or event listener callback) "closes over" (captures) state or props from an **older render**, and fails to see the updated values.
+
+### Example of a Stale Closure
+
+```jsx
+function Counter() {
+  const [count, setCount] = useState(0);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      // BUG: 'count' is captured from the FIRST render (where count is 0).
+      // It will constantly do: setCount(0 + 1)
+      setCount(count + 1); 
+    }, 1000);
+    return () => clearInterval(id);
+  }, []); // Empty dependency array means this Effect only runs on mount
+
+  return <h1>{count}</h1>;
+}
+```
+
+In the code above, the counter will stick at `1`. 
+Because the dependency array is `[]`, the Effect only runs once (on the initial render). During that initial render, `count` is `0`. The `setInterval` callback closes over that `0`. Every second, it evaluates `setCount(0 + 1)`. 
+
+### Solution 1: Include the dependency
+
+The most straightforward way to fix a stale closure is to follow the ESLint `exhaustive-deps` rule and include the missing variable in the dependency array.
+
+```jsx
+  useEffect(() => {
+    const id = setInterval(() => {
+      setCount(count + 1); 
+    }, 1000);
+    return () => clearInterval(id);
+  }, [count]); // ✅ Added 'count'
+```
+*Note: While this fixes the stale closure, it causes the interval to be destroyed and recreated every second, which might not be ideal for timers.*
+
+### Solution 2: Functional State Updates
+
+If you only need the previous state to calculate the next state, you can use an updater function. Updater functions receive the *most recent* state, bypassing the closure completely.
+
+```jsx
+  useEffect(() => {
+    const id = setInterval(() => {
+      // ✅ 'prevCount' is always the latest state, even if 'count' is stale!
+      setCount(prevCount => prevCount + 1); 
+    }, 1000);
+    return () => clearInterval(id);
+  }, []); // ✅ Empty array is fine here
+```
+
+### Solution 3: The `useRef` Escape Hatch
+
+If you have a value that changes often (like a callback function passed as a prop), but you don't want it to trigger your Effect to re-run, you can store the latest value in a `useRef`. Refs are mutable, so they don't suffer from stale closures.
+
+```jsx
+function Chat({ onReceiveMessage }) {
+  // Store the LATEST callback in a ref
+  const latestCallback = useRef(onReceiveMessage);
+  
+  // Update the ref on every render
+  useEffect(() => {
+    latestCallback.current = onReceiveMessage;
+  });
+
+  useEffect(() => {
+    const socket = connectToSocket();
+    socket.on('message', (msg) => {
+      // Always calls the newest function, without re-connecting the socket!
+      latestCallback.current(msg);
+    });
+    return () => socket.disconnect();
+  }, []); // Only connect once
+}
+```

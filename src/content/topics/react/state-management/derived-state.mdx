@@ -1,0 +1,94 @@
+---
+title: "Derived State"
+description: "Derived State concept in React"
+importance: "MEDIUM"
+revisionTime: 2
+category: "React"
+subcategory: "State Management"
+order: 850
+---
+
+## Derived State
+
+Derived State is a common anti-pattern in React where a developer uses `useState` (or `getDerivedStateFromProps` in older class components) to store data that could easily be calculated on the fly from existing props or state.
+
+### The Anti-Pattern
+
+Storing derived data in state violates the "Single Source of Truth" principle. It forces you to write extra `useEffect` hooks to keep the derived state synchronized with the original state, leading to bugs, infinite loops, and unnecessary re-renders.
+
+**❌ BAD: Using State for Derived Data**
+
+```jsx
+function Cart({ items }) {
+  // We have the items in props.
+  // Creating state for itemCount and totalPrice is redundant!
+  const [itemCount, setItemCount] = useState(0);
+  const [totalPrice, setTotalPrice] = useState(0);
+
+  // Now we have to write an effect to manually sync them whenever items change.
+  // This causes a double-render!
+  useEffect(() => {
+    setItemCount(items.length);
+    setTotalPrice(items.reduce((total, item) => total + item.price, 0));
+  }, [items]);
+
+  return (
+    <div>
+      <p>Items in cart: {itemCount}</p>
+      <p>Total: ${totalPrice}</p>
+    </div>
+  );
+}
+```
+
+### The Solution: Calculate on the Fly
+
+If you can calculate a value from existing props or state during the render cycle, **do not put it in state.** Just calculate it directly in the function body as a normal JavaScript variable.
+
+**✅ GOOD: Calculating during Render**
+
+```jsx
+function Cart({ items }) {
+  
+  // Just standard JS variables!
+  // These will naturally recalculate whenever 'items' changes 
+  // because React calls this function again on re-render.
+  const itemCount = items.length;
+  const totalPrice = items.reduce((total, item) => total + item.price, 0);
+
+  return (
+    <div>
+      <p>Items in cart: {itemCount}</p>
+      <p>Total: ${totalPrice}</p>
+    </div>
+  );
+}
+```
+
+### What if the calculation is slow?
+
+The most common excuse for putting derived data into state is performance: *"I don't want to run this complex `.filter()` and `.sort()` on an array of 5,000 items every single time the component re-renders!"*
+
+This is a valid concern, but `useState` + `useEffect` is the wrong solution. 
+
+If the calculation is genuinely expensive, you should use the **`useMemo`** hook. `useMemo` caches the result of the calculation and only recalculates it when the dependencies change, avoiding the double-render problem of `useEffect`.
+
+**✅ BEST: useMemo for expensive derived data**
+
+```jsx
+function DataGrid({ users, sortOrder }) {
+  
+  // This expensive calculation will ONLY run if 'users' or 'sortOrder' changes.
+  // If the component re-renders for any other reason, it uses the cached result.
+  const sortedUsers = useMemo(() => {
+    console.log("Running expensive sort...");
+    return [...users].sort((a, b) => {
+      // ... complex sorting logic ...
+    });
+  }, [users, sortOrder]);
+
+  return (
+    // ... render sortedUsers ...
+  );
+}
+```

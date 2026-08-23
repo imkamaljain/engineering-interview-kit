@@ -1,0 +1,72 @@
+---
+title: "Context Re-rendering"
+description: "Context Re-rendering concept in React"
+importance: "MEDIUM"
+revisionTime: 2
+category: "React"
+subcategory: "Context"
+order: 500
+---
+
+## Context Re-rendering
+
+The most common performance issue developers encounter when using the Context API is excessive re-rendering.
+
+### The Rule
+
+**Whenever the `value` prop of a Context Provider changes, React will re-render EVERY component that calls `useContext` for that specific context.** 
+
+React does not care if the component actually uses the part of the value that changed. If the Provider's `value` changes, the consumer re-renders.
+
+### The Common Mistake: Object Creation
+
+The most frequent cause of accidental Context re-renders is creating a new object literal directly in the `value` prop.
+
+```jsx
+function App() {
+  const [theme, setTheme] = useState('dark');
+  const [count, setCount] = useState(0); // Unrelated state!
+
+  return (
+    // ❌ BAD: A new object { theme, setTheme } is created on EVERY render!
+    <ThemeContext.Provider value={{ theme, setTheme }}>
+      <button onClick={() => setCount(count + 1)}>Increment Count</button>
+      <Page />
+    </ThemeContext.Provider>
+  );
+}
+```
+
+In the code above, when you click the button, `count` changes, causing `App` to re-render. During that re-render, `{ theme, setTheme }` creates a brand **new object reference in memory**. React sees that the `value` prop is a different object than the last render, and forces every component consuming `ThemeContext` to re-render, even though the actual theme string didn't change!
+
+### The Solution: useMemo
+
+To fix this, you must memoize the value object so its reference stays the same unless the actual data (the theme) changes.
+
+```jsx
+function App() {
+  const [theme, setTheme] = useState('dark');
+  const [count, setCount] = useState(0);
+
+  // ✅ GOOD: The object reference only changes if 'theme' changes.
+  const contextValue = useMemo(() => {
+    return { theme, setTheme };
+  }, [theme]);
+
+  return (
+    <ThemeContext.Provider value={contextValue}>
+      <button onClick={() => setCount(count + 1)}>Increment Count</button>
+      <Page />
+    </ThemeContext.Provider>
+  );
+}
+```
+Now, clicking the counter button will re-render `App`, but `useMemo` will return the exact same object reference for `contextValue`. The Provider's value hasn't changed, so the consumers skip rendering.
+
+### Splitting Contexts
+
+If you have a Context that holds both fast-changing data (like a user's cursor position) and slow-changing data (like a UI theme), memoization won't save you. When the cursor position changes, the memoized object *must* update, causing the theme consumers to re-render anyway.
+
+The solution to this is to **split your context**. 
+
+Instead of one massive `AppContext`, create `ThemeContext`, `CursorContext`, and `UserContext`. That way, components only subscribe to the specific data they care about, and only re-render when that specific data changes.

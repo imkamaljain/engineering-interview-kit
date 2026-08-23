@@ -1,0 +1,98 @@
+---
+title: "Mocking API Calls"
+description: "Mocking API Calls concept in React"
+importance: "MEDIUM"
+revisionTime: 2
+category: "React"
+subcategory: "Testing"
+order: 1070
+---
+
+## Mocking API Calls
+
+When writing tests for components that fetch data from an API, you should **never** make actual network requests to a real backend server. 
+
+Real network requests make tests slow, unreliable (they fail if the server is down or the Wi-Fi drops), and can accidentally pollute a real database with test data.
+
+Instead, you must **mock** the API calls.
+
+### 1. Mocking with Jest / Vitest (The Old Way)
+
+Historically, developers mocked the `fetch` API directly, or they used `jest.mock()` to replace their `axios` module with a fake version.
+
+```jsx
+// ❌ The Old Way (Mocking the implementation)
+import axios from 'axios';
+import { render, screen } from '@testing-library/react';
+
+// Tell Jest to replace the real axios with a fake one
+jest.mock('axios');
+
+it('fetches and displays user data', async () => {
+  // Force the fake axios to return this specific data when called
+  axios.get.mockResolvedValue({ data: { name: 'John Doe' } });
+  
+  render(<UserProfile id={1} />);
+  expect(await screen.findByText('John Doe')).toBeInTheDocument();
+});
+```
+
+**Why this is bad:** It tests implementation details. If you decide to switch from `axios` to the native `fetch` API tomorrow, this test will break, even though the component still works perfectly for the user.
+
+### 2. Mocking with MSW (The Modern Standard)
+
+The modern, recommended way to mock API calls in React is using **Mock Service Worker (MSW)**.
+
+MSW does not mock `axios` or `fetch`. Instead, it intercepts actual network requests at the network level (using a Service Worker in the browser, or Node.js request interceptors in the terminal).
+
+Your component uses standard `fetch` or `axios` exactly as it would in production. It doesn't know it's being tested. MSW simply catches the outgoing HTTP request before it hits the internet and returns a fake response.
+
+#### Setting up MSW
+
+1. Define your mock handlers (similar to writing an Express.js server):
+```javascript
+// mocks/handlers.js
+import { rest } from 'msw';
+
+export const handlers = [
+  rest.get('/api/users/:userId', (req, res, ctx) => {
+    // Intercept the GET request and return this fake JSON
+    return res(
+      ctx.status(200),
+      ctx.json({ name: 'John Doe', age: 30 })
+    );
+  }),
+];
+```
+
+2. Start the MSW server in your test setup file:
+```javascript
+// setupTests.js
+import { setupServer } from 'msw/node';
+import { handlers } from './mocks/handlers';
+
+const server = setupServer(...handlers);
+
+beforeAll(() => server.listen());
+afterEach(() => server.resetHandlers());
+afterAll(() => server.close());
+```
+
+3. Write your test perfectly normally:
+```jsx
+// UserProfile.test.jsx
+import { render, screen } from '@testing-library/react';
+import { UserProfile } from './UserProfile';
+
+it('displays the user name from the API', async () => {
+  // No jest.mock() needed! 
+  // The component makes a real fetch('/api/users/1') call.
+  // MSW automatically catches it and returns the fake John Doe data.
+  render(<UserProfile userId={1} />);
+  
+  // Use findBy (async) because we are waiting for the mocked network response
+  expect(await screen.findByText('John Doe')).toBeInTheDocument();
+});
+```
+
+Using MSW makes your tests infinitely more robust, refactor-resilient, and closer to real-world usage.

@@ -1,0 +1,81 @@
+---
+title: "Effect Cleanup"
+description: "Effect Cleanup concept in React"
+importance: "MEDIUM"
+revisionTime: 2
+category: "React"
+subcategory: "Effects & Lifecycle"
+order: 340
+---
+
+## Effect Cleanup
+
+When you write an Effect that connects to an external system, subscribes to an event, or starts a timer, you must provide a way to stop or clean up that process. Otherwise, you will introduce memory leaks or unexpected behavior in your application.
+
+You provide a cleanup mechanism by **returning a function** from your `useEffect` callback.
+
+### Common Cleanup Scenarios
+
+#### 1. Clearing Timers and Intervals
+
+If you start a `setInterval` or `setTimeout` inside an Effect, you must clear it. If the component unmounts and the interval keeps firing, it will attempt to update state on an unmounted component, leading to errors.
+
+```jsx
+useEffect(() => {
+  const timerId = setInterval(() => {
+    setCount(c => c + 1);
+  }, 1000);
+
+  // Cleanup: Clear the interval
+  return () => {
+    clearInterval(timerId);
+  };
+}, []);
+```
+
+#### 2. Removing Event Listeners
+
+If you attach an event listener to the `window` or `document`, you must remove it. Otherwise, every time the component mounts, a *new* listener will be added, causing the event handler to fire multiple times for a single event.
+
+```jsx
+useEffect(() => {
+  function handleScroll() {
+    // ...
+  }
+
+  window.addEventListener('scroll', handleScroll);
+
+  // Cleanup: Remove the listener
+  return () => {
+    window.removeEventListener('scroll', handleScroll);
+  };
+}, []);
+```
+
+#### 3. Aborting Network Requests
+
+If you initiate a `fetch` request and the user navigates away before the request completes, you should abort the request to prevent state updates on an unmounted component.
+
+```jsx
+useEffect(() => {
+  const abortController = new AbortController();
+
+  fetch('/api/data', { signal: abortController.signal })
+    .then(res => res.json())
+    .then(data => setData(data))
+    .catch(err => {
+      if (err.name !== 'AbortError') console.error(err);
+    });
+
+  // Cleanup: Abort the fetch request
+  return () => {
+    abortController.abort();
+  };
+}, [url]);
+```
+
+### Development Mode Double-Invocation
+
+In React 18 with Strict Mode enabled, React deliberately runs your Effects twice (Setup ➔ Cleanup ➔ Setup) when a component mounts in development. 
+
+This is a stress-test designed to expose missing or broken cleanup functions. If your app breaks or behaves strangely (e.g., you see double the items being fetched and appended), it means your cleanup function is missing or implemented incorrectly.

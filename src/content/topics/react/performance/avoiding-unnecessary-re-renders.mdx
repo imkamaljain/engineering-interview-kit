@@ -1,0 +1,113 @@
+---
+title: "Avoiding Unnecessary Re-renders"
+description: "Avoiding Unnecessary Re-renders concept in React"
+importance: "MEDIUM"
+revisionTime: 2
+category: "React"
+subcategory: "Performance"
+order: 620
+---
+
+## Avoiding Unnecessary Re-renders
+
+While `React.memo`, `useMemo`, and `useCallback` are powerful tools for preventing unnecessary re-renders, they add complexity and overhead to your code. 
+
+Before reaching for memoization, you should first try to fix the architecture of your components. The two most effective architectural patterns for preventing re-renders are **Moving State Down** and **Component Composition** (passing elements as children).
+
+### 1. Moving State Down
+
+Often, a component re-renders unnecessarily because it holds state that actually belongs to a child component.
+
+**❌ BAD: State held too high**
+```jsx
+function App() {
+  // This state is only used for the input field.
+  // But every time the user types a letter, the entire App,
+  // including the HeavyTable, re-renders!
+  const [searchTerm, setSearchTerm] = useState('');
+
+  return (
+    <div>
+      <input value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+      <HeavyTable /> 
+    </div>
+  );
+}
+```
+
+**✅ GOOD: Move state down**
+Extract the state and the input into its own component. Now, when the user types, only the `SearchInput` component re-renders. The `HeavyTable` is completely unaffected.
+
+```jsx
+function SearchInput() {
+  const [searchTerm, setSearchTerm] = useState('');
+  return <input value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />;
+}
+
+function App() {
+  return (
+    <div>
+      <SearchInput />
+      <HeavyTable /> 
+    </div>
+  );
+}
+```
+
+### 2. Component Composition (Pass elements as children)
+
+If you have a component that manages state, but wraps around an expensive component that *doesn't* care about that state, you can pass the expensive component as a `children` prop.
+
+**❌ BAD: Parent state forces child to re-render**
+```jsx
+function Layout() {
+  // A simple toggle for a sidebar
+  const [isOpen, setIsOpen] = useState(false);
+
+  return (
+    <div className="layout">
+      <button onClick={() => setIsOpen(!isOpen)}>Toggle</button>
+      {isOpen && <Sidebar />}
+      
+      {/* Every time the sidebar toggles, HeavyContent re-renders! */}
+      <HeavyContent /> 
+    </div>
+  );
+}
+```
+
+**✅ GOOD: Pass as children**
+If we change `Layout` to accept `children`, the component that *uses* `Layout` will render the `HeavyContent`. 
+
+```jsx
+function Layout({ children }) {
+  const [isOpen, setIsOpen] = useState(false);
+
+  return (
+    <div className="layout">
+      <button onClick={() => setIsOpen(!isOpen)}>Toggle</button>
+      {isOpen && <Sidebar />}
+      
+      {/* 
+        When Layout's state changes, Layout re-renders. 
+        However, the 'children' prop is EXACTLY the same JSX element 
+        that was passed in previously. React sees this and skips 
+        re-rendering the children! 
+      */}
+      {children} 
+    </div>
+  );
+}
+
+// Usage:
+function App() {
+  return (
+    <Layout>
+      {/* HeavyContent does NOT re-render when the sidebar toggles */}
+      <HeavyContent /> 
+    </Layout>
+  );
+}
+```
+
+By mastering these two architectural patterns, you can often solve performance issues without ever needing to use `React.memo`.

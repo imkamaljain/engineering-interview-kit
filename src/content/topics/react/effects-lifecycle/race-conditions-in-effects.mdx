@@ -1,0 +1,92 @@
+---
+title: "Race Conditions in Effects"
+description: "Race Conditions in Effects concept in React"
+importance: "MEDIUM"
+revisionTime: 2
+category: "React"
+subcategory: "Effects & Lifecycle"
+order: 380
+---
+
+## Race Conditions in Effects
+
+A race condition occurs when asynchronous operations complete in an unpredictable order, leading to buggy or inconsistent state. This is highly common when fetching data inside a `useEffect` based on a changing prop (like an ID).
+
+### The Problem
+
+Imagine a component that fetches a user profile when the `userId` prop changes:
+
+```jsx
+function UserProfile({ userId }) {
+  const [data, setData] = useState(null);
+
+  useEffect(() => {
+    // BUG: Race condition waiting to happen!
+    fetch(`/api/users/${userId}`)
+      .then(response => response.json())
+      .then(userData => setData(userData));
+  }, [userId]);
+
+  if (!data) return <p>Loading...</p>;
+  return <p>User: {data.name}</p>;
+}
+```
+
+**Scenario:**
+1. The user clicks to view Profile A (`userId=1`). The fetch for Profile A starts. (Takes 3 seconds).
+2. The user quickly clicks to view Profile B (`userId=2`). The fetch for Profile B starts. (Takes 1 second).
+3. The fetch for Profile B completes. `setData` is called. The UI shows Profile B.
+4. The slow fetch for Profile A completes. `setData` is called. **The UI suddenly switches back to Profile A, even though the user is supposed to be looking at Profile B!**
+
+### Solution 1: Ignore Stale Responses (Boolean Flag)
+
+The simplest way to fix this is to use a local boolean flag inside the Effect. When the Effect is cleaned up (which happens right before the *next* fetch starts), we set the flag to `false`.
+
+```jsx
+useEffect(() => {
+  let ignore = false; // Flag to track if this effect is still "active"
+
+  fetch(`/api/users/${userId}`)
+    .then(response => response.json())
+    .then(userData => {
+      if (!ignore) {
+        // Only update state if this effect hasn't been cleaned up yet
+        setData(userData);
+      }
+    });
+
+  return () => {
+    // If 'userId' changes, this cleanup function runs, invalidating the fetch
+    ignore = true; 
+  };
+}, [userId]);
+```
+
+### Solution 2: AbortController
+
+A more robust solution is to actually cancel the network request so the browser doesn't waste bandwidth downloading data we no longer care about. We use the standard browser `AbortController` API.
+
+```jsx
+useEffect(() => {
+  const controller = new AbortController();
+
+  fetch(`/api/users/${userId}`, { signal: controller.signal })
+    .then(response => response.json())
+    .then(userData => setData(userData))
+    .catch(error => {
+      if (error.name !== 'AbortError') {
+        // Handle actual errors
+        console.error(error);
+      }
+    });
+
+  return () => {
+    // Cancels the in-flight fetch request
+    controller.abort();
+  };
+}, [userId]);
+```
+
+### Summary
+
+Always implement cleanup logic (either ignoring responses or aborting requests) when fetching data inside a `useEffect` that has dependencies. Without it, your application is vulnerable to race conditions for users with slow or unstable network connections.

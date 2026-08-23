@@ -1,0 +1,89 @@
+---
+title: "Testing Hooks"
+description: "Testing Hooks concept in React"
+importance: "MEDIUM"
+revisionTime: 2
+category: "React"
+subcategory: "Testing"
+order: 1080
+---
+
+## Testing Hooks
+
+Custom Hooks encapsulate reusable stateful logic in React. Because they don't render any UI themselves, testing them requires a slightly different approach than testing standard components.
+
+### The Problem with Testing Hooks
+
+You cannot call a React Hook outside of a React component. 
+
+If you try to import a hook and call it directly in your test file, React will throw a fatal error: *"Invalid hook call. Hooks can only be called inside of the body of a function component."*
+
+```javascript
+// ❌ This will crash!
+import { useCounter } from './useCounter';
+
+it('increments the counter', () => {
+  const { count, increment } = useCounter(); // ERROR! Not inside a component!
+});
+```
+
+### The Solution: `@testing-library/react-hooks`
+
+*(Note: In modern React Testing Library v13.1+, these functions have been merged directly into the core `@testing-library/react` package, so you no longer need the separate `-hooks` package).*
+
+To test a hook, RTL provides a `renderHook` function. Under the hood, RTL creates a tiny, invisible React component, calls your hook inside of it, and returns the results.
+
+#### Example: Testing a Counter Hook
+
+```javascript
+// useCounter.js
+import { useState } from 'react';
+
+export function useCounter(initialValue = 0) {
+  const [count, setCount] = useState(initialValue);
+  const increment = () => setCount((c) => c + 1);
+  return { count, increment };
+}
+```
+
+```javascript
+// useCounter.test.js
+import { renderHook, act } from '@testing-library/react';
+import { useCounter } from './useCounter';
+
+describe('useCounter', () => {
+  it('initializes with default value', () => {
+    // 1. Render the hook
+    const { result } = renderHook(() => useCounter());
+
+    // 2. Access the returned values via result.current
+    expect(result.current.count).toBe(0);
+  });
+
+  it('initializes with provided value', () => {
+    // Pass arguments to the hook
+    const { result } = renderHook(() => useCounter(10));
+    expect(result.current.count).toBe(10);
+  });
+
+  it('increments the count', () => {
+    const { result } = renderHook(() => useCounter(0));
+
+    // 3. The 'act' function
+    // Whenever you trigger a state update in a test (like calling increment),
+    // you MUST wrap it in act(). This tells React to process the state update
+    // and re-render the invisible test component before moving to the assertion.
+    act(() => {
+      result.current.increment();
+    });
+
+    expect(result.current.count).toBe(1);
+  });
+});
+```
+
+### When NOT to use `renderHook`
+
+`renderHook` is specifically designed for testing **reusable, independent Custom Hooks** (like `useLocalStorage`, `useDebounce`, or `useAuth`).
+
+If a custom hook is completely coupled to one specific component and is never used anywhere else, **you should not test the hook directly.** Instead, you should write an integration test for the Component that uses the hook. If the Component works as expected from the user's perspective, the hook is implicitly tested.

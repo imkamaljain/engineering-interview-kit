@@ -1,0 +1,94 @@
+---
+title: "Suspense Boundaries"
+description: "Suspense Boundaries concept in React"
+importance: "MEDIUM"
+revisionTime: 2
+category: "React"
+subcategory: "Advanced Patterns"
+order: 810
+---
+
+## Suspense Boundaries
+
+While the core concept of `<Suspense>` is simple (displaying a fallback while waiting for a Promise to resolve), strategically placing **Suspense Boundaries** throughout your application is an advanced architectural pattern.
+
+How you arrange your Suspense boundaries determines your application's loading sequence and user experience.
+
+### Granularity of Boundaries
+
+#### Strategy 1: The App-Level Boundary (Coarse)
+
+The simplest approach is wrapping the entire routing layer in one Suspense boundary.
+
+```jsx
+<Suspense fallback={<FullscreenSpinner />}>
+  <Routes>
+    <Route path="/" element={<Home />} />
+    <Route path="/dashboard" element={<Dashboard />} />
+  </Routes>
+</Suspense>
+```
+**User Experience:** When navigating to `/dashboard`, the screen goes completely blank except for the spinner. The user sees *nothing* until all the data and code for the dashboard has loaded. This is often jarring.
+
+#### Strategy 2: Granular Boundaries (Fine)
+
+A better pattern is to use multiple nested boundaries to reveal the page progressively.
+
+```jsx
+function Dashboard() {
+  return (
+    <div className="layout">
+      {/* The Sidebar loads independently. It might appear instantly! */}
+      <Suspense fallback={<SidebarSkeleton />}>
+        <Sidebar />
+      </Suspense>
+
+      <main>
+        {/* The main feed might take longer. We show a skeleton here. */}
+        <Suspense fallback={<FeedSkeleton />}>
+          <UserFeed />
+        </Suspense>
+
+        {/* The slow analytics chart won't block the UserFeed from rendering! */}
+        <Suspense fallback={<ChartSpinner />}>
+          <HeavyAnalyticsChart />
+        </Suspense>
+      </main>
+    </div>
+  );
+}
+```
+**User Experience:** The page layout appears immediately. The sidebar pops in. The feed loads next, while the heavy chart is still spinning. The user can start interacting with the app much faster.
+
+### The Problem of "Popcorn Loading"
+
+While granular boundaries are generally good, taking them too far creates "popcorn loading." If you wrap every single tiny widget on a page in its own `<Suspense>` boundary, the page will randomly "pop" items into existence one by one in unpredictable order. This creates visual noise and layout shifts.
+
+### Coordinating Boundaries with SuspenseList (Experimental)
+
+To solve "popcorn loading", React is developing a `<SuspenseList>` component (currently experimental and primarily used internally by frameworks like Relay or Next.js). 
+
+`<SuspenseList>` allows you to orchestrate the reveal order of sibling Suspense boundaries.
+
+```jsx
+// Note: This API may change as it is experimental
+<SuspenseList revealOrder="forwards">
+  <Suspense fallback={<ProfileSkeleton />}>
+    <ProfileDetails />
+  </Suspense>
+  <Suspense fallback={<PhotosSkeleton />}>
+    <PhotosList />
+  </Suspense>
+  <Suspense fallback={<FriendsSkeleton />}>
+    <FriendsList />
+  </Suspense>
+</SuspenseList>
+```
+
+In this pattern, even if the `PhotosList` data loads first, React will wait to reveal it until the `ProfileDetails` above it has also finished loading, creating a smooth top-to-bottom reveal.
+
+### Best Practices
+
+1. **Wrap layout areas:** Put Suspense boundaries around logical visual sections (Header, Sidebar, Main Content, Right Panel).
+2. **Avoid wrapping tiny UI elements:** Don't put a boundary around individual buttons or single text fields.
+3. **Always pair with Error Boundaries:** A component that suspends for data fetching might fail. Always wrap your `<Suspense>` boundary in an `<ErrorBoundary>`.
