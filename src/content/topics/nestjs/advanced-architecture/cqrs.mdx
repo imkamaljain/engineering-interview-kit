@@ -1,0 +1,128 @@
+---
+title: "CQRS"
+description: "CQRS in NestJS"
+importance: "HIGH"
+revisionTime: 6
+category: "NestJS"
+subcategory: "Advanced Architecture"
+order: 2710
+---
+
+*CQRS (Command Query Responsibility Segregation) is an architectural pattern that separates the data mutation operations (Commands) from the data retrieval operations (Queries).*
+
+## Overview
+In traditional CRUD applications, you use the same Service class and the same DTOs to both read and write to the database. This is fine for simple apps. However, in complex domains, the way you read data is often vastly different from how you write it. 
+
+CQRS splits these responsibilities. You have a `CommandBus` for handling actions that change state (e.g., `CreateUserCommand`), and a `QueryBus` for handling actions that only fetch state (e.g., `GetUsersQuery`). NestJS provides an official `@nestjs/cqrs` package to implement this pattern elegantly.
+
+## Key Concepts
+- **Commands**: Intentions to change the system state. They are handled by `CommandHandlers`. They should not return complex data (usually just void, or an ID).
+- **Queries**: Intentions to retrieve data without changing state. Handled by `QueryHandlers`.
+- **Events**: Facts that something happened. When a Command finishes, it often fires an Event (e.g., `UserCreatedEvent`) which `EventHandlers` can react to.
+- **Asynchronicity**: CQRS makes it very easy to process commands asynchronously via queues without rewriting your core domain logic.
+
+## Code Examples
+
+### 1. Defining a Command and its Handler
+A Command is just a plain TypeScript class representing the intent.
+
+```typescript
+// create-user.command.ts
+export class CreateUserCommand {
+  constructor(
+    public readonly email: string,
+    public readonly password: string,
+  ) {}
+}
+```
+
+The Handler executes the business logic.
+
+```typescript
+// create-user.handler.ts
+import { CommandHandler, ICommandHandler, EventPublisher } from '@nestjs/cqrs';
+import { CreateUserCommand } from './create-user.command';
+
+@CommandHandler(CreateUserCommand)
+export class CreateUserHandler implements ICommandHandler<CreateUserCommand> {
+  constructor(
+    private readonly repository: UserRepository,
+    private readonly publisher: EventPublisher,
+  ) {}
+
+  async execute(command: CreateUserCommand) {
+    const { email, password } = command;
+    
+    // 1. Execute business logic (save to DB)
+    const user = await this.repository.create(email, password);
+    
+    // 2. Publish an event so other domains can react
+    // (Requires binding the User model to the EventPublisher)
+    const userModel = this.publisher.mergeObjectContext(user);
+    userModel.apply(new UserCreatedEvent(user.id));
+    userModel.commit();
+    
+    return user.id; // Commands should return minimal data
+  }
+}
+```
+
+### 2. Defining a Query and its Handler
+Queries are completely separate. They might even read from a completely different database (like ElasticSearch or a Read-Replica)!
+
+```typescript
+// get-users.query.ts
+export class GetUsersQuery {
+  constructor(public readonly role: string) {}
+}
+
+// get-users.handler.ts
+import { QueryHandler, IQueryHandler } from '@nestjs/cqrs';
+
+@QueryHandler(GetUsersQuery)
+export class GetUsersHandler implements IQueryHandler<GetUsersQuery> {
+  constructor(private readonly repository: UserRepository) {}
+
+  async execute(query: GetUsersQuery) {
+    // Queries can be highly optimized for reading!
+    // No need to instantiate heavy domain models, just return raw JSON if needed.
+    return this.repository.findManyByRole(query.role);
+  }
+}
+```
+
+### 3. Executing from the Controller
+The Controller no longer injects a massive `UserService`. It only injects the `CommandBus` and `QueryBus`.
+
+```typescript
+import { Controller, Post, Get, Body, Param } from '@nestjs/common';
+import { CommandBus, QueryBus } from '@nestjs/cqrs';
+import { CreateUserCommand } from './create-user.command';
+import { GetUsersQuery } from './get-users.query';
+
+@Controller('users')
+export class UsersController {
+  constructor(
+    private readonly commandBus: CommandBus,
+    private readonly queryBus: QueryBus,
+  ) {}
+
+  @Post()
+  async create(@Body() dto: any) {
+    // Dispatch to the CommandBus
+    return this.commandBus.execute(
+      new CreateUserCommand(dto.email, dto.password)
+    );
+  }
+
+  @Get(':role')
+  async getByRole(@Param('role') role: string) {
+    // Dispatch to the QueryBus
+    return this.queryBus.execute(new GetUsersQuery(role));
+  }
+}
+```
+
+## Best Practices
+- **Don't Use CQRS for Everything**: CQRS adds a massive amount of boilerplate code. If your application is just taking JSON and throwing it into a database (CRUD), CQRS is an anti-pattern. Use CQRS only in complex, heavily-loaded domains where read patterns and write patterns scale differently.
+- **Read-Write Database Segregation**: The true power of CQRS is realized when your `CommandHandlers` write to a highly normalized SQL database (PostgreSQL), and your `QueryHandlers` read from a highly denormalized, fast NoSQL database (MongoDB or ElasticSearch). `EventHandlers` keep the read database in sync with the write database.

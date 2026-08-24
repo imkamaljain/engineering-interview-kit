@@ -1,0 +1,73 @@
+---
+title: "ParseUUIDPipe"
+description: "ParseUUIDPipe in NestJS"
+importance: "HIGH"
+revisionTime: 9
+category: "NestJS"
+subcategory: "Pipes"
+order: 630
+---
+
+*The `ParseUUIDPipe` validates that an incoming string parameter is a correctly formatted UUID (Universally Unique Identifier).*
+
+## Overview
+Modern applications often use UUIDs (like `123e4567-e89b-12d3-a456-426614174000`) instead of auto-incrementing integers for primary keys to improve security and scale across distributed databases.
+
+When accepting a UUID via a URL route parameter (e.g., `/users/:id`), you need to ensure the client actually provided a valid UUID. If they pass `123`, `ParseUUIDPipe` will catch it and throw a 400 Bad Request before your database query ever runs.
+
+## Key Concepts
+- **Validation, not Transformation**: Unlike `ParseIntPipe`, this pipe does *not* change the type of the data. It receives a string and returns that exact same string. Its sole purpose is validation.
+- **UUID Versions**: By default, it accepts any valid UUID version (v3, v4, v5). You can configure it to strictly enforce a specific version (most commonly v4).
+- **Error Handling**: Throws a `BadRequestException` if the string does not match the UUID regex pattern.
+
+## Code Examples
+
+### Basic Usage
+```typescript
+import { Controller, Get, Param, ParseUUIDPipe } from '@nestjs/common';
+import { UsersService } from './users.service';
+
+@Controller('users')
+export class UsersController {
+  constructor(private readonly usersService: UsersService) {}
+
+  @Get(':id')
+  // Ensures 'id' is a valid UUID string
+  findOne(@Param('id', ParseUUIDPipe) id: string) {
+    return this.usersService.findById(id);
+  }
+}
+```
+
+### Forcing a Specific UUID Version
+Most applications generate UUIDv4 (randomly generated). You can enforce this to reject older UUID versions.
+
+```typescript
+@Get(':id')
+findOne(
+  @Param('id', new ParseUUIDPipe({ version: '4' })) id: string
+) {
+  // Only accepts UUIDv4 (e.g. 11bf5b37-e0b8-42e0-8dcf-dc8c4aefc000)
+  return this.usersService.findById(id);
+}
+```
+
+### Custom Exceptions
+If you want to hide the fact that you use UUIDs under the hood, you can customize the error message to be generic.
+
+```typescript
+import { NotAcceptableException } from '@nestjs/common';
+
+@Get(':id')
+findOne(
+  @Param('id', new ParseUUIDPipe({ 
+    exceptionFactory: () => new NotAcceptableException('Invalid resource identifier format.') 
+  })) id: string
+) {
+  return this.usersService.findById(id);
+}
+```
+
+## Best Practices
+- **Security Check**: Always use `ParseUUIDPipe` when looking up records by UUID. Passing malformed strings to your database driver can cause unexpected crashes or reveal database architecture details in unhandled exception logs.
+- **Database Driver Transformation**: Remember that `ParseUUIDPipe` returns a string. If your database driver (like the MongoDB native driver, or TypeORM with specific dialects) expects a specific UUID *object* type rather than a string, you will need to write a custom Transformation Pipe instead.

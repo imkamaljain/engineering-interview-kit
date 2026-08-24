@@ -1,0 +1,103 @@
+---
+title: "Event Patterns"
+description: "Event Patterns in NestJS"
+importance: "HIGH"
+revisionTime: 13
+category: "NestJS"
+subcategory: "Microservices"
+order: 1870
+---
+
+*Event Patterns are the routing mechanism used by NestJS microservices for Event-Based (Fire-and-Forget) communication. They allow a microservice to listen for events without needing to send a response back to the publisher.*
+
+## Overview
+While `@MessagePattern()` is used for Request-Response (the client waits for an answer), `@EventPattern()` is used for Publish-Subscribe (the client announces something happened and immediately moves on).
+
+If an `OrdersService` creates a new order, it shouldn't have to wait for the `EmailService` to send a receipt, the `InventoryService` to update stock, and the `AnalyticsService` to log the metric. It just publishes an `order_created` event, and all interested services listen for it using `@EventPattern()`.
+
+## Key Concepts
+- **`@EventPattern()`**: The decorator used to listen for a specific event.
+- **Fire-and-Forget**: The sender (Client) does not wait for a response from the receiver(s).
+- **Multiple Listeners**: A single event emitted by a client can trigger multiple `@EventPattern()` handlers across different microservices simultaneously (depending on the Transporter used).
+
+## Code Examples
+
+### 1. Defining an Event Handler
+Just like message patterns, event patterns can be strings or objects.
+
+```typescript
+// email-service/app.controller.ts
+import { Controller } from '@nestjs/common';
+import { EventPattern, Payload } from '@nestjs/microservices';
+
+@Controller()
+export class EmailController {
+  
+  // Listen for the 'order_created' event
+  @EventPattern('order_created')
+  async handleOrderCreated(@Payload() data: { email: string, orderId: string }) {
+    console.log(`Sending confirmation email to ${data.email}`);
+    
+    // Simulate sending email...
+    await this.emailService.sendOrderConfirmation(data.email, data.orderId);
+    
+    // Notice we do NOT return anything! 
+    // The sender doesn't care, and won't receive it anyway.
+  }
+}
+```
+
+### 2. Multiple Services Listening
+If you are using a Pub/Sub transporter (like Redis, NATS, Kafka, or RabbitMQ Fanout Exchanges), another service can listen to the exact same event.
+
+```typescript
+// analytics-service/app.controller.ts
+import { Controller } from '@nestjs/common';
+import { EventPattern } from '@nestjs/microservices';
+
+@Controller()
+export class AnalyticsController {
+  
+  // Listens to the EXACT same event as the EmailController
+  @EventPattern('order_created')
+  handleOrderCreated(data: any) {
+    console.log('Logging order creation in analytics database...');
+    this.analyticsDb.insert(data);
+  }
+}
+```
+
+### 3. The Client Publishing the Event
+To trigger these event patterns, the client must use `client.emit()` instead of `client.send()`.
+
+```typescript
+// orders-service/app.controller.ts
+import { Controller, Post, Inject } from '@nestjs/common';
+import { ClientProxy } from '@nestjs/microservices';
+
+@Controller('orders')
+export class OrdersController {
+  constructor(@Inject('MESSAGING_SERVICE') private client: ClientProxy) {}
+
+  @Post()
+  async createOrder() {
+    const newOrder = { orderId: '123', email: 'user@example.com' };
+    
+    // Save to local DB first...
+    
+    // Announce to the world!
+    // emit() returns an Observable, but it resolves immediately once the message 
+    // is successfully sent to the broker. It does NOT wait for the microservices to finish.
+    this.client.emit('order_created', newOrder);
+    
+    return 'Order successfully placed!';
+  }
+}
+```
+
+## Best Practices
+- **Do Not Return Values**: While NestJS won't necessarily crash if you return a value from an `@EventPattern()` method, the value is completely ignored and thrown away. Don't waste CPU cycles calculating return values for events.
+- **Transporter Behavior Matters**: The behavior of `@EventPattern` changes drastically based on your Transporter. 
+  - If you use **TCP**, and try to `emit` an event to a service with 3 instances, NestJS will just pick *one* instance to send the event to. 
+  - If you use **Redis**, and have 3 different microservices subscribed, *all 3* will receive it. 
+  - If you use **Kafka** and the services share a `groupId`, only *one* will receive it; if they have different `groupId`s, *all* will receive it. Understand your broker!

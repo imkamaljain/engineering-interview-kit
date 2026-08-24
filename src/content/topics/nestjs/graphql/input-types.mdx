@@ -1,0 +1,97 @@
+---
+title: "Input Types"
+description: "Input Types in NestJS"
+importance: "HIGH"
+revisionTime: 12
+category: "NestJS"
+subcategory: "GraphQL"
+order: 1700
+---
+
+*Input Types are special GraphQL classes used specifically for passing complex object data (like a JSON payload) into Mutations or Queries.*
+
+## Overview
+In GraphQL, you cannot pass an `@ObjectType()` (like `Recipe`) as an argument into a mutation. The schema explicitly separates types used for *output* (Object Types) from types used for *input* (Input Types).
+
+In NestJS, you define these inputs using the `@InputType()` decorator. This is the exact GraphQL equivalent of a REST `@Body()` DTO.
+
+## Key Concepts
+- **`@InputType()`**: Decorates a class, telling NestJS this is an input object for mutations/queries.
+- **Separation of Concerns**: Even if your `Recipe` (Object) and `CreateRecipeInput` (Input) share the exact same fields, they must be distinct classes in GraphQL.
+- **Validation**: Because NestJS GraphQL is tightly integrated with `class-validator`, you can use the exact same validation decorators on Input Types as you do on REST DTOs.
+
+## Code Examples
+
+### 1. Defining an Input Type
+Notice how we mix GraphQL `@Field()` decorators with `class-validator` decorators. 
+
+```typescript
+// create-recipe.input.ts
+import { InputType, Field } from '@nestjs/graphql';
+import { IsString, MaxLength, MinLength, IsOptional } from 'class-validator';
+
+@InputType()
+export class CreateRecipeInput {
+  
+  @Field() // Expose to GraphQL
+  @IsString() // Validate data type
+  @MinLength(3) // Validate length
+  @MaxLength(50)
+  title: string;
+
+  // Make it optional in both GraphQL { nullable: true } and Validation @IsOptional()
+  @Field({ nullable: true })
+  @IsOptional()
+  @IsString()
+  description?: string;
+  
+  // A field with a default value
+  @Field(() => [String], { defaultValue: [] })
+  ingredients: string[];
+}
+```
+
+### 2. Using the Input Type in a Mutation
+You use the `@Args()` decorator in your resolver to extract the input object.
+
+```typescript
+// recipes.resolver.ts
+import { Resolver, Mutation, Args } from '@nestjs/graphql';
+import { Recipe } from './models/recipe.model';
+import { CreateRecipeInput } from './dto/create-recipe.input';
+
+@Resolver(() => Recipe)
+export class RecipesResolver {
+  
+  @Mutation(() => Recipe)
+  async createRecipe(
+    // The first string 'input' is the name of the argument in the GraphQL schema
+    @Args('input') inputData: CreateRecipeInput,
+  ) {
+    // inputData is a fully validated instance of CreateRecipeInput!
+    return this.recipesService.create(inputData);
+  }
+}
+```
+*Client Query:*
+`mutation { createRecipe(input: { title: "Cake", ingredients: ["Flour"] }) { id } }`
+
+### 3. Reusing Types with `PartialType`
+Often, an Update Mutation requires the exact same fields as a Create Mutation, but all fields are optional. Instead of duplicating the class, use `PartialType` (imported from `@nestjs/graphql`, NOT `@nestjs/mapped-types`).
+
+```typescript
+import { InputType, Field, Int, PartialType } from '@nestjs/graphql';
+import { CreateRecipeInput } from './create-recipe.input';
+
+// PartialType makes all fields from CreateRecipeInput optional
+@InputType()
+export class UpdateRecipeInput extends PartialType(CreateRecipeInput) {
+  // We still need the ID to know which recipe to update!
+  @Field(() => Int)
+  id: number;
+}
+```
+
+## Best Practices
+- **Enable Validation**: By default, NestJS does not validate GraphQL inputs. You MUST enable the global `ValidationPipe` in your `main.ts` file (`app.useGlobalPipes(new ValidationPipe())`) for your `@IsString()` decorators to work on GraphQL Input Types.
+- **Don't use `ArgsType` for Payloads**: If you are sending a JSON-like object (like a user profile to be saved), use `@InputType()`. Only use `@ArgsType()` for flat, top-level query parameters (like pagination `skip` and `take`).

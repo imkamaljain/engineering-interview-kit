@@ -1,0 +1,122 @@
+---
+title: "Terminus"
+description: "Terminus in NestJS"
+importance: "MEDIUM"
+revisionTime: 5
+category: "NestJS"
+subcategory: "Observability"
+order: 2860
+---
+
+*`@nestjs/terminus` is the official NestJS module for building robust, standardized Health Checks. It abstracts the complexity of pinging databases, memory, and external APIs.*
+
+## Overview
+Before Terminus, building a health check meant writing a custom route that manually wrapped `try/catch` blocks around database calls and manually formatting JSON responses.
+
+Terminus provides the `HealthCheckService` which executes an array of "Health Indicators". If *any* indicator throws an error, Terminus automatically intercepts it and returns a `503 Service Unavailable` HTTP status code, along with a standardized JSON payload detailing exactly which service failed.
+
+## Key Concepts
+- **Built-in Indicators**: 
+  - `HttpHealthIndicator`: Pings an external URL.
+  - `TypeOrmHealthIndicator`, `MongooseHealthIndicator`, `MikroOrmHealthIndicator`: Checks database connectivity.
+  - `MemoryHealthIndicator`: Checks Heap and RSS memory thresholds.
+  - `DiskHealthIndicator`: Checks available disk storage space.
+- **Graceful Degradation**: By default, one failed check causes a 503. However, you can configure non-essential checks to fail *without* failing the entire health check.
+
+## Code Examples
+
+### 1. Combining Multiple Built-in Indicators
+Terminus runs all provided indicators in parallel.
+
+```typescript
+import { Controller, Get } from '@nestjs/common';
+import { 
+  HealthCheck, 
+  HealthCheckService, 
+  HttpHealthIndicator, 
+  DiskHealthIndicator 
+} from '@nestjs/terminus';
+
+@Controller('health')
+export class HealthController {
+  constructor(
+    private health: HealthCheckService,
+    private http: HttpHealthIndicator,
+    private disk: DiskHealthIndicator,
+  ) {}
+
+  @Get()
+  @HealthCheck()
+  check() {
+    return this.health.check([
+      // 1. Check if our external CMS API is responding with a 200 OK
+      () => this.http.pingCheck('cms-api', 'https://api.mycms.com/ping'),
+      
+      // 2. Check if the disk has less than 90% usage (fail if above 90%)
+      () => this.disk.checkStorage('storage', { path: '/', thresholdPercent: 0.9 }),
+      
+      // 3. Check if the disk has at least 10GB free
+      () => this.disk.checkStorage('storage_gb', { path: '/', threshold: 10 * 1024 * 1024 * 1024 }),
+    ]);
+  }
+}
+```
+
+### 2. The Standardized Response
+If all checks pass, Terminus returns a `200 OK` with this JSON:
+
+```json
+{
+  "status": "ok",
+  "info": {
+    "cms-api": {
+      "status": "up"
+    },
+    "storage": {
+      "status": "up"
+    }
+  },
+  "error": {},
+  "details": {
+    "cms-api": {
+      "status": "up"
+    },
+    "storage": {
+      "status": "up"
+    }
+  }
+}
+```
+
+If the CMS API goes down, Terminus returns a `503 Service Unavailable` with this JSON:
+
+```json
+{
+  "status": "error",
+  "info": {
+    "storage": {
+      "status": "up"
+    }
+  },
+  "error": {
+    "cms-api": {
+      "status": "down",
+      "message": "connect ECONNREFUSED 104.22.43.10"
+    }
+  },
+  "details": {
+    "storage": {
+      "status": "up"
+    },
+    "cms-api": {
+      "status": "down",
+      "message": "connect ECONNREFUSED 104.22.43.10"
+    }
+  }
+}
+```
+
+## Best Practices
+- **Isolate Liveness and Readiness**: In Kubernetes, a failed "Liveness" probe restarts the container. A failed "Readiness" probe just stops traffic. 
+  - Create `/health/liveness` which only checks if the Node.js event loop is running (no DB checks).
+  - Create `/health/readiness` which checks the database and Redis using Terminus. (If the DB is down, you don't want Kubernetes constantly restarting the Node container; you just want it to stop sending traffic until the DB recovers).

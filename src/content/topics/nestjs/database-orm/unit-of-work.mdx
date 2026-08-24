@@ -1,0 +1,114 @@
+---
+title: "Unit of Work"
+description: "Unit of Work in NestJS"
+importance: "HIGH"
+revisionTime: 11
+category: "NestJS"
+subcategory: "Database & ORM"
+order: 1340
+---
+
+*The Unit of Work pattern manages a series of operations that can affect the database, keeping track of everything that changes and committing them all at once in a single transaction.*
+
+## Overview
+When you have complex business logic spanning multiple services, passing a TypeORM `QueryRunner` down through service methods becomes incredibly messy and breaks encapsulation. The `BankingService` shouldn't have to know how the `EmailService` or `AuditService` manages its data.
+
+The Unit of Work (UoW) pattern abstracts the transaction logic. It acts as a wrapper around the database context, ensuring that any repositories accessed through the UoW all share the exact same transactional state.
+
+## Key Concepts
+- **Encapsulation**: Hides the `QueryRunner` or database-specific transaction syntax from the business logic.
+- **Shared State**: Ensures multiple disparate services can participate in the same database transaction.
+- **Not Built-in**: NestJS and TypeORM do not have a built-in "Unit of Work" provider. You usually have to build it yourself or use third-party libraries.
+
+## Code Examples
+
+### 1. Implementing a Custom Unit of Work
+This class encapsulates the TypeORM `QueryRunner` and exposes transactional repositories.
+
+```typescript
+// unit-of-work.ts
+import { Injectable } from '@nestjs/common';
+import { DataSource, QueryRunner } from 'typeorm';
+import { User } from './user.entity';
+import { Account } from './account.entity';
+
+@Injectable()
+export class UnitOfWork {
+  private queryRunner: QueryRunner;
+
+  constructor(private dataSource: DataSource) {}
+
+  // 1. Initialize the transaction
+  async start() {
+    this.queryRunner = this.dataSource.createQueryRunner();
+    await this.queryRunner.connect();
+    await this.queryRunner.startTransaction();
+  }
+
+  // 2. Expose transaction-safe repositories!
+  get userRepository() {
+    return this.queryRunner.manager.getRepository(User);
+  }
+
+  get accountRepository() {
+    return this.queryRunner.manager.getRepository(Account);
+  }
+
+  // 3. Transaction control methods
+  async commit() {
+    await this.queryRunner.commitTransaction();
+  }
+
+  async rollback() {
+    await this.queryRunner.rollbackTransaction();
+  }
+
+  async release() {
+    await this.queryRunner.release();
+  }
+}
+```
+
+### 2. Using the Unit of Work in a Service
+Notice how clean the service logic is now. It doesn't know anything about `QueryRunner`, but it gets full transactional safety across multiple repositories.
+
+```typescript
+// banking.service.ts
+import { Injectable } from '@nestjs/common';
+import { UnitOfWork } from './unit-of-work';
+
+@Injectable()
+export class BankingService {
+  // Inject our custom Unit of Work class
+  constructor(private uow: UnitOfWork) {}
+
+  async createAccountAndUser(userData: any, initialBalance: number) {
+    await this.uow.start();
+
+    try {
+      // Both repositories use the SAME underlying transaction connection
+      const user = this.uow.userRepository.create(userData);
+      await this.uow.userRepository.save(user);
+
+      const account = this.uow.accountRepository.create({ 
+        userId: user.id, 
+        balance: initialBalance 
+      });
+      await this.uow.accountRepository.save(account);
+
+      await this.uow.commit();
+      return { user, account };
+      
+    } catch (error) {
+      await this.uow.rollback();
+      throw error;
+    } finally {
+      await this.uow.release();
+    }
+  }
+}
+```
+
+## Best Practices
+- **Scope**: The `UnitOfWork` provider MUST be registered as Request Scoped (`@Injectable({ scope: Scope.REQUEST })`) or instantiated manually per transaction. If it is a Singleton (the NestJS default), concurrent user requests will attempt to use the exact same `QueryRunner`, leading to catastrophic race conditions and corrupted data.
+- **Alternatives**: In simpler applications, the Unit of Work pattern is often considered overkill, as TypeORM's `dataSource.transaction()` callback method provides similar functionality with less boilerplate. Use UoW only in highly complex, enterprise-grade Domain-Driven Design (DDD) architectures.

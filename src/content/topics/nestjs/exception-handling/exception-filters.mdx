@@ -1,0 +1,80 @@
+---
+title: "Exception Filters"
+description: "Exception Filters in NestJS"
+importance: "LOW"
+revisionTime: 6
+category: "NestJS"
+subcategory: "Exception Handling"
+order: 890
+---
+
+*Exception Filters are NestJS's built-in mechanism for processing unhandled exceptions across your entire application and formatting them into user-friendly HTTP responses.*
+
+## Overview
+When your code throws an error (e.g., `throw new Error('Something broke')`), NestJS catches it. If you don't have a specific Exception Filter set up, Nest's global exception layer catches the error and automatically sends a generic `500 Internal Server Error` response to the client.
+
+Exception Filters allow you to intercept specific types of exceptions, log them, and dictate exactly what JSON payload and HTTP status code should be returned to the client.
+
+## Key Concepts
+- **The Global Exception Layer**: The safety net that catches everything.
+- **`@Catch()` Decorator**: Used to bind a filter to specific exception classes (e.g., `@Catch(HttpException)` or `@Catch(QueryFailedError)`).
+- **`ArgumentsHost`**: The object passed to the filter, allowing you to access the underlying Express/Fastify `Request` and `Response` objects to manually craft the HTTP reply.
+
+## Code Examples
+
+### A Basic Custom Exception Filter
+This filter catches *all* instances of `HttpException` and adds a custom timestamp to the response.
+
+```typescript
+import { ExceptionFilter, Catch, ArgumentsHost, HttpException } from '@nestjs/common';
+import { Request, Response } from 'express';
+
+// Tell Nest this filter only cares about HttpExceptions (or classes that extend it)
+@Catch(HttpException)
+export class HttpExceptionFilter implements ExceptionFilter {
+  
+  // The catch method receives the exception instance and the ArgumentsHost
+  catch(exception: HttpException, host: ArgumentsHost) {
+    const ctx = host.switchToHttp();
+    const response = ctx.getResponse<Response>();
+    const request = ctx.getRequest<Request>();
+    
+    // Get the status code from the exception (e.g., 404, 400)
+    const status = exception.getStatus();
+
+    // Manually craft the response using the Express response object
+    response
+      .status(status)
+      .json({
+        statusCode: status,
+        timestamp: new Date().toISOString(), // Custom field!
+        path: request.url,
+        message: exception.message,
+      });
+  }
+}
+```
+
+### Applying the Filter
+Just like Guards and Interceptors, you can apply filters at the method, controller, or global level.
+
+```typescript
+import { Controller, Get, UseFilters, ForbiddenException } from '@nestjs/common';
+import { HttpExceptionFilter } from './http-exception.filter';
+
+@Controller('cats')
+// Apply to all routes in this controller
+@UseFilters(HttpExceptionFilter) 
+export class CatsController {
+  
+  @Get()
+  async findAll() {
+    // This exception will be caught and formatted by HttpExceptionFilter!
+    throw new ForbiddenException(); 
+  }
+}
+```
+
+## Best Practices
+- **Prefer Standard Exceptions**: Before writing a custom exception filter to handle a generic `Error`, try to throw one of Nest's built-in HTTP Exceptions (like `BadRequestException`). The default global filter handles these perfectly.
+- **Database Error Handling**: The most common use case for custom Exception Filters is catching database-specific errors (like Prisma's `PrismaClientKnownRequestError` or TypeORM's `QueryFailedError`) globally and mapping them to clean 400 or 409 HTTP responses, keeping your controllers completely unaware of the underlying ORM.

@@ -1,0 +1,103 @@
+---
+title: "@nestjs/schedule"
+description: "@nestjs/schedule in NestJS"
+importance: "MEDIUM"
+revisionTime: 5
+category: "NestJS"
+subcategory: "Scheduling"
+order: 2210
+---
+
+*The `@nestjs/schedule` package is the official NestJS wrapper for scheduling tasks. It provides a declarative decorator-based API and a dynamic registry for managing jobs at runtime.*
+
+## Overview
+While you can easily write `@Cron` decorators, sometimes you need to schedule, pause, or cancel jobs *dynamically* while the application is running (e.g., a user clicks a "Pause my daily emails" button). 
+
+The `SchedulerRegistry` API provided by `@nestjs/schedule` allows you to interact with your cron jobs, intervals, and timeouts programmatically.
+
+## Key Concepts
+- **Decorators**: `@Cron`, `@Interval`, `@Timeout` for static, compile-time scheduling.
+- **Scheduler Registry**: An injectable service that acts as a central dictionary of all running tasks.
+- **Job Naming**: To interact with a job dynamically via the registry, you must give it a unique `name` when defining it.
+
+## Code Examples
+
+### 1. Naming a Job
+By passing an options object to the decorator, you can assign a name to the job.
+
+```typescript
+import { Injectable, Logger } from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
+
+@Injectable()
+export class NotificationService {
+  private readonly logger = new Logger(NotificationService.name);
+
+  // Give the job a unique name!
+  @Cron('0 9 * * *', { name: 'daily_morning_notification' })
+  sendMorningNotification() {
+    this.logger.log('Sending morning notifications to all users...');
+  }
+}
+```
+
+### 2. Controlling the Job Dynamically
+Inject the `SchedulerRegistry` into another service or controller to pause, resume, or delete the job.
+
+```typescript
+import { Controller, Post, Param } from '@nestjs/common';
+import { SchedulerRegistry } from '@nestjs/schedule';
+import { CronJob } from 'cron';
+
+@Controller('admin/jobs')
+export class JobsController {
+  constructor(private schedulerRegistry: SchedulerRegistry) {}
+
+  @Post(':name/stop')
+  stopJob(@Param('name') name: string) {
+    // 1. Fetch the underlying CronJob object from the registry
+    const job = this.schedulerRegistry.getCronJob(name);
+    
+    // 2. Stop it!
+    job.stop();
+    
+    return { message: `Job ${name} stopped! Status: ${job.running}` };
+  }
+
+  @Post(':name/start')
+  startJob(@Param('name') name: string) {
+    const job = this.schedulerRegistry.getCronJob(name);
+    job.start();
+    return { message: `Job ${name} started! Status: ${job.running}` };
+  }
+
+  @Post(':name/delete')
+  deleteJob(@Param('name') name: string) {
+    // Permanently removes it from memory
+    this.schedulerRegistry.deleteCronJob(name);
+    return { message: `Job ${name} deleted!` };
+  }
+}
+```
+
+### 3. Creating Jobs Programmatically
+Instead of using decorators, you can create entirely new jobs at runtime.
+
+```typescript
+  addDynamicCronJob(name: string, cronExpression: string) {
+    // 1. Create a new CronJob instance
+    const job = new CronJob(cronExpression, () => {
+      console.log(`Dynamic job ${name} executing!`);
+    });
+
+    // 2. Add it to the registry
+    this.schedulerRegistry.addCronJob(name, job);
+    
+    // 3. Start it
+    job.start();
+  }
+```
+
+## Best Practices
+- **Naming Conventions**: Use consistent, unique string keys (e.g., `feature.action.frequency`) or Enums for job names to prevent typos when fetching jobs from the `SchedulerRegistry`.
+- **Memory Leaks with Dynamic Jobs**: If you create a new dynamic interval or cron job every time a user performs an action, and you never call `schedulerRegistry.deleteInterval(name)`, your application will eventually crash from a memory leak and too many active timers. Always clean up dynamic jobs when they are no longer needed.

@@ -1,0 +1,90 @@
+---
+title: "TypeORM vs Prisma"
+description: "TypeORM vs Prisma in NestJS"
+importance: "HIGH"
+revisionTime: 10
+category: "NestJS"
+subcategory: "Interview Patterns"
+order: 3040
+---
+
+*While NestJS is database-agnostic, the two most dominant ORMs in the ecosystem are TypeORM (the traditional default) and Prisma (the modern challenger). Interviewers often ask candidates to compare them to gauge their understanding of database access patterns and TypeScript integration.*
+
+## Overview
+- **TypeORM**: An Active Record and Data Mapper ORM heavily inspired by Hibernate (Java). It relies extensively on TypeScript decorators (`@Entity()`, `@Column()`) to define the schema directly in your application code.
+- **Prisma**: A next-generation ORM. You do not define your database schema in TypeScript. Instead, you write a custom `schema.prisma` file. Prisma then compiles this file, introspects your database, and auto-generates a bespoke, fully-typed query builder specifically for your schema.
+
+## Key Differences
+
+### 1. Schema Definition & Source of Truth
+- **TypeORM**: TypeScript is the source of truth. You write class files, and TypeORM generates SQL migrations to make the database match your classes.
+- **Prisma**: The `schema.prisma` file is the source of truth. Prisma generates both the SQL migrations and the TypeScript types based on that single file.
+
+### 2. Type Safety
+- **TypeORM**: "Loosely" typed. If you select specific columns (`select: ['id', 'name']`), TypeORM still returns the full `User` class type, meaning TypeScript won't warn you if you accidentally try to access `user.password` (it will just be undefined at runtime).
+- **Prisma**: "Strictly" typed. Prisma generates dynamic return types based on exactly what you query. If you only select `id` and `name`, TypeScript will throw a compile error if you try to access `user.password`.
+
+### 3. The Query API
+- **TypeORM**: Provides a high-level `Repository` API for simple queries, but requires you to drop down to a complex `QueryBuilder` (which heavily resembles raw SQL string manipulation) for anything involving advanced JOINs or subqueries.
+- **Prisma**: Uses a deeply nested, JSON-like object syntax for all queries, including complex relational includes and filters.
+
+## Code Examples
+
+### A standard relation query (Find User with Posts)
+
+**TypeORM:**
+```typescript
+import { Repository } from 'typeorm';
+import { InjectRepository } from '@nestjs/typeorm';
+
+export class UserService {
+  constructor(
+    @InjectRepository(User) private userRepository: Repository<User>
+  ) {}
+
+  async getUserWithPosts(id: number) {
+    // Repository API
+    return this.userRepository.findOne({
+      where: { id },
+      relations: ['posts'], // String-based, prone to typos if you rename the relation
+    });
+    
+    // OR QueryBuilder for complex scenarios
+    // return this.userRepository.createQueryBuilder('user')
+    //   .leftJoinAndSelect('user.posts', 'post')
+    //   .where('user.id = :id', { id })
+    //   .getOne();
+  }
+}
+```
+
+**Prisma:**
+```typescript
+import { Injectable } from '@nestjs/common';
+import { PrismaService } from './prisma.service'; // Custom wrapper around PrismaClient
+
+@Injectable()
+export class UserService {
+  constructor(private prisma: PrismaService) {}
+
+  async getUserWithPosts(id: number) {
+    return this.prisma.user.findUnique({
+      where: { id },
+      include: {
+        posts: true, // Strongly typed. TypeScript will error if 'posts' doesn't exist.
+      },
+    });
+  }
+}
+```
+
+## Best Practices & When to choose which
+- **Choose TypeORM if**:
+  - You are building a heavily OOP application (Domain-Driven Design) and want to encapsulate business logic inside your Entity classes (Active Record pattern).
+  - You need to support a very specific, obscure database feature or write highly optimized, raw SQL queries frequently.
+  - You are migrating a legacy Spring Boot or ASP.NET team to Node.js (the syntax feels identical).
+- **Choose Prisma if**:
+  - Developer experience and absolute Type Safety are your highest priorities.
+  - You are starting a greenfield project.
+  - You want migrations and schema management handled painlessly.
+- **The Prisma NestJS Integration**: Unlike TypeORM which has an official `@nestjs/typeorm` package, Prisma does not need one. You simply generate the Prisma Client, wrap it in a standard NestJS `@Injectable()` service, and inject it wherever you need it.

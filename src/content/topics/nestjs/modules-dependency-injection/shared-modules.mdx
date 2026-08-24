@@ -1,0 +1,72 @@
+---
+title: "Shared Modules"
+description: "Shared Modules in NestJS"
+importance: "LOW"
+revisionTime: 12
+category: "NestJS"
+subcategory: "Modules & Dependency Injection"
+order: 160
+---
+
+*In Nest, modules are singletons by default, meaning you can share the exact same instance of any provider across multiple modules effortlessly.*
+
+## Overview
+Every module is automatically a **Shared Module**. Once created, it can be reused by any number of other modules. 
+
+Imagine you have a `DatabaseModule`. You don't want every feature module to create its own separate database connection pool. Because modules are singletons, importing `DatabaseModule` into multiple feature modules ensures they all share the exact same connection pool.
+
+## Key Concepts
+- **Singleton Pattern**: When Nest instantiates a provider, it caches it. Subsequent injections of that provider return the cached instance.
+- **Exporting Providers**: To share a provider, the module that creates it *must* place it in the `exports` array.
+- **Importing Modules**: To consume a shared provider, the consuming module *must* import the module that exports it.
+
+## Code Examples
+
+### Defining a Shared Module
+Let's create a `LoggingModule` that we want to share across our application.
+
+```typescript
+// logging.module.ts
+import { Module } from '@nestjs/common';
+import { LoggingService } from './logging.service';
+
+@Module({
+  providers: [LoggingService],
+  // MUST EXPORT the service to make it shareable
+  exports: [LoggingService], 
+})
+export class LoggingModule {}
+```
+
+### Consuming a Shared Module
+Now, any module that imports `LoggingModule` can inject `LoggingService`.
+
+```typescript
+// users.module.ts
+import { Module } from '@nestjs/common';
+import { UsersService } from './users.service';
+import { LoggingModule } from '../logging/logging.module';
+
+@Module({
+  // Import the module that exports the service we need
+  imports: [LoggingModule],
+  providers: [UsersService],
+})
+export class UsersModule {}
+```
+
+```typescript
+// users.service.ts
+import { Injectable } from '@nestjs/common';
+import { LoggingService } from '../logging/logging.service';
+
+@Injectable()
+export class UsersService {
+  // We can safely inject it now!
+  constructor(private logger: LoggingService) {}
+}
+```
+
+## Best Practices
+- **Explicit Imports**: Don't be afraid of importing shared modules in multiple places. It is better to explicitly import what a module needs rather than relying on Global Modules, as it makes testing much easier and dependencies clear.
+- **Shared vs Global**: Use Shared Modules (explicit imports) for things that are used by *many* modules, but use Global Modules ONLY for things used by *nearly all* modules (like Database or Config).

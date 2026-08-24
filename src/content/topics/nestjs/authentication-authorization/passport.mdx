@@ -1,0 +1,87 @@
+---
+title: "Passport"
+description: "Passport in NestJS"
+importance: "LOW"
+revisionTime: 6
+category: "NestJS"
+subcategory: "Authentication & Authorization"
+order: 1110
+---
+
+*Passport is the most popular authentication library for Node.js. NestJS provides an official module (`@nestjs/passport`) to seamlessly integrate Passport's vast ecosystem of strategies into your application.*
+
+## Overview
+Writing secure authentication logic from scratch is difficult and dangerous. Passport solves this by providing "Strategies". 
+
+Whether you want users to log in with an email/password (Local Strategy), a JSON Web Token (JWT Strategy), or OAuth 2.0 (Google, Facebook, Twitter Strategies), Passport has an existing, heavily-tested plugin for it.
+
+The `@nestjs/passport` module wraps these Node.js strategies and turns them into NestJS Guards, allowing you to use them cleanly with the `@UseGuards()` decorator.
+
+## Key Concepts
+- **Strategies**: A specific algorithm for authenticating a request (e.g., checking a JWT signature, or validating a password hash).
+- **The Strategy Class**: In NestJS, you define a Strategy by creating an `@Injectable()` class that extends a Passport Strategy (like `PassportStrategy(Strategy, 'jwt')`).
+- **The `validate()` Method**: Every NestJS Passport strategy must implement a `validate()` method. If Passport successfully verifies the token/credentials, it calls your `validate()` method. Whatever you return from this method is automatically attached to `request.user`.
+
+## Code Examples
+
+### Setting up the Passport Module
+Before using any strategies, you must import the PassportModule.
+
+```typescript
+// auth.module.ts
+import { Module } from '@nestjs/common';
+import { PassportModule } from '@nestjs/passport';
+import { AuthService } from './auth.service';
+import { JwtStrategy } from './jwt.strategy';
+import { LocalStrategy } from './local.strategy';
+
+@Module({
+  imports: [
+    // You can set a default strategy so you don't have to specify it in your guards later
+    PassportModule.register({ defaultStrategy: 'jwt' }),
+  ],
+  providers: [AuthService, JwtStrategy, LocalStrategy],
+  exports: [PassportModule],
+})
+export class AuthModule {}
+```
+
+### The Structure of a NestJS Strategy
+Here is the general skeleton of *any* Passport Strategy in NestJS, regardless of whether it is JWT, Local, or Google OAuth.
+
+```typescript
+import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { PassportStrategy } from '@nestjs/passport';
+// You import the specific Strategy from its respective passport package
+import { Strategy } from 'passport-jwt'; 
+
+@Injectable()
+// You extend PassportStrategy, passing the imported Strategy as the first argument
+export class MyCustomStrategy extends PassportStrategy(Strategy, 'my-strategy-name') {
+  
+  constructor() {
+    // You pass configuration options to the parent Strategy here
+    super({
+      /* ... configuration ... */
+    });
+  }
+
+  // If the super() configuration passes, Passport automatically calls validate()
+  async validate(payload: any) {
+    // This is where YOU write your business logic.
+    // e.g., Looking up the user in the database based on the payload ID.
+    const user = { id: 1, name: 'John' };
+    
+    if (!user) {
+      throw new UnauthorizedException();
+    }
+    
+    // Whatever you return here becomes `request.user`!
+    return user; 
+  }
+}
+```
+
+## Best Practices
+- **Do Not Re-invent the Wheel**: Never write your own JWT verification logic or password hashing comparison directly in a Guard. Always use Passport strategies. They handle edge cases, expired tokens, and malformed headers safely.
+- **Keep `validate()` Lean**: The `validate()` method runs on *every* authenticated request (if using JWT/Session). Avoid heavy database queries inside this method if possible. If you use JWTs, try to encode everything you need (like `userId` and `roles`) directly in the token payload so `validate()` can just return the payload without hitting the database.

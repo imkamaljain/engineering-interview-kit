@@ -1,0 +1,78 @@
+---
+title: "Response Caching"
+description: "Response Caching in NestJS"
+importance: "HIGH"
+revisionTime: 14
+category: "NestJS"
+subcategory: "Performance & Scalability"
+order: 2520
+---
+
+*Response Caching involves storing the final output (HTML, JSON, etc.) of an HTTP request so that subsequent identical requests can be served instantly without re-executing the application logic.*
+
+## Overview
+While caching database queries is effective, the application still has to run the controller logic, serialize the data into JSON, and format the HTTP response. 
+
+Response Caching intercepts the request at the very edge of the application (or even outside of it) and returns a perfectly formatted HTTP response without your business logic ever knowing the request occurred.
+
+## Key Concepts
+- **Cache-Control Headers**: HTTP headers (like `Cache-Control: max-age=3600`) that tell the client's browser or intermediate CDNs how long they are allowed to store the response.
+- **NestJS CacheInterceptor**: A built-in interceptor that caches the JSON output of a controller.
+- **Edge Caching (CDN)**: Caching the response completely outside of your server (e.g., in Cloudflare or AWS CloudFront), offering the absolute highest performance possible.
+
+## Code Examples
+
+### 1. In-App Response Caching
+Using the `@nestjs/cache-manager` package, you can cache entire route responses.
+
+```typescript
+import { Controller, Get, UseInterceptors } from '@nestjs/common';
+import { CacheInterceptor, CacheKey, CacheTTL } from '@nestjs/cache-manager';
+
+@Controller('stats')
+// Apply the interceptor to the whole controller
+@UseInterceptors(CacheInterceptor)
+export class StatsController {
+  
+  @Get('summary')
+  // Automatically caches the JSON response based on the route URL
+  // If the TTL is 10 seconds, only 1 request every 10s actually hits the database
+  @CacheTTL(10000) 
+  getSummaryStats() {
+    return this.db.calculateMassiveStats(); // Very slow!
+  }
+}
+```
+
+### 2. Client-Side (Browser) Caching
+Instead of caching the data on your server, you can tell the user's browser to cache it! This costs you zero CPU and zero RAM. 
+
+Use the `@Header()` decorator to set HTTP Cache-Control headers.
+
+```typescript
+import { Controller, Get, Header } from '@nestjs/common';
+
+@Controller('assets')
+export class AssetsController {
+  
+  @Get('config')
+  // Tell the browser: "Store this in your local cache for 1 hour (3600 seconds). 
+  // Do not ask me for it again until the hour is up!"
+  @Header('Cache-Control', 'public, max-age=3600')
+  getFrontendConfig() {
+    return {
+      theme: 'dark',
+      features: ['new_checkout'],
+    };
+  }
+}
+```
+
+### 3. Edge Caching (CDN)
+If you set the `Cache-Control` header to `public`, Content Delivery Networks (CDNs) like Cloudflare will read that header and cache the response on *their* servers (often physically closer to the user).
+
+If 10,000 users in Tokyo request the API, Cloudflare will ask your NestJS server in New York for the data *once*. It will then serve the other 9,999 users directly from Tokyo in 10ms, completely shielding your NestJS server from the load.
+
+## Best Practices
+- **Never Cache Authenticated Routes Globally**: If you set `Cache-Control: public, max-age=3600` on a `/profile` endpoint, a CDN might cache User A's profile and serve it to User B! Always use `Cache-Control: private` for endpoints that return user-specific data, ensuring only the user's local browser caches it, not a public CDN.
+- **ETags**: Sometimes you want to cache a resource indefinitely, but force the client to download a new version *only if it changes*. ETags are cryptographic hashes of the response body. The client sends the ETag they have; if it matches the server's ETag, the server returns `304 Not Modified` (empty body), saving massive bandwidth. NestJS handles ETags automatically if you configure it in Express or Fastify.

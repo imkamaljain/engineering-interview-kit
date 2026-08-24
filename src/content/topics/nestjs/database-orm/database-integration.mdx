@@ -1,0 +1,98 @@
+---
+title: "Database Integration"
+description: "Database Integration in NestJS"
+importance: "MEDIUM"
+revisionTime: 9
+category: "NestJS"
+subcategory: "Database & ORM"
+order: 1210
+---
+
+*NestJS is database-agnostic. It does not force you to use a specific database or Object Relational Mapper (ORM), but it provides seamless integrations for the most popular options in the Node.js ecosystem.*
+
+## Overview
+Because NestJS relies heavily on Dependency Injection, integrating a database usually involves importing a specific Module (like `TypeOrmModule` or `MongooseModule`) into your root `AppModule`.
+
+This root module creates a singleton connection to the database. You then import "Feature Modules" into your domain modules (e.g., `UsersModule`) which provide access to specific tables/collections (Repositories or Models).
+
+## Key Concepts
+- **`forRoot()` / `forRootAsync()`**: The standard pattern for initializing a global database connection in the `AppModule`. You pass in your credentials, host, and port.
+- **`forFeature()`**: The pattern used in domain modules to register specific entities/schemas, making their corresponding repositories available for injection in your services.
+- **Entity/Schema**: A TypeScript class that represents a single table (SQL) or collection (NoSQL) in your database.
+
+## Code Examples
+
+### The General Integration Pattern (Using TypeORM as an example)
+
+**1. Connecting to the Database (Root Module)**
+```typescript
+import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { UsersModule } from './users/users.module';
+import { User } from './users/user.entity';
+
+@Module({
+  imports: [
+    // 1. Establish the global connection
+    TypeOrmModule.forRoot({
+      type: 'postgres',
+      host: 'localhost',
+      port: 5432,
+      username: 'db_user',
+      password: 'db_password',
+      database: 'my_app_db',
+      entities: [User], // List all entities here
+      synchronize: process.env.NODE_ENV !== 'production', 
+    }),
+    
+    // 2. Import your feature modules
+    UsersModule,
+  ],
+})
+export class AppModule {}
+```
+
+**2. Registering an Entity (Feature Module)**
+```typescript
+import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { UsersService } from './users.service';
+import { UsersController } from './users.controller';
+import { User } from './user.entity';
+
+@Module({
+  imports: [
+    // 3. Register the specific 'User' entity for this module
+    // This creates a 'UserRepository' under the hood.
+    TypeOrmModule.forFeature([User])
+  ],
+  providers: [UsersService],
+  controllers: [UsersController],
+})
+export class UsersModule {}
+```
+
+**3. Injecting the Repository (Service)**
+```typescript
+import { Injectable } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { User } from './user.entity';
+
+@Injectable()
+export class UsersService {
+  constructor(
+    // 4. Inject the auto-generated repository to query the DB!
+    @InjectRepository(User)
+    private usersRepository: Repository<User>,
+  ) {}
+
+  findAll(): Promise<User[]> {
+    return this.usersRepository.find();
+  }
+}
+```
+
+## Best Practices
+- **Never Hardcode Credentials**: Never put raw passwords or host strings in your `forRoot()` configuration. Always use `forRootAsync()` combined with the `ConfigModule` to load these values from `.env` files.
+- **Understand `synchronize`**: Many ORMs (like TypeORM) have a `synchronize: true` option. This automatically alters your database schema to match your TypeScript code every time the server starts. **NEVER use this in production.** It can accidentally drop tables or columns and cause catastrophic data loss. Use migrations instead.

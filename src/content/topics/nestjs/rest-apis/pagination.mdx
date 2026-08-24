@@ -1,0 +1,116 @@
+---
+title: "Pagination"
+description: "Pagination in NestJS"
+importance: "LOW"
+revisionTime: 6
+category: "NestJS"
+subcategory: "REST APIs"
+order: 1490
+---
+
+*Pagination is the technique of dividing a large dataset into smaller, manageable chunks (pages) so that clients don't download megabytes of data in a single request, preventing server crashes and slow UI rendering.*
+
+## Overview
+If you have 100,000 users in your database, `GET /users` should never return all of them at once. 
+
+Pagination typically relies on Query Parameters in the URL (e.g., `?page=2&limit=50`). The server parses these parameters, queries the database for that specific slice of data, and returns it along with metadata (like `totalItems` and `totalPages`) so the frontend can build navigation controls.
+
+## Key Concepts
+- **Offset/Limit Pagination**: The most common type. You specify how many items to `limit` (or `take`), and how many items to `offset` (or `skip`). E.g., Page 2 with a limit of 10 means `skip: 10, take: 10`.
+- **Cursor-based Pagination**: More complex but highly performant for massive datasets (like a Twitter feed). Instead of skipping X items, you ask for "10 items *after* this specific ID/timestamp".
+- **Metadata**: A paginated response must include more than just an array. It needs to tell the client if there is a "next page".
+
+## Code Examples
+
+### 1. The Pagination DTO
+First, define a DTO to validate the incoming query parameters. We use `class-transformer` to ensure the query strings are converted to numbers.
+
+```typescript
+// pagination.dto.ts
+import { IsOptional, IsInt, Min, Max } from 'class-validator';
+import { Type } from 'class-transformer';
+
+export class PaginationQueryDto {
+  @IsOptional()
+  @Type(() => Number) // Convert string from URL to number
+  @IsInt()
+  @Min(1)
+  page?: number = 1; // Default to page 1
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100) // Prevent the client from requesting a million items
+  limit?: number = 10; // Default to 10 items per page
+}
+```
+
+### 2. The Controller
+The controller uses `@Query()` to grab the parameters and passes them to the service.
+
+```typescript
+// users.controller.ts
+import { Controller, Get, Query } from '@nestjs/common';
+
+@Controller('users')
+export class UsersController {
+  constructor(private usersService: UsersService) {}
+
+  @Get()
+  findAll(@Query() paginationQuery: PaginationQueryDto) {
+    return this.usersService.findAllPaginated(paginationQuery);
+  }
+}
+```
+
+### 3. The Service (TypeORM Implementation)
+TypeORM makes Offset/Limit pagination very easy with the `findAndCount` method.
+
+```typescript
+// users.service.ts
+import { Injectable } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+
+@Injectable()
+export class UsersService {
+  constructor(@InjectRepository(User) private repo: Repository<User>) {}
+
+  async findAllPaginated(query: PaginationQueryDto) {
+    const { page, limit } = query;
+    
+    // Calculate how many records to skip
+    // Page 1: skip 0. Page 2: skip 10. Page 3: skip 20.
+    const skip = (page - 1) * limit;
+
+    // findAndCount executes two queries: 
+    // 1. Fetches the paginated data
+    // 2. Counts the TOTAL number of records in the table that match the query
+    const [data, total] = await this.repo.findAndCount({
+      skip: skip,
+      take: limit,
+      order: { id: 'ASC' } // Always sort when paginating!
+    });
+
+    const totalPages = Math.ceil(total / limit);
+
+    // Return the standard paginated payload
+    return {
+      data,
+      meta: {
+        totalItems: total,
+        itemsPerPage: limit,
+        currentPage: page,
+        totalPages: totalPages,
+        hasNextPage: page < totalPages,
+        hasPreviousPage: page > 1
+      }
+    };
+  }
+}
+```
+
+## Best Practices
+- **Always Specify an `ORDER BY`**: SQL databases do not guarantee the order of returned rows unless you explicitly provide an `ORDER BY` clause. If you paginate without sorting, the database might return the same row on Page 1 and Page 2.
+- **Offset vs Cursor**: `skip` (Offset) pagination gets slower the deeper you go. Asking the database to `skip: 100000` requires it to scan 100,000 rows just to throw them away. If you have millions of rows, use Cursor-based pagination (`where: { id: MoreThan(lastId) }`).

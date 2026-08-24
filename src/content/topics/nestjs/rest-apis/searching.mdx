@@ -1,0 +1,101 @@
+---
+title: "Searching"
+description: "Searching in NestJS"
+importance: "HIGH"
+revisionTime: 13
+category: "NestJS"
+subcategory: "REST APIs"
+order: 1520
+---
+
+*Searching refers to full-text or partial-text matching, allowing users to find resources by typing keywords (e.g., finding a user whose name or email contains "John").*
+
+## Overview
+While *Filtering* is usually for exact matches (e.g., `role=admin`), *Searching* is fuzzy. If a user types "john" into a search bar, they expect the API to return "John Doe", "johnny123", and "ajohnson".
+
+In a REST API, this is usually passed as a single query parameter: `?search=john` or `?q=john`. The backend must take this keyword and perform a `LIKE` or `ILIKE` (case-insensitive) query across multiple database columns.
+
+## Key Concepts
+- **`LIKE` / `ILIKE` Operators**: SQL commands used for pattern matching.
+- **Wildcards (`%`)**: The `%` symbol in SQL means "any sequence of characters". `LIKE '%john%'` means "find any string that contains 'john' anywhere inside it".
+- **OR Logic**: A search usually targets multiple columns simultaneously (e.g., `firstName LIKE '%john%' OR lastName LIKE '%john%'`).
+
+## Code Examples
+
+### 1. The Search DTO
+A simple DTO to capture the search query parameter.
+
+```typescript
+import { IsOptional, IsString, MinLength } from 'class-validator';
+
+export class SearchQueryDto {
+  @IsOptional()
+  @IsString()
+  @MinLength(2) // Prevent expensive searches for single characters
+  search?: string;
+}
+```
+
+### 2. Implementation using TypeORM Object Syntax
+You can achieve an `OR` query in TypeORM by passing an *array* of objects to the `where` clause.
+
+```typescript
+import { Injectable } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository, ILike } from 'typeorm';
+
+@Injectable()
+export class UsersService {
+  constructor(@InjectRepository(User) private repo: Repository<User>) {}
+
+  async searchUsers(query: SearchQueryDto) {
+    const { search } = query;
+
+    if (!search) {
+      return this.repo.find(); // Return all if no search term
+    }
+
+    // Wrap the search term in % wildcards
+    const searchPattern = `%${search}%`;
+
+    // Passing an ARRAY to 'where' creates an OR condition in TypeORM
+    return this.repo.find({
+      where: [
+        { firstName: ILike(searchPattern) }, // ILike is Case-Insensitive (Postgres only)
+        { lastName: ILike(searchPattern) },
+        { email: ILike(searchPattern) }
+      ],
+      // Translates to: 
+      // WHERE "firstName" ILIKE '%john%' OR "lastName" ILIKE '%john%' OR "email" ILIKE '%john%'
+    });
+  }
+}
+```
+
+### 3. Implementation using QueryBuilder (More robust)
+When combining Searching with Filtering and Pagination, the Object syntax gets very messy. Using `QueryBuilder` is the standard for complex search endpoints.
+
+```typescript
+async searchWithQueryBuilder(query: SearchQueryDto) {
+  const { search } = query;
+  
+  const qb = this.repo.createQueryBuilder('user');
+
+  if (search) {
+    qb.andWhere(
+      // The parenthesis are crucial to group the OR conditions!
+      '(user.firstName ILIKE :search OR user.lastName ILIKE :search OR user.email ILIKE :search)',
+      { search: `%${search}%` } // Pass the parameter safely
+    );
+  }
+
+  // Now you can easily chain filters onto it
+  // qb.andWhere('user.isActive = :active', { active: true });
+
+  return qb.getMany();
+}
+```
+
+## Best Practices
+- **Beware of `LIKE '%...%'` Performance**: Using a leading wildcard (`%john`) prevents SQL databases from using standard B-Tree indexes. It forces a Full Table Scan (checking every single row). If you have millions of rows, this query will crash your database.
+- **Dedicated Search Engines**: If search performance becomes an issue, or you need advanced features like typo-tolerance or relevance scoring, do not use your relational database. Sync your data to a dedicated search engine like **Elasticsearch**, **Meilisearch**, or **Algolia**, and have your NestJS API query that service instead.

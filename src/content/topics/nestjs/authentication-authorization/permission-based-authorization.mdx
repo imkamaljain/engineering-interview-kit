@@ -1,0 +1,100 @@
+---
+title: "Permission-based Authorization"
+description: "Permission-based Authorization in NestJS"
+importance: "LOW"
+revisionTime: 8
+category: "NestJS"
+subcategory: "Authentication & Authorization"
+order: 1170
+---
+
+*Permission-Based Authorization (often called Attribute-Based Access Control or Claims-Based Access Control) is a more granular approach than RBAC, focusing on specific actions rather than broad titles.*
+
+## Overview
+Role-Based Access Control (RBAC) breaks down in complex systems. If you have an `ADMIN` role, but you want to create a "Junior Admin" who can read users but not delete them, you have to create a whole new `JUNIOR_ADMIN` role. Eventually, you end up with hundreds of roles.
+
+Permission-Based Authorization solves this by decoupling the *action* from the *role*. Instead of asking "Is this user an Admin?", the guard asks, "Does this user have the `delete:users` permission?". 
+
+How the user *got* that permission (via a Role, or assigned directly to them) doesn't matter to the Guard.
+
+## Key Concepts
+- **Permissions (Claims)**: Highly specific strings representing actions (e.g., `read:reports`, `write:users`, `execute:billing`).
+- **Decoupling**: The controller only cares about the *Permission*. The database/service layer handles mapping Roles to Permissions.
+
+## Code Examples
+
+### 1. Create the Permissions Decorator
+This looks very similar to the Roles decorator, but it expects specific action strings.
+
+```typescript
+// permissions.decorator.ts
+import { SetMetadata } from '@nestjs/common';
+
+// Using an Enum is highly recommended to prevent typos
+export enum Permission {
+  CreateArticle = 'create:article',
+  ReadArticle = 'read:article',
+  UpdateArticle = 'update:article',
+  DeleteArticle = 'delete:article',
+  ManageUsers = 'manage:users',
+}
+
+export const RequirePermissions = (...permissions: Permission[]) => 
+  SetMetadata('permissions', permissions);
+```
+
+### 2. Create the Permissions Guard
+This Guard expects the user's JWT payload (or database record) to contain an array of permission strings, rather than a single role string.
+
+```typescript
+// permissions.guard.ts
+import { Injectable, CanActivate, ExecutionContext } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
+import { Permission } from './permissions.decorator';
+
+@Injectable()
+export class PermissionsGuard implements CanActivate {
+  constructor(private reflector: Reflector) {}
+
+  canActivate(context: ExecutionContext): boolean {
+    const requiredPermissions = this.reflector.getAllAndOverride<Permission[]>('permissions', [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+
+    if (!requiredPermissions) return true;
+
+    const { user } = context.switchToHttp().getRequest();
+    
+    // We assume the user payload contains an array of permissions
+    // e.g., user.permissions = ['read:article', 'update:article']
+    const userPermissions: string[] = user.permissions || [];
+
+    // Check if the user has ALL required permissions (or SOME, depending on your logic)
+    return requiredPermissions.every((permission) => userPermissions.includes(permission));
+  }
+}
+```
+
+### 3. Usage in the Controller
+
+```typescript
+import { Controller, Delete, UseGuards } from '@nestjs/common';
+
+@Controller('articles')
+@UseGuards(JwtAuthGuard, PermissionsGuard)
+export class ArticlesController {
+  
+  @Delete(':id')
+  // We don't care if they are an admin or a moderator. 
+  // We just care if they have the specific 'DeleteArticle' permission.
+  @RequirePermissions(Permission.DeleteArticle)
+  deleteArticle() {
+    return 'Article deleted';
+  }
+}
+```
+
+## Best Practices
+- **Token Bloat**: If you have 500 different permissions in your app, you cannot put the user's `permissions` array into the JWT payload, because the JWT will become massive (slowing down network requests). In permission-heavy apps, the JWT should only contain the User ID, and the `PermissionsGuard` (or the `JwtStrategy`) must query the database (or a fast cache like Redis) to fetch the user's permissions on every request.
+- **CASL Integration**: If your permissions need to be even more granular—such as "User can update the article, *but only if they are the author of it*"—simple string-based permissions aren't enough. You should look into Integrating a library like **CASL** (casl.js.org), which NestJS officially recommends for complex Attribute-Based Access Control (ABAC).

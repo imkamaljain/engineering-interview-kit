@@ -1,0 +1,83 @@
+---
+title: "WebSocket Guards"
+description: "WebSocket Guards in NestJS"
+importance: "LOW"
+revisionTime: 12
+category: "NestJS"
+subcategory: "WebSockets"
+order: 2070
+---
+
+*WebSocket Guards function exactly like HTTP Guards. They determine whether a specific real-time event should be handled by the Gateway or blocked based on authorization rules.*
+
+## Overview
+In a REST API, you use Guards to protect endpoints from unauthorized users. In WebSockets, you use Guards to protect specific `@SubscribeMessage()` handlers from unauthorized events.
+
+If a Guard returns `true`, the event is processed. If it returns `false` (or throws an exception), the event is silently ignored, or an error is sent back to the client via an acknowledgment, depending on your exception filter configuration.
+
+## Key Concepts
+- **`ExecutionContext`**: Inside a Guard, the `ExecutionContext` behaves differently for WebSockets than for HTTP. You must use `.switchToWs()` instead of `.switchToHttp()`.
+- **Initial Handshake vs. Event Guards**: It is usually better to authenticate the user *once* during the initial WebSocket handshake (`handleConnection`). You use Guards on specific events to check *authorization* (e.g., does this user have the 'admin' role to fire this specific event?).
+- **Silent Rejection**: Unlike HTTP where a Guard automatically throws a `403 Forbidden`, WebSocket Guards might just cause the event to drop silently unless explicitly configured to return an error acknowledgment.
+
+## Code Examples
+
+### 1. Creating a WebSocket Guard
+This guard extracts the `Socket` client and data payload to determine if the user has permission to execute the action.
+
+```typescript
+import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
+import { Socket } from 'socket.io';
+
+@Injectable()
+export class WsRolesGuard implements CanActivate {
+  
+  canActivate(context: ExecutionContext): boolean {
+    // 1. Switch context to WebSockets!
+    const wsContext = context.switchToWs();
+    
+    // 2. Get the Socket instance and the payload data
+    const client: Socket = wsContext.getClient();
+    const data = wsContext.getData();
+    
+    // (Assume we attached the user object to the socket during handleConnection)
+    const user = (client as any).user;
+    
+    if (!user) {
+      return false; // Blocks the event
+    }
+
+    // Check if the user has the 'admin' role
+    return user.roles.includes('admin');
+  }
+}
+```
+
+### 2. Applying the Guard
+You apply the Guard using the exact same `@UseGuards()` decorator as you do in REST APIs. You can apply it to the whole Gateway, or to specific events.
+
+```typescript
+import { WebSocketGateway, SubscribeMessage, UseGuards } from '@nestjs/websockets';
+import { WsRolesGuard } from './ws-roles.guard';
+
+@WebSocketGateway()
+export class AdminGateway {
+
+  // This event is completely unprotected
+  @SubscribeMessage('ping')
+  handlePing() {
+    return 'pong';
+  }
+
+  // This event requires the user to pass the WsRolesGuard
+  @UseGuards(WsRolesGuard)
+  @SubscribeMessage('delete_database')
+  handleDangerousAction() {
+    return 'Database deleted!';
+  }
+}
+```
+
+## Best Practices
+- **Do Not Re-Authenticate on Every Event**: Do not put your JWT verification logic inside a WebSocket Guard that fires on every single message. Cryptographically verifying a JWT is computationally expensive. Verify the JWT *once* inside `handleConnection`, attach the decoded user ID to the `socket` object (`client.user = decodedToken`), and then use Guards merely to check simple roles or permissions on the pre-attached user object.
+- **Handling Guard Rejections**: If a client expects an acknowledgment callback (e.g., `socket.emit('getData', (response) => {...})`) and the Guard blocks the request, the callback will never fire and the client will hang indefinitely. If you rely on acknowledgments, you should throw a `WsException` inside the Guard rather than returning `false`, so the client receives the error.

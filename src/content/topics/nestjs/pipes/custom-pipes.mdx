@@ -1,0 +1,87 @@
+---
+title: "Custom Pipes"
+description: "Custom Pipes in NestJS"
+importance: "HIGH"
+revisionTime: 10
+category: "NestJS"
+subcategory: "Pipes"
+order: 650
+---
+
+*Custom Pipes allow you to build bespoke transformation or validation logic tailored specifically to your application's business rules.*
+
+## Overview
+While `ParseIntPipe` and `ValidationPipe` cover 90% of use cases, you will inevitably encounter situations where you need custom parsing logic. 
+
+Creating a custom pipe is as simple as creating an `@Injectable()` class that implements the `PipeTransform` interface and writing your logic inside the `transform()` method.
+
+## Key Concepts
+- **`PipeTransform<T, R>`**: The interface you must implement. `T` is the type of the incoming value, and `R` is the type of the returned (transformed) value.
+- **`ArgumentMetadata`**: An optional second argument passed to the `transform` method. It contains metadata about the current parameter being processed (is it a `@Body`, `@Query`, `@Param`? What is its TypeScript type?).
+- **Dependency Injection**: Because custom pipes are classes decorated with `@Injectable()`, they can inject other services (e.g., a Database Service to verify an ID exists).
+
+## Code Examples
+
+### A Custom Validation Pipe
+Let's create a pipe that ensures an incoming string is a valid MongoDB ObjectId before passing it to the controller.
+
+```typescript
+import { PipeTransform, Injectable, BadRequestException } from '@nestjs/common';
+import { Types } from 'mongoose'; // Assuming you use mongoose
+
+@Injectable()
+export class ParseObjectIdPipe implements PipeTransform<any, Types.ObjectId> {
+  transform(value: any): Types.ObjectId {
+    // 1. Validation Logic
+    const validObjectId = Types.ObjectId.isValid(value);
+
+    if (!validObjectId) {
+      throw new BadRequestException('Invalid ObjectId provided');
+    }
+
+    // 2. Transformation Logic
+    return Types.ObjectId.createFromHexString(value);
+  }
+}
+```
+
+### Using `ArgumentMetadata`
+Sometimes a pipe needs to behave differently depending on where the data came from or what type it is supposed to be.
+
+```typescript
+import { PipeTransform, Injectable, ArgumentMetadata } from '@nestjs/common';
+
+@Injectable()
+export class LoggingPipe implements PipeTransform {
+  transform(value: any, metadata: ArgumentMetadata) {
+    // metadata.type can be 'body', 'query', 'param', or 'custom'
+    console.log(`Processing a ${metadata.type} parameter...`);
+    
+    // metadata.metatype contains the TypeScript class/type (e.g., String, Number, CreateUserDto)
+    console.log(`Expected type is: ${metadata.metatype.name}`);
+    
+    return value;
+  }
+}
+```
+
+### Applying Custom Pipes
+You can apply pipes at the parameter, method, or controller level.
+
+```typescript
+@Controller('items')
+// 1. Controller scope: Applies to all methods
+@UsePipes(LoggingPipe) 
+export class ItemsController {
+  
+  @Get(':id')
+  // 2. Parameter scope: Only applies to this specific parameter
+  findOne(@Param('id', ParseObjectIdPipe) id: Types.ObjectId) {
+    return `Looking for item ${id}`;
+  }
+}
+```
+
+## Best Practices
+- **Throw Standard Exceptions**: When validation fails in a custom pipe, always throw a NestJS HTTP exception (like `BadRequestException`). Nest's global exception filter will catch this and format a nice JSON response for the client automatically.
+- **Use Parameter-Scoped Pipes for Specificity**: If your custom pipe is only validating one specific parameter (like `ParseObjectIdPipe`), apply it directly in the `@Param()` decorator. This makes it instantly clear to anyone reading the code exactly which parameter is being transformed.

@@ -1,0 +1,82 @@
+---
+title: "Transactions"
+description: "Transactions in NestJS"
+importance: "HIGH"
+revisionTime: 12
+category: "NestJS"
+subcategory: "Database & ORM"
+order: 1290
+---
+
+*Transactions ensure that a series of database operations either all succeed together or all fail together, preventing corrupted or incomplete data states.*
+
+## Overview
+Imagine a banking app where a user transfers $100 to a friend. The database must perform two operations:
+1. Deduct $100 from User A
+2. Add $100 to User B
+
+If the server crashes exactly between step 1 and step 2, User A loses their money, and User B never gets it. A transaction wraps both operations. If step 2 fails, the database automatically "rolls back" step 1, as if it never happened.
+
+## Key Concepts
+- **ACID**: Transactions guarantee Atomicity, Consistency, Isolation, and Durability.
+- **QueryRunner**: In TypeORM, the `QueryRunner` provides a single, isolated database connection used specifically to execute a transaction.
+- **Commit / Rollback**: `commitTransaction()` permanently saves the changes. `rollbackTransaction()` undoes them.
+
+## Code Examples
+
+### Standard Transaction using QueryRunner (TypeORM)
+This is the most robust and recommended way to handle transactions in NestJS with TypeORM.
+
+```typescript
+import { Injectable, InternalServerErrorException } from '@nestjs/common';
+import { DataSource } from 'typeorm';
+import { User } from './user.entity';
+import { Account } from './account.entity';
+
+@Injectable()
+export class BankingService {
+  constructor(
+    // Inject the root DataSource connection, not a specific Repository
+    private dataSource: DataSource,
+  ) {}
+
+  async transferMoney(fromUserId: number, toUserId: number, amount: number) {
+    // 1. Create a new QueryRunner and connect it to the DB
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+
+    // 2. Start the transaction!
+    await queryRunner.startTransaction();
+
+    try {
+      // 3. Execute operations USING THE QUERYRUNNER, not standard repositories!
+      
+      // Deduct money
+      const fromAccount = await queryRunner.manager.findOneBy(Account, { userId: fromUserId });
+      fromAccount.balance -= amount;
+      await queryRunner.manager.save(fromAccount);
+
+      // Add money
+      const toAccount = await queryRunner.manager.findOneBy(Account, { userId: toUserId });
+      toAccount.balance += amount;
+      await queryRunner.manager.save(toAccount);
+
+      // 4. If we reach this line, both operations succeeded. Commit them!
+      await queryRunner.commitTransaction();
+
+    } catch (err) {
+      // 5. If an error occurs anywhere in the try block, undo everything!
+      await queryRunner.rollbackTransaction();
+      throw new InternalServerErrorException('Transfer failed, money safely refunded');
+      
+    } finally {
+      // 6. You MUST release the query runner, otherwise you will cause connection leaks!
+      await queryRunner.release();
+    }
+  }
+}
+```
+
+## Best Practices
+- **Never use standard repositories inside a transaction block**: A common mistake is starting a transaction with `queryRunner.startTransaction()`, but then using `this.userRepository.save()` inside the try block. `this.userRepository` uses the global connection pool, *not* the isolated transaction connection. You MUST use `queryRunner.manager.save()` for the transaction to actually work.
+- **Always use `finally`**: If you forget `queryRunner.release()` inside a `finally` block, and an error is thrown, the connection remains open forever. Eventually, your connection pool will run out, and your entire application will freeze.

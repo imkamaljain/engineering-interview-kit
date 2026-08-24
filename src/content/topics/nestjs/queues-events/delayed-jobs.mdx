@@ -1,0 +1,84 @@
+---
+title: "Delayed Jobs"
+description: "Delayed Jobs in NestJS"
+importance: "LOW"
+revisionTime: 6
+category: "NestJS"
+subcategory: "Queues & Events"
+order: 2000
+---
+
+*Delayed Jobs are a feature of advanced queue systems (like Bull) that allow you to enqueue a job now, but instruct the queue to wait a specific amount of time before allowing a worker to process it.*
+
+## Overview
+Sometimes you need to schedule an action to happen in the future, relative to an event that just occurred. 
+
+For example, when a user signs up, you might want to send them a "How are you liking the app?" email exactly 24 hours later. Instead of writing a complex Cron job that scans the database every 5 minutes looking for users who signed up exactly 24 hours ago, you simply push a Delayed Job to the queue with a `delay: 86400000` (24 hours in milliseconds) option.
+
+## Key Concepts
+- **`delay` Option**: The number of milliseconds the queue should hold the job in a "delayed" state before moving it to the "waiting" state (where workers can pick it up).
+- **Not Exact**: A delay of 5000ms guarantees the job will NOT run *before* 5 seconds. It does not guarantee it will run *exactly at* 5 seconds. If all your workers are currently busy processing other jobs, the delayed job will have to wait in line once its delay expires.
+- **Dynamic Scheduling**: Unlike static Cron expressions, delayed jobs are created dynamically at runtime based on user actions.
+
+## Code Examples
+
+### 1. Enqueueing a Delayed Job
+When adding a job to the queue, pass the `delay` property in the options object.
+
+```typescript
+import { Controller, Post, Body } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bull';
+import { Queue } from 'bull';
+
+@Controller('users')
+export class UsersController {
+  
+  constructor(@InjectQueue('emails') private emailQueue: Queue) {}
+
+  @Post('register')
+  async registerUser(@Body() data: any) {
+    const user = { id: 1, email: data.email };
+    
+    // 1. Send the welcome email IMMEDIATELY (no delay)
+    await this.emailQueue.add('send_welcome', { email: user.email });
+    
+    // 2. Schedule the follow-up email for 24 hours (86,400,000 ms) from now!
+    await this.emailQueue.add('send_followup', { email: user.email }, {
+      delay: 24 * 60 * 60 * 1000, 
+    });
+    
+    return user;
+  }
+}
+```
+
+### 2. Canceling a Delayed Job
+If a user deletes their account 12 hours after signing up, you shouldn't send them the follow-up email! You can look up the delayed job and remove it. (This requires storing the Job ID when you create it).
+
+```typescript
+import { Injectable } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bull';
+import { Queue } from 'bull';
+
+@Injectable()
+export class UsersService {
+  constructor(@InjectQueue('emails') private emailQueue: Queue) {}
+
+  async deleteAccount(userId: number, followupJobId: string) {
+    // Delete user from DB...
+    
+    // Find the pending job in Redis
+    const job = await this.emailQueue.getJob(followupJobId);
+    
+    // If it exists and hasn't run yet, remove it!
+    if (job) {
+      await job.remove();
+      console.log(`Canceled delayed email job ${followupJobId}`);
+    }
+  }
+}
+```
+
+## Best Practices
+- **Store Job IDs for Cancellation**: If a delayed job is tied to a user action (like a scheduled reminder or a trial expiration), save the returned `job.id` to the user's database record. This is the only reliable way to find and cancel the job if the user changes their mind before the delay expires.
+- **Use for "Saga" Timeouts**: Delayed jobs are excellent for distributed transactions (Sagas). If an `OrderService` places an order, it can push a delayed `check_payment_timeout` job for 15 minutes. 15 minutes later, the worker wakes up. If the order is still "Pending" in the database, the worker cancels the order and restores the inventory. If the order is "Paid", the worker simply does nothing and completes successfully.

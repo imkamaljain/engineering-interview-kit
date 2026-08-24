@@ -1,0 +1,102 @@
+---
+title: "SOLID Principles"
+description: "SOLID Principles in NestJS"
+importance: "MEDIUM"
+revisionTime: 12
+category: "NestJS"
+subcategory: "Advanced Architecture"
+order: 2750
+---
+
+*SOLID is an acronym for five design principles intended to make software designs more understandable, flexible, and maintainable. NestJS's architecture strongly encourages adherence to these principles.*
+
+## Overview
+The principles are:
+1. **S**ingle Responsibility Principle (SRP)
+2. **O**pen-Closed Principle (OCP)
+3. **L**iskov Substitution Principle (LSP)
+4. **I**nterface Segregation Principle (ISP)
+5. **D**ependency Inversion Principle (DIP)
+
+While these apply to Object-Oriented Programming (OOP) in general, NestJS provides specific tools (like Interceptors, Custom Providers, and Modules) that make implementing them natural.
+
+## Key Concepts and NestJS Application
+
+### 1. Single Responsibility Principle (SRP)
+*A class should have one, and only one, reason to change.*
+
+**In NestJS**: 
+Do not put validation logic, business logic, and database logic inside a Controller. 
+- Validation belongs in **Pipes**.
+- Request transformation/logging belongs in **Interceptors**.
+- Authorization belongs in **Guards**.
+- Business logic belongs in **Services**.
+- Data access belongs in **Repositories**.
+
+### 2. Open-Closed Principle (OCP)
+*Software entities should be open for extension, but closed for modification.*
+
+**In NestJS**:
+If you have an `OrderService` that calculates discounts, don't write a massive `switch` statement that you have to modify every time a new discount type is added. Instead, use a **Strategy Pattern** via Custom Providers or a **Plugin Architecture**. You add new behavior by creating new classes, not by modifying existing ones.
+
+### 3. Liskov Substitution Principle (LSP)
+*Objects in a program should be replaceable with instances of their subtypes without altering the correctness of that program.*
+
+**In NestJS**:
+If you define an abstract class `CacheService` with a method `get(key: string): string | null`, and you create a `RedisCacheService` that extends it, the Redis implementation must not throw an unexpected `RedisConnectionException` during a simple `get` call if the original interface didn't account for it. The consumer should be able to substitute `RedisCacheService` for `InMemoryCacheService` without breaking.
+
+### 4. Interface Segregation Principle (ISP)
+*Many client-specific interfaces are better than one general-purpose interface.*
+
+**In NestJS**:
+Don't create a massive `IDatabaseService` interface that forces the `UsersService` to implement methods like `dropDatabase()` or `createTable()`. Split it up. Have an `IUserRepository` for finding users, and an `IDatabaseAdmin` interface for migrations. Clients should only depend on the specific methods they actually use.
+
+### 5. Dependency Inversion Principle (DIP)
+*High-level modules should not depend on low-level modules. Both should depend on abstractions.*
+
+**In NestJS**:
+This is the core of the framework. Services should never manually instantiate (`new StripeClient()`) their dependencies. They should define what they need in their constructor, and the NestJS DI container injects it. To fully adhere to DIP, you should inject abstract interfaces via Custom Providers (e.g., `@Inject(IPaymentProvider)`) rather than concrete classes.
+
+## Code Example (SRP & DIP in Action)
+
+**Bad (Violates SRP and DIP):**
+```typescript
+@Controller('users')
+export class UsersController {
+  
+  @Post()
+  async create(@Body() body: any) {
+    // Violates SRP: Controller is doing validation
+    if (!body.email.includes('@')) throw new BadRequestException();
+    
+    // Violates DIP: Instantiating a low-level detail directly
+    const db = new DatabaseConnection(); 
+    
+    // Violates SRP: Controller is writing SQL
+    await db.query(`INSERT INTO users...`); 
+    
+    return 'Success';
+  }
+}
+```
+
+**Good (Adheres to SRP and DIP):**
+```typescript
+@Controller('users')
+export class UsersController {
+  
+  // DIP: Injecting an abstraction. The Controller doesn't know about databases.
+  constructor(private readonly userService: UserService) {}
+  
+  @Post()
+  // SRP: Validation is delegated to a Pipe using a DTO
+  async create(@Body(new ValidationPipe()) dto: CreateUserDto) {
+    
+    // SRP: Business logic is delegated to the Service
+    return this.userService.create(dto);
+  }
+}
+```
+
+## Best Practices
+- **Don't Dogmatize**: SOLID principles are guidelines, not laws. Strictly adhering to all 5 principles in every single file will lead to an over-engineered nightmare of interfaces and factories. Apply them where complexity demands it, particularly in the core business domain.

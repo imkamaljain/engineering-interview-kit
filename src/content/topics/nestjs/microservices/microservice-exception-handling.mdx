@@ -1,0 +1,119 @@
+---
+title: "Microservice Exception Handling"
+description: "Microservice Exception Handling in NestJS"
+importance: "LOW"
+revisionTime: 6
+category: "NestJS"
+subcategory: "Microservices"
+order: 1910
+---
+
+*Exception Handling in NestJS Microservices is fundamentally different from REST APIs because HTTP status codes (like 404 or 500) do not exist over raw TCP, Redis, or RabbitMQ connections.*
+
+## Overview
+If a microservice throws a standard NestJS `NotFoundException` (which extends `HttpException`), the transporter intercepts it. Because the transporter is not HTTP, it cannot send a `404` status code. 
+
+Instead, NestJS wraps the error in a standard JSON RPC error object and sends it back to the client. The client receives an `RpcException`.
+
+## Key Concepts
+- **`RpcException`**: The microservice equivalent of `HttpException`. You should throw this inside your `@MessagePattern()` handlers when things go wrong.
+- **Exception Filters**: Just like HTTP apps, you can use `@Catch()` to create custom Exception Filters that intercept errors before they are sent back across the network.
+- **Client Error Handling**: The `ClientProxy` receives the error and emits it through the returned Observable. You must use RxJS `catchError` or a `try/catch` block (if using Promises) to handle it.
+
+## Code Examples
+
+### 1. Throwing Errors in the Microservice
+Do not throw HTTP Exceptions in a microservice. Throw `RpcException`.
+
+```typescript
+// server/app.controller.ts
+import { Controller } from '@nestjs/common';
+import { MessagePattern } from '@nestjs/microservices';
+import { RpcException } from '@nestjs/microservices';
+
+@Controller()
+export class UsersController {
+  
+  @MessagePattern({ cmd: 'get_user' })
+  getUser(data: { id: number }) {
+    const user = this.database.find(data.id);
+    
+    if (!user) {
+      // Throw an RpcException. You can pass a string or a complex object.
+      throw new RpcException('User not found');
+      
+      // Alternatively, pass an object for more context:
+      // throw new RpcException({ code: 404, message: 'User not found' });
+    }
+    
+    return user;
+  }
+}
+```
+
+### 2. Handling Errors in the Client
+When the microservice throws an `RpcException`, the `ClientProxy` on the Gateway receives it and rejects the Promise/Observable.
+
+```typescript
+// client/app.controller.ts
+import { Controller, Get, Param, Inject, NotFoundException, InternalServerErrorException } from '@nestjs/common';
+import { ClientProxy } from '@nestjs/microservices';
+import { firstValueFrom } from 'rxjs';
+
+@Controller('users')
+export class GatewayController {
+  constructor(@Inject('USER_SERVICE') private client: ClientProxy) {}
+
+  @Get(':id')
+  async getUser(@Param('id') id: string) {
+    try {
+      // Request the user from the microservice
+      const user = await firstValueFrom(
+        this.client.send({ cmd: 'get_user' }, { id: +id })
+      );
+      return user;
+      
+    } catch (error) {
+      // The error thrown here is whatever the microservice put inside the RpcException!
+      if (error.message === 'User not found') {
+        // Translate the RPC error back into a standard HTTP error for the frontend
+        throw new NotFoundException('The requested user does not exist');
+      }
+      
+      throw new InternalServerErrorException('Microservice communication failed');
+    }
+  }
+}
+```
+
+### 3. Creating an RPC Exception Filter
+If you want to log errors or transform them globally before they leave the microservice, create an `RpcExceptionFilter`.
+
+```typescript
+// server/rpc-exception.filter.ts
+import { Catch, RpcExceptionFilter, ArgumentsHost } from '@nestjs/common';
+import { Observable, throwError } from 'rxjs';
+import { RpcException } from '@nestjs/microservices';
+
+@Catch(Error) // Catch all standard JavaScript Errors
+export class GlobalRpcFilter implements RpcExceptionFilter<Error> {
+  
+  catch(exception: Error, host: ArgumentsHost): Observable<any> {
+    console.error('Microservice Error:', exception.message);
+    
+    // Transform unexpected errors into clean RpcExceptions
+    const rpcError = new RpcException({
+      status: 'error',
+      message: 'Internal microservice error occurred',
+    });
+    
+    // Return the error to the client
+    return throwError(() => rpcError.getError());
+  }
+}
+```
+*(Apply this using `@UseFilters(new GlobalRpcFilter())` on your controller or globally in `main.ts` using `app.useGlobalFilters()`)*.
+
+## Best Practices
+- **Map RPC to HTTP at the Gateway**: A pure microservice shouldn't know about HTTP status codes. It should return domain errors (`RpcException('INSUFFICIENT_FUNDS')`). The API Gateway (the HTTP app) is responsible for catching that RPC error and translating it into an `HttpException(400 Bad Request)` for the frontend.
+- **Event-Based Errors**: If you throw an exception inside an `@EventPattern()` handler (Fire-and-Forget), the client will NEVER know. The exception is swallowed by the framework (or causes the message to be NACK'd in RabbitMQ/Kafka). If an event fails, you must log it locally or use a Dead Letter Queue; you cannot communicate the error back to the sender.

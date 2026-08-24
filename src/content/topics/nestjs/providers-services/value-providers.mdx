@@ -1,0 +1,101 @@
+---
+title: "Value Providers"
+description: "Value Providers in NestJS"
+importance: "LOW"
+revisionTime: 10
+category: "NestJS"
+subcategory: "Providers & Services"
+order: 490
+---
+
+*Value Providers allow you to inject a constant value, an external library, or a pre-instantiated object into the NestJS Dependency Injection container.*
+
+## Overview
+Not every dependency in your application needs to be a class instantiated by NestJS. Sometimes you just need to pass around configuration strings, boolean flags, plain JavaScript objects, or third-party libraries (like the `stripe` or `aws-sdk` clients).
+
+The `useValue` syntax tells NestJS: "When someone asks for this token, just give them this exact value."
+
+## Key Concepts
+- **`useValue` Property**: Used in the provider configuration object to specify a static, constant value.
+- **String/Symbol Tokens**: Because a primitive value doesn't have a class type, you usually pair `useValue` with a custom string or Symbol token, and retrieve it using the `@Inject()` decorator.
+
+## Code Examples
+
+### Injecting Configuration Objects
+Instead of creating a whole `ConfigService` for a simple module, you can just inject a configuration object.
+
+```typescript
+// 1. Define the config and token
+export const STRIPE_CONFIG_TOKEN = 'STRIPE_CONFIG';
+const stripeConfig = {
+  apiKey: 'sk_test_123',
+  timeout: 5000,
+};
+
+// 2. Provide the value in the module
+@Module({
+  providers: [
+    {
+      provide: STRIPE_CONFIG_TOKEN,
+      useValue: stripeConfig,
+    },
+    StripeService,
+  ],
+})
+export class PaymentModule {}
+
+// 3. Inject it in the service
+@Injectable()
+export class StripeService {
+  constructor(
+    @Inject(STRIPE_CONFIG_TOKEN) private config: typeof stripeConfig
+  ) {
+    console.log(this.config.apiKey);
+  }
+}
+```
+
+### Injecting Third-Party Libraries
+If you want to make an external npm package mockable during testing, you can provide it as a value.
+
+```typescript
+import * as AWS from 'aws-sdk';
+
+@Module({
+  providers: [
+    {
+      // Give the library a token
+      provide: 'AWS_S3',
+      // Provide the actual library object
+      useValue: new AWS.S3({ region: 'us-east-1' }),
+    },
+    UploadService
+  ],
+})
+export class UploadModule {}
+```
+
+### Mocking during Testing
+`useValue` is the most common way to provide mock objects when writing unit tests.
+
+```typescript
+const mockUsersService = {
+  findAll: () => ['User1', 'User2'],
+  findOne: (id) => 'User1',
+};
+
+const moduleRef = await Test.createTestingModule({
+  controllers: [UsersController],
+  providers: [
+    {
+      // Override the real class token with a plain mock object
+      provide: UsersService,
+      useValue: mockUsersService,
+    },
+  ],
+}).compile();
+```
+
+## Best Practices
+- **Prefer ConfigService for App Config**: While `useValue` is great for module-specific configs, use the official `@nestjs/config` package and `ConfigService` for application-wide environment variables (e.g., `process.env` values).
+- **Type Safety**: When using `useValue` with string tokens, TypeScript loses type inference. Always define an interface for your value object and use it in the constructor: `constructor(@Inject('TOKEN') config: MyConfigInterface)`.

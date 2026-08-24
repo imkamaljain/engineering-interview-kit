@@ -1,0 +1,76 @@
+---
+title: "Scaling NestJS Applications"
+description: "Scaling NestJS Applications in NestJS"
+importance: "LOW"
+revisionTime: 9
+category: "NestJS"
+subcategory: "Interview Patterns"
+order: 3080
+---
+
+*Scaling a NestJS application involves moving beyond a single Node.js process and designing an architecture that can handle increased load through horizontal scaling, caching, and background processing.*
+
+## Overview
+Because NestJS runs on Node.js, it is inherently single-threaded. If you perform a heavy CPU-bound task (like image processing or complex cryptography) in a Controller, you will block the Event Loop, and *all* other users will experience a frozen application.
+
+Scaling NestJS requires addressing three main bottlenecks: CPU (the single thread), Memory (garbage collection), and I/O (database connections).
+
+## Key Concepts
+- **Horizontal Scaling vs Vertical Scaling**: Vertical scaling means buying a bigger server (more RAM/CPU). Horizontal scaling means spinning up multiple instances of the server (e.g., 5 Docker containers) behind a Load Balancer. Modern Node.js apps must be designed for Horizontal scaling.
+- **Statelessness**: To scale horizontally, your application must be completely stateless. You cannot store user sessions, websockets, or temporary files in server memory, because Request 1 might hit Server A, and Request 2 might hit Server B.
+- **Task Offloading**: Moving heavy work out of the HTTP request lifecycle and into background queues.
+
+## Architectural Strategies for Scaling
+
+### 1. PM2 / Node Cluster Module (Vertical Optimization)
+If you deploy to a server with 8 CPU cores, running `node main.js` only utilizes 1 core. You must run multiple instances on the same machine.
+- **Solution**: Use PM2 with the `-i max` flag to spawn a worker process for every available CPU core. PM2 acts as a mini load balancer, distributing incoming HTTP requests among the workers.
+
+### 2. Externalizing State (Redis)
+If you use WebSockets or Rate Limiting, the default in-memory adapters will fail when you have 5 load-balanced NestJS servers (Server A doesn't know that Server B already rate-limited a user).
+- **Solution**: 
+  - For WebSockets (`@nestjs/platform-socket.io`), you must configure the `RedisIoAdapter` so all servers share the same socket pool.
+  - For Rate Limiting (`@nestjs/throttler`), you must swap the default memory storage for a Redis-backed storage provider.
+  - For Sessions, use `connect-redis`.
+
+### 3. Database Connection Pooling
+If you horizontally scale to 20 NestJS pods, and each pod creates 100 database connections, your PostgreSQL database will crash from connection exhaustion (2,000 connections).
+- **Solution**: Ensure TypeORM/Prisma connection pools are strictly limited (e.g., `poolSize: 10`). For massive scale, use an external connection pooler like **PgBouncer** sitting in front of your database.
+
+### 4. Offloading Heavy Work (BullMQ)
+If a user registers and you need to generate a PDF and send a welcome email, do NOT `await` those tasks in the Controller.
+- **Solution**: Use `@nestjs/bull`. The Controller simply pushes a job payload to a Redis queue and immediately returns a `202 Accepted` to the client. A separate NestJS Microservice (or a background worker process) consumes the queue and generates the PDF asynchronously.
+
+## Code Example: Bull Queue Offloading
+
+```typescript
+// 1. The Controller (Fast HTTP Response)
+@Controller('reports')
+export class ReportsController {
+  constructor(@InjectQueue('report-queue') private reportQueue: Queue) {}
+
+  @Post()
+  async generateReport(@Body() data: any) {
+    // Add job to Redis and immediately return to the user
+    const job = await this.reportQueue.add('generate', data);
+    return { message: 'Report is generating', jobId: job.id };
+  }
+}
+
+// 2. The Worker (Heavy Processing)
+@Processor('report-queue')
+export class ReportProcessor {
+  
+  @Process('generate')
+  async handleGenerate(job: Job) {
+    // This heavy CPU work doesn't block the HTTP server because 
+    // it can be run on a completely different server instance!
+    const pdf = await heavyCpuPdfGeneration(job.data);
+    await this.uploadToS3(pdf);
+  }
+}
+```
+
+## Best Practices
+- **Switch to Fastify**: As a quick win, swap the underlying Express adapter for Fastify to instantly double your raw request throughput.
+- **Caching**: Implement aggressive caching for read-heavy endpoints. Use the `CacheModule` configured with a Redis store, or put a CDN (Cloudflare) / Reverse Proxy (NGINX) in front of your API to cache responses before they even hit Node.js.

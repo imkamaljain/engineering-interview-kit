@@ -1,0 +1,101 @@
+---
+title: "Queries"
+description: "Queries in NestJS"
+importance: "LOW"
+revisionTime: 7
+category: "NestJS"
+subcategory: "GraphQL"
+order: 1660
+---
+
+*Queries are the GraphQL equivalent of REST `GET` requests. They are used exclusively to fetch data from the server without modifying any underlying state.*
+
+## Overview
+In a Code-First NestJS approach, you define Queries by creating methods inside a `@Resolver()` class and decorating them with `@Query()`. 
+
+Every time you define a `@Query()`, NestJS automatically adds a corresponding field to the root `Query` type in your generated `schema.gql` file.
+
+## Key Concepts
+- **`@Query()`**: The decorator used to expose a method as a GraphQL query.
+- **Return Types**: You must explicitly tell NestJS what Object Type (or array of Object Types) the query returns, e.g., `@Query(() => User)`.
+- **Naming**: By default, the name of the query in the schema matches the name of the class method. You can override this.
+
+## Code Examples
+
+### 1. Basic Queries
+Here we define queries to fetch a single recipe, and an array of recipes.
+
+```typescript
+import { Resolver, Query, Args, Int } from '@nestjs/graphql';
+import { Recipe } from './models/recipe.model';
+import { RecipesService } from './recipes.service';
+
+@Resolver(() => Recipe)
+export class RecipesResolver {
+  constructor(private recipesService: RecipesService) {}
+
+  // 1. Returning an Array
+  // GraphQL Schema output: recipes: [Recipe!]!
+  @Query(() => [Recipe])
+  async recipes(): Promise<Recipe[]> {
+    return this.recipesService.findAll();
+  }
+
+  // 2. Returning a single object (that might be null)
+  // We explicitly name the query 'recipe' instead of the method name 'findById'
+  // GraphQL Schema output: recipe(id: Int!): Recipe
+  @Query(() => Recipe, { name: 'recipe', nullable: true })
+  async findById(
+    @Args('id', { type: () => Int }) id: number
+  ): Promise<Recipe | null> {
+    return this.recipesService.findOneById(id);
+  }
+}
+```
+
+### 2. What the Client Sends
+If the frontend wants to execute the `recipe` query defined above, they would send a GraphQL string that looks like this to the `/graphql` endpoint:
+
+```graphql
+# The client query
+query GetSpecificRecipe {
+  recipe(id: 42) {
+    title
+    description
+  }
+}
+```
+
+### 3. Complex Queries with Pagination
+You can pass complex objects (Input Types or Args Types) into queries, which is standard for pagination and filtering.
+
+```typescript
+import { ArgsType, Field, Int } from '@nestjs/graphql';
+
+// 1. Define an arguments class (similar to a REST Query DTO)
+@ArgsType()
+export class PaginationArgs {
+  @Field(() => Int, { defaultValue: 0 })
+  skip: number;
+
+  @Field(() => Int, { defaultValue: 10 })
+  take: number;
+}
+
+// 2. Use it in the Resolver
+@Resolver(() => Recipe)
+export class RecipesResolver {
+  
+  @Query(() => [Recipe])
+  async paginatedRecipes(
+    // We spread the ArgsType so the client passes 'skip' and 'take' directly
+    @Args() paginationArgs: PaginationArgs
+  ): Promise<Recipe[]> {
+    return this.recipesService.findAll(paginationArgs.skip, paginationArgs.take);
+  }
+}
+```
+
+## Best Practices
+- **Use `nullable: true` Appropriately**: If a query searches by ID, it is highly likely the ID doesn't exist. You *must* add `{ nullable: true }` to the `@Query()` decorator. If you don't, and your service returns `null`, the GraphQL engine will throw a massive internal server error because it violated the schema contract (which defaults to non-nullable).
+- **Keep Queries Idempotent**: A Query must *never* change the state of the database (e.g., do not update a "last viewed" timestamp inside a Query). If an action modifies data, it must be a Mutation. GraphQL clients (like Apollo Client) heavily cache Query responses; if your query modifies data, caching will cause severe bugs.

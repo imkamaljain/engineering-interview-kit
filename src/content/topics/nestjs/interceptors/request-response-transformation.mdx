@@ -1,0 +1,88 @@
+---
+title: "Request/Response Transformation"
+description: "Request/Response Transformation in NestJS"
+importance: "LOW"
+revisionTime: 12
+category: "NestJS"
+subcategory: "Interceptors"
+order: 820
+---
+
+*Interceptors are frequently used to map, format, or transform the data returned by a controller before it is serialized and sent to the client.*
+
+## Overview
+It is a common requirement in API development to wrap all successful responses in a standardized format. 
+
+For example, instead of returning just the user object `{ "id": 1, "name": "Alice" }`, you might want every endpoint in your API to wrap its response in a `data` property: `{ "data": { "id": 1, "name": "Alice" }, "status": "success" }`. 
+
+Using an interceptor to transform the response ensures absolute consistency across your entire application without having to write wrapper logic inside every single controller method.
+
+## Key Concepts
+- **RxJS `map()` Operator**: Because `next.handle()` returns an Observable stream containing the response, we use the RxJS `map` operator to intercept that stream and transform the data inside it.
+- **Global Application**: Transformation interceptors are usually applied globally in `main.ts` using `app.useGlobalInterceptors()`.
+
+## Code Examples
+
+### The Standard "Data Wrapper" Interceptor
+This is the most common use case for a transform interceptor.
+
+```typescript
+import { Injectable, NestInterceptor, ExecutionContext, CallHandler } from '@nestjs/common';
+import { Observable } from 'rxjs';
+import { map } from 'rxjs/operators';
+
+// Define the shape of our new standardized response
+export interface Response<T> {
+  data: T;
+  statusCode: number;
+}
+
+@Injectable()
+export class TransformInterceptor<T> implements NestInterceptor<T, Response<T>> {
+  intercept(context: ExecutionContext, next: CallHandler): Observable<Response<T>> {
+    
+    // Get the HTTP status code that the controller intends to send
+    const ctx = context.switchToHttp();
+    const response = ctx.getResponse();
+    const statusCode = response.statusCode;
+
+    return next.handle().pipe(
+      // The 'data' argument is whatever the Controller method returned
+      map((data) => {
+        // We return a brand new object! 
+        // This completely replaces what is sent to the client.
+        return {
+          statusCode: statusCode,
+          message: 'Request successful',
+          data: data, 
+        };
+      }),
+    );
+  }
+}
+```
+
+### Excluding `null` Values from Responses
+Sometimes you want to sanitize the response globally, for example, converting `null` values into empty strings.
+
+```typescript
+import { Injectable, NestInterceptor, ExecutionContext, CallHandler } from '@nestjs/common';
+import { Observable } from 'rxjs';
+import { map } from 'rxjs/operators';
+
+@Injectable()
+export class ExcludeNullInterceptor implements NestInterceptor {
+  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+    return next
+      .handle()
+      .pipe(
+        // If the controller returns null, change it to an empty string
+        map(value => value === null ? '' : value )
+      );
+  }
+}
+```
+
+## Best Practices
+- **Avoid Heavy Processing**: The `map` operator runs synchronously on the main thread just before the response is sent. Avoid doing heavy data processing (like looping through massive arrays to format dates) inside the interceptor, as it will block the event loop. Format data in your Services or DTOs instead.
+- **Use `ClassSerializerInterceptor` for Exclusions**: If you want to transform responses by removing sensitive fields (like passwords), do not write a custom interceptor. Use Nest's built-in `ClassSerializerInterceptor` in combination with the `@Exclude()` decorator from `class-transformer`. It is heavily optimized for exactly this purpose.

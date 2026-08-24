@@ -1,0 +1,82 @@
+---
+title: "Class Providers"
+description: "Class Providers in NestJS"
+importance: "LOW"
+revisionTime: 9
+category: "NestJS"
+subcategory: "Modules & Dependency Injection"
+order: 250
+---
+
+*Class Providers allow you to dynamically determine which class should be instantiated to fulfill a specific dependency token.*
+
+## Overview
+The `useClass` syntax allows you to decouple a provider token from its actual implementation. This is the cornerstone of polymorphism in NestJS dependency injection.
+
+When a class asks for `ServiceA`, you can instruct Nest's IoC container to actually give them an instance of `ServiceB` instead, as long as `ServiceB` implements the same interface as `ServiceA`.
+
+## Key Concepts
+- **`useClass` Property**: Used in the module's `providers` array to specify the concrete class that should be instantiated.
+- **Polymorphism**: The ability to swap out implementations without changing the consuming code.
+- **Testing**: `useClass` is heavily used in unit testing to override real services with mock services.
+
+## Code Examples
+
+### Swapping Implementations (Abstract Class as Token)
+TypeScript interfaces disappear at runtime, so we can't use an interface as a DI token. Instead, we use an Abstract Class.
+
+```typescript
+// 1. Define the Token (Abstract Class)
+export abstract class PaymentProcessor {
+  abstract charge(amount: number): boolean;
+}
+
+// 2. Implementation A
+@Injectable()
+export class StripeProcessor implements PaymentProcessor {
+  charge(amount: number) { console.log('Stripe'); return true; }
+}
+
+// 3. Implementation B
+@Injectable()
+export class PayPalProcessor implements PaymentProcessor {
+  charge(amount: number) { console.log('PayPal'); return true; }
+}
+```
+
+Now, in our module, we can decide which implementation to use:
+
+```typescript
+const useStripe = process.env.PAYMENT_GATEWAY === 'stripe';
+
+@Module({
+  providers: [
+    {
+      // The token the controller will ask for
+      provide: PaymentProcessor,
+      // The actual class Nest will instantiate
+      useClass: useStripe ? StripeProcessor : PayPalProcessor, 
+    },
+  ],
+})
+export class PaymentModule {}
+```
+
+### Consuming the Provider
+The consuming service doesn't know or care if it's Stripe or PayPal; it just programs against the abstract class.
+
+```typescript
+@Injectable()
+export class CheckoutService {
+  // Nest injects whatever useClass was configured with!
+  constructor(private processor: PaymentProcessor) {}
+
+  checkout() {
+    this.processor.charge(100);
+  }
+}
+```
+
+## Best Practices
+- **Use Abstract Classes over Strings for Interfaces**: When you want to program against an interface, use an `abstract class` instead of a `string` token. This provides perfect TypeScript typings and avoids having to use the `@Inject('STRING')` decorator everywhere.
+- **Environment-Specific Implementations**: `useClass` is perfect for providing a `MockEmailService` in local development environments and a `SendGridEmailService` in production environments.

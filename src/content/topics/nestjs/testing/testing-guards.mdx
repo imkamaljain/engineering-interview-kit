@@ -1,0 +1,104 @@
+---
+title: "Testing Guards"
+description: "Testing Guards in NestJS"
+importance: "LOW"
+revisionTime: 7
+category: "NestJS"
+subcategory: "Testing"
+order: 2360
+---
+
+*Testing Guards involves verifying that authorization logic correctly permits or denies access to a route based on the incoming request properties (like JWTs or headers) and metadata (like Roles).*
+
+## Overview
+Guards are just classes that implement `canActivate(context: ExecutionContext): boolean | Promise<boolean>`. 
+
+Because they are just classes, you can unit test them by instantiating them directly. The difficult part of testing a Guard is mocking the `ExecutionContext` object, which is deeply nested and complex.
+
+## Key Concepts
+- **ExecutionContext**: The object passed into the Guard by NestJS. It contains the HTTP request, the response, and references to the handler (method) being executed.
+- **Reflector Mocking**: If your Guard reads custom decorators (e.g., `@Roles('admin')`), you must inject a mocked `Reflector` service into your Guard during testing to simulate reading those metadata values.
+
+## Code Examples
+
+### 1. Mocking the ExecutionContext
+Because `ExecutionContext` is an interface with many methods, the easiest way to mock it is using `jest.fn()` to stub only the specific methods your Guard actually uses (usually `switchToHttp().getRequest()`).
+
+```typescript
+// roles.guard.spec.ts
+import { RolesGuard } from './roles.guard';
+import { ExecutionContext } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
+
+describe('RolesGuard', () => {
+  let guard: RolesGuard;
+  let reflector: Reflector;
+
+  beforeEach(() => {
+    // Mock the Reflector
+    reflector = new Reflector();
+    // Instantiate the Guard with the mocked reflector
+    guard = new RolesGuard(reflector);
+  });
+
+  // Helper function to create a fake ExecutionContext
+  const mockExecutionContext = (userRoles: string[], metadataRoles: string[]): ExecutionContext => {
+    // Stub what the reflector should return when reading metadata
+    jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(metadataRoles);
+
+    return {
+      switchToHttp: () => ({
+        // Simulate an HTTP Request object containing a User (attached by an AuthGuard previously)
+        getRequest: () => ({
+          user: { roles: userRoles },
+        }),
+      }),
+      getHandler: jest.fn(),
+      getClass: jest.fn(),
+    } as unknown as ExecutionContext; // Force cast the partial mock
+  };
+
+  it('should allow access if user has the required role', () => {
+    // Arrange: User is an 'admin', and the route requires 'admin'
+    const context = mockExecutionContext(['admin'], ['admin']);
+
+    // Act
+    const result = guard.canActivate(context);
+
+    // Assert
+    expect(result).toBe(true);
+  });
+
+  it('should deny access if user lacks the required role', () => {
+    // Arrange: User is a 'user', but the route requires 'admin'
+    const context = mockExecutionContext(['user'], ['admin']);
+
+    // Act
+    const result = guard.canActivate(context);
+
+    // Assert
+    expect(result).toBe(false);
+  });
+  
+  it('should allow access if route requires no specific roles', () => {
+    // Arrange: Route has no @Roles() metadata (returns undefined)
+    const context = mockExecutionContext(['user'], undefined);
+
+    const result = guard.canActivate(context);
+    expect(result).toBe(true);
+  });
+});
+```
+
+## Best Practices
+- **Use `@golevelup/ts-jest`**: Manually casting `as unknown as ExecutionContext` is ugly and brittle. If you use the `@golevelup/ts-jest` library, you can instantly create a deeply-mocked context:
+  ```typescript
+  import { createMock } from '@golevelup/ts-jest';
+  
+  const context = createMock<ExecutionContext>({
+    switchToHttp: () => ({
+      getRequest: () => ({ user: { id: 1 } }),
+    }),
+  });
+  ```
+- **Test in Isolation vs E2E**: While unit testing a Guard ensures the logic works, it does not guarantee you actually applied the `@UseGuards()` decorator to the correct controllers! You must supplement Guard unit tests with E2E tests that attempt to hit protected routes without a token to verify the 403/401 response is actually returned in reality.

@@ -1,0 +1,82 @@
+---
+title: "Async Providers"
+description: "Async Providers in NestJS"
+importance: "MEDIUM"
+revisionTime: 10
+category: "NestJS"
+subcategory: "Providers & Services"
+order: 470
+---
+
+*Async providers allow you to delay the application startup process until one or more asynchronous tasks (like connecting to a database) have completed.*
+
+## Overview
+In a typical NestJS application, the dependency injection container resolves synchronously. Classes are instantiated immediately.
+
+However, some dependencies require asynchronous initialization. For example, you cannot instantiate a `UserRepository` until the database connection has been fully established. If you don't wait for the connection, your app will start accepting HTTP requests but crash on the first database query.
+
+Async Providers (using `useFactory` returning a Promise) solve this by pausing the NestJS bootstrap process until the Promise resolves.
+
+## Key Concepts
+- **`useFactory` with Promises**: The factory function returns a Promise.
+- **Bootstrap Pausing**: Nest's `app.listen()` will not complete until all Async Providers across all modules have resolved.
+- **Failure Handling**: If the Promise rejects (e.g., the database is down), the Nest application will crash and fail to start. This is the desired behavior for cloud environments (fail-fast).
+
+## Code Examples
+
+### Establishing a Database Connection
+
+```typescript
+import { Module } from '@nestjs/common';
+import { createConnection } from 'typeorm';
+
+@Module({
+  providers: [
+    {
+      provide: 'DATABASE_CONNECTION',
+      // The function is async and returns a Promise
+      useFactory: async () => {
+        console.log('Connecting to database...');
+        // The app will wait here until createConnection finishes
+        const connection = await createConnection({
+          type: 'postgres',
+          url: process.env.DATABASE_URL,
+        });
+        console.log('Connected!');
+        
+        // This connection object is what gets injected when 
+        // someone asks for 'DATABASE_CONNECTION'
+        return connection;
+      },
+    },
+  ],
+})
+export class DatabaseModule {}
+```
+
+### Injecting Dependencies into the Async Factory
+Usually, an async factory needs configuration data (like the database URL) to do its job.
+
+```typescript
+@Module({
+  imports: [ConfigModule],
+  providers: [
+    {
+      provide: 'ASYNC_CLIENT',
+      useFactory: async (configService: ConfigService) => {
+        const url = configService.get('API_URL');
+        const client = new ThirdPartyClient();
+        await client.authenticate(url);
+        return client;
+      },
+      // Pass the ConfigService to the factory function
+      inject: [ConfigService],
+    },
+  ],
+})
+export class ClientModule {}
+```
+
+## Best Practices
+- **Fail Fast**: Async providers are the correct place to put critical startup checks. If your app strictly requires a Redis connection to function, make it an Async Provider. If Redis is down, the container fails to build, the app crashes, and your orchestration layer (Kubernetes, PM2) will try to restart it.
+- **Keep it fast**: While it's great for establishing connections, do not put heavy, long-running data processing tasks in Async Providers, as it will dramatically slow down your application startup time and deployment pipelines.

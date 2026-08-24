@@ -1,0 +1,104 @@
+---
+title: "Distributed Caching"
+description: "Distributed Caching in NestJS"
+importance: "HIGH"
+revisionTime: 14
+category: "NestJS"
+subcategory: "Caching"
+order: 2190
+---
+
+*Distributed Caching stores data across multiple networked servers rather than within the memory of a single application instance. This is essential for horizontal scaling and microservice architectures.*
+
+## Overview
+By default, NestJS uses an in-memory cache. If you run your NestJS app on one server, this works fine. 
+
+However, in production, you usually run multiple instances of your app behind a Load Balancer. If User A hits Server 1, their data is cached in Server 1's RAM. If User A refreshes the page and the Load Balancer routes them to Server 2, Server 2 has no idea about the cache! This leads to inconsistent data and redundant database hits.
+
+A Distributed Cache (like Redis or Memcached) sits outside your application servers. All 5 instances of your NestJS app connect to the *same* Redis instance, sharing a single, unified cache layer.
+
+## Key Concepts
+- **Single Source of Truth**: All application instances read and write to the same external cache.
+- **Network Latency**: Unlike in-memory caching (which takes nanoseconds), distributed caching requires a network hop. It takes milliseconds. It's slower than RAM, but still vastly faster than a complex SQL query.
+- **Serialization**: In-memory caches can store raw JavaScript objects (like Dates or class instances). Distributed caches store strings (or binary data). Objects must be serialized to JSON before saving and deserialized when retrieving.
+
+## Code Examples
+
+### 1. Setting up a Distributed Cache (Redis)
+To use Redis, you need to install the specific store adapter for `cache-manager`.
+
+```bash
+npm install cache-manager-redis-store redis
+```
+
+Configure it in your `AppModule`:
+
+```typescript
+// app.module.ts
+import { Module } from '@nestjs/common';
+import { CacheModule } from '@nestjs/cache-manager';
+import * as redisStore from 'cache-manager-redis-store';
+
+@Module({
+  imports: [
+    CacheModule.register({
+      isGlobal: true,
+      store: redisStore,
+      // Redis connection details
+      host: 'localhost', // Usually an external URL in production
+      port: 6379,
+      // Optional password
+      // auth_pass: 'super_secret_password',
+      ttl: 600, // 10 minutes
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+### 2. Multi-Tier Caching (Advanced)
+A very advanced pattern is combining In-Memory caching *with* Distributed Caching. You check local RAM first (blazing fast). If it's a miss, you check Redis. If it's a miss, you check the Database.
+
+While `cache-manager` v4 supported multi-caching natively, v5 requires a slightly different approach or custom implementation.
+
+```typescript
+import { Injectable, Inject } from '@nestjs/common';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import { Cache } from 'cache-manager';
+
+@Injectable()
+export class MultiTierService {
+  private localRamCache = new Map<string, { data: any, expiry: number }>();
+
+  constructor(@Inject(CACHE_MANAGER) private redisCache: Cache) {}
+
+  async getFastData(key: string) {
+    // 1. Tier 1: Check Local RAM (0ms latency)
+    const local = this.localRamCache.get(key);
+    if (local && local.expiry > Date.now()) {
+      return local.data;
+    }
+
+    // 2. Tier 2: Check Distributed Redis (2ms latency)
+    const distributed = await this.redisCache.get(key);
+    if (distributed) {
+      // Save it locally for next time!
+      this.localRamCache.set(key, { data: distributed, expiry: Date.now() + 5000 });
+      return distributed;
+    }
+
+    // 3. Tier 3: Fetch from DB (50ms latency)
+    const dbData = await this.fetchFromDb();
+    
+    // Save to both tiers
+    await this.redisCache.set(key, dbData, 60000); // 1 minute in Redis
+    this.localRamCache.set(key, { data: dbData, expiry: Date.now() + 5000 }); // 5 secs locally
+
+    return dbData;
+  }
+}
+```
+
+## Best Practices
+- **Connection Pooling & Resilience**: Redis is an external service. It can crash. Your NestJS app should not crash if Redis goes down. Ensure your Redis client is configured to reconnect automatically, and wrap your cache `.get()` calls in try/catch blocks so you can safely fallback to the database if the cache is unavailable.
+- **JSON Serialization**: When you save a JavaScript `Date` object to Redis, it gets converted to an ISO string. When you `.get()` it back, it is a `string`, not a `Date` object! Be very careful with types when using distributed caches.

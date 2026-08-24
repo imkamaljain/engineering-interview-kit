@@ -1,0 +1,76 @@
+---
+title: "Data Transfer Objects"
+description: "Data Transfer Objects in NestJS"
+importance: "MEDIUM"
+revisionTime: 13
+category: "NestJS"
+subcategory: "Validation & DTOs"
+order: 980
+---
+
+*Data Transfer Objects (DTOs) are a structural design pattern used to aggregate and encapsulate data for transfer across a network boundary.*
+
+## Overview
+While the concept of a DTO is universal in software engineering, in NestJS it specifically refers to the TypeScript classes used to type-hint controller arguments (`@Body()`, `@Query()`, `@Param()`).
+
+Using DTOs effectively is the foundation of a robust NestJS application. They serve three critical functions simultaneously:
+1.  **TypeScript Contracts**: They provide compile-time type safety.
+2.  **Runtime Validation**: Via decorators, they define the rules the `ValidationPipe` enforces.
+3.  **Swagger Documentation**: NestJS's Swagger module reads DTO classes to automatically generate OpenAPI documentation.
+
+## Key Concepts
+- **Network Boundaries**: DTOs only exist at the edge of your application. Once the controller passes the data to a Service, the Service often maps the DTO into an internal Domain Model or Database Entity.
+- **Mapped Types**: NestJS provides utility functions (`PartialType`, `OmitType`, `PickType`) to help you create variations of DTOs without duplicating code.
+
+## Code Examples
+
+### Avoiding Code Duplication with Mapped Types
+When creating a `PATCH` endpoint, you usually want to allow the client to update *some* but not all fields, and all those fields should be optional. Instead of copy-pasting the `CreateDto`, use `PartialType`.
+
+```typescript
+// 1. The base definition
+export class CreateProductDto {
+  @IsString()
+  name: string;
+  
+  @IsNumber()
+  price: number;
+  
+  @IsString()
+  sku: string;
+}
+
+// 2. The mapped Update DTO
+import { PartialType, OmitType } from '@nestjs/mapped-types';
+// (Note: If using Swagger, import these from '@nestjs/swagger' instead)
+
+// This creates a new class that has 'name' and 'price' as OPTIONAL fields,
+// but entirely removes the 'sku' field (because SKUs shouldn't be updated).
+export class UpdateProductDto extends PartialType(
+  OmitType(CreateProductDto, ['sku'] as const)
+) {}
+```
+
+### Response DTOs and Serialization
+DTOs are just as important for data *leaving* your API.
+
+```typescript
+import { Exclude, Expose } from 'class-transformer';
+
+// What we send to the client
+export class UserResponseDto {
+  @Expose()
+  id: string;
+
+  @Expose()
+  username: string;
+
+  // By default, if we use ClassSerializerInterceptor, 
+  // only properties with @Expose() will be sent.
+  // Properties without it, or marked with @Exclude(), are stripped.
+}
+```
+
+## Best Practices
+- **One DTO per Request Type**: Do not try to use one massive DTO for creating, updating, and querying. Have a dedicated `CreateItemDto`, `UpdateItemDto`, and `ItemQueryFiltersDto`.
+- **Swagger Integration**: If you are using `@nestjs/swagger`, you must remember to use the Swagger module's version of the mapped types (e.g., `import { PartialType } from '@nestjs/swagger'`). If you use the `@nestjs/mapped-types` version, Swagger cannot read the metadata and your API documentation will be empty!

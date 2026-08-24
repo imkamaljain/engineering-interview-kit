@@ -1,0 +1,112 @@
+---
+title: "DTO Documentation"
+description: "DTO Documentation in NestJS"
+importance: "HIGH"
+revisionTime: 14
+category: "NestJS"
+subcategory: "Swagger & OpenAPI"
+order: 1580
+---
+
+*DTO (Data Transfer Object) Documentation focuses on accurately describing the payloads that your API accepts (Request Bodies) and returns (Response Bodies) so that Swagger can generate precise schemas.*
+
+## Overview
+The OpenAPI specification relies heavily on "Schemas" (usually found in the `components.schemas` section of the JSON output). These schemas define the exact shape of your data.
+
+In NestJS, your DTO classes are translated directly into these Schemas. By properly documenting your DTOs, Swagger can tell the client exactly which fields are required, which are optional, what their data types are, and even what enum values are allowed.
+
+## Key Concepts
+- **NestJS CLI Plugin**: The ultimate time-saver. It parses your TypeScript AST (Abstract Syntax Tree) and automatically injects Swagger documentation based on your TypeScript types and `class-validator` decorators.
+- **Enums**: Special care must be taken to document enums so that the Swagger UI displays a dropdown menu of allowed values.
+- **Nested Objects**: DTOs often contain other DTOs (e.g., an `OrderDto` containing an array of `OrderItemDto`s). You must ensure both are documented.
+
+## Code Examples
+
+### 1. Enabling the CLI Plugin (The Golden Rule)
+Before doing anything else, enable the CLI plugin. This saves you from writing hundreds of `@ApiProperty()` decorators.
+
+```json
+// nest-cli.json
+{
+  "collection": "@nestjs/schematics",
+  "sourceRoot": "src",
+  "compilerOptions": {
+    "plugins": ["@nestjs/swagger"]
+  }
+}
+```
+
+### 2. Documenting Basic DTOs
+With the plugin enabled, you only need decorators for human-readable descriptions and examples.
+
+```typescript
+import { ApiProperty } from '@nestjs/swagger';
+import { IsString, IsInt, Min } from 'class-validator';
+
+export class CreateProductDto {
+  // 1. We ONLY add @ApiProperty for the example/description.
+  // The plugin automatically knows this is a required 'string'!
+  @ApiProperty({ example: 'Wireless Mouse', description: 'Product name' })
+  @IsString()
+  name: string;
+
+  // 2. The plugin automatically knows this is a required 'number'.
+  // It also reads the @Min(0) validator and adds it to the Swagger spec!
+  @ApiProperty({ example: 29.99 })
+  @IsInt()
+  @Min(0)
+  price: number;
+}
+```
+
+### 3. Documenting Enums
+Enums require a bit of manual intervention if you want them to display perfectly in Swagger UI.
+
+```typescript
+export enum UserRole {
+  ADMIN = 'admin',
+  USER = 'user',
+  GUEST = 'guest',
+}
+
+export class CreateUserDto {
+  @ApiProperty({ 
+    enum: UserRole,          // Tell Swagger to treat this as an Enum
+    example: UserRole.USER,  // Provide a default/example
+    description: 'The permission level of the user'
+  })
+  role: UserRole;
+}
+```
+
+### 4. Documenting Nested Objects and Arrays
+When a DTO contains another DTO, or an array of DTOs, you must use `@Type()` from `class-transformer` (for validation) and let the Swagger plugin handle the schema linking.
+
+```typescript
+import { Type } from 'class-transformer';
+import { ValidateNested, IsArray, IsString } from 'class-validator';
+import { ApiProperty } from '@nestjs/swagger';
+
+class AddressDto {
+  @ApiProperty({ example: '123 Main St' })
+  @IsString()
+  street: string;
+}
+
+export class CreateCompanyDto {
+  @ApiProperty({ example: 'Tech Corp' })
+  @IsString()
+  name: string;
+
+  // Swagger Plugin automatically detects that this is an array of AddressDto objects!
+  @ApiProperty({ type: () => [AddressDto] }) // (Optional: usually inferred by plugin)
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => AddressDto)
+  locations: AddressDto[];
+}
+```
+
+## Best Practices
+- **`class-validator` integration**: The NestJS Swagger CLI plugin is smart enough to read `class-validator` decorators. If you add `@MinLength(10)`, the OpenAPI spec will automatically include `minLength: 10`. Use validation decorators extensively; they act as both security and documentation.
+- **Separate Request and Response DTOs**: Do not use the same DTO for a POST request and a GET response. A request DTO (`CreateUserDto`) might require a password. A response DTO (`UserResponseDto`) should never contain a password. Having separate DTOs ensures Swagger accurately describes what goes *in* vs what comes *out*.

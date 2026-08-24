@@ -1,0 +1,104 @@
+---
+title: "Passport Strategies"
+description: "Passport Strategies in NestJS"
+importance: "MEDIUM"
+revisionTime: 7
+category: "NestJS"
+subcategory: "Authentication & Authorization"
+order: 1120
+---
+
+*Passport Strategies are plugins that teach the Passport library how to authenticate a user using a specific protocol or provider.*
+
+## Overview
+There are over 500 Passport strategies available on npm. They all follow a similar pattern but require different configuration options. 
+
+The two most fundamental strategies used in almost every API are:
+1.  **`passport-local`**: Used for the initial login. It receives a username and password from the request body, verifies them, and proves the user is who they say they are.
+2.  **`passport-jwt`**: Used for all subsequent requests. It extracts a JSON Web Token from the Authorization header, verifies its signature, and proves the user is still authenticated.
+
+## Key Concepts
+- **Naming Conventions**: When you extend `PassportStrategy(Strategy)`, it defaults to the strategy's standard name (e.g., `'local'` or `'jwt'`). You can pass a second string argument to override this name (e.g., `PassportStrategy(Strategy, 'jwt-refresh')`), which is essential if you need two variations of the same strategy type.
+- **The Strategy Pipeline**: A request hits a Guard -> The Guard invokes Passport -> Passport runs the Strategy logic (checking headers/passwords) -> If successful, Passport calls your `validate()` method -> `validate()` returns the User -> Guard attaches User to Request.
+
+## Code Examples
+
+### Implementing Google OAuth 2.0 Strategy
+This demonstrates how easily you can plug in a third-party strategy (like `passport-google-oauth20`) into the NestJS pattern.
+
+```typescript
+import { PassportStrategy } from '@nestjs/passport';
+import { Strategy, VerifyCallback } from 'passport-google-oauth20';
+import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+
+@Injectable()
+export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
+  
+  constructor(private configService: ConfigService) {
+    // 1. Configure the strategy with your Google API credentials
+    super({
+      clientID: configService.get('GOOGLE_CLIENT_ID'),
+      clientSecret: configService.get('GOOGLE_CLIENT_SECRET'),
+      callbackURL: 'http://localhost:3000/auth/google/callback',
+      scope: ['email', 'profile'], // What data we want from Google
+    });
+  }
+
+  // 2. Google redirects back to your API, passing the access token and user profile
+  async validate(
+    accessToken: string, 
+    refreshToken: string, 
+    profile: any, 
+    done: VerifyCallback
+  ): Promise<any> {
+    
+    const { name, emails, photos } = profile;
+    
+    // 3. Format the data into our internal User shape
+    const user = {
+      email: emails[0].value,
+      firstName: name.givenName,
+      lastName: name.familyName,
+      picture: photos[0].value,
+      accessToken
+    };
+    
+    // 4. Pass the user object to the 'done' callback (which attaches it to request.user)
+    done(null, user);
+  }
+}
+```
+
+### Triggering the Strategy
+To trigger the Google strategy, you simply use the built-in `AuthGuard` from `@nestjs/passport`, passing the name of the strategy.
+
+```typescript
+import { Controller, Get, UseGuards, Req } from '@nestjs/common';
+import { AuthGuard } from '@nestjs/passport';
+
+@Controller('auth')
+export class AuthController {
+  
+  // 1. This route redirects the user to the Google Login screen
+  @Get('google')
+  @UseGuards(AuthGuard('google'))
+  async googleAuth(@Req() req) {}
+
+  // 2. Google redirects back to this route after login
+  @Get('google/callback')
+  @UseGuards(AuthGuard('google'))
+  googleAuthRedirect(@Req() req) {
+    // The user is now authenticated!
+    // req.user contains the object we formatted in the validate() method.
+    return {
+      message: 'User information from google',
+      user: req.user
+    };
+  }
+}
+```
+
+## Best Practices
+- **Environment Variables**: Never hardcode API keys, client secrets, or JWT secrets inside your Strategy classes. Always use the NestJS `ConfigService` to load them securely from your `.env` file.
+- **Multiple Strategies**: A single route can attempt multiple strategies by passing an array to the Guard: `@UseGuards(AuthGuard(['jwt', 'api-key']))`. If *any* of the strategies succeed, the user is authenticated.

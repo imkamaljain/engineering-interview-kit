@@ -1,0 +1,110 @@
+---
+title: "RabbitMQ"
+description: "RabbitMQ in NestJS"
+importance: "LOW"
+revisionTime: 8
+category: "NestJS"
+subcategory: "Microservices"
+order: 1820
+---
+
+*RabbitMQ (RMQ) is a robust, widely-used message broker implementing the Advanced Message Queuing Protocol (AMQP). It provides guaranteed message delivery, complex routing, and durable queues, making it ideal for critical microservice communication.*
+
+## Overview
+Unlike Redis Pub/Sub (where messages are lost if the receiver is offline), RabbitMQ stores messages in "Queues". If a microservice crashes, RabbitMQ holds onto the messages. When the microservice restarts, it connects to the queue and processes the backlog.
+
+NestJS abstracts the complexity of AMQP connections, channels, and acknowledgements, allowing you to use RabbitMQ just as easily as TCP.
+
+## Key Concepts
+- **Durable Queues**: Queues survive server restarts. Messages aren't lost.
+- **Message Acknowledgement (Ack)**: When a NestJS microservice receives a message from RMQ, it must tell RMQ it successfully processed it. Only then does RMQ delete the message from the queue. NestJS handles auto-acking by default, but you can configure manual acking for critical operations.
+- **Round-Robin Load Balancing**: If you have 5 instances of an Email Microservice listening to an `emails` queue, RMQ will distribute 100 messages evenly (20 to each instance).
+
+## Code Examples
+
+### 1. Installation
+Install the AMQP driver.
+`npm i amqplib amqp-connection-manager`
+
+### 2. The RMQ Server (Microservice)
+Configure the microservice to connect to a specific RabbitMQ queue.
+
+```typescript
+// server/main.ts
+import { NestFactory } from '@nestjs/core';
+import { MicroserviceOptions, Transport } from '@nestjs/microservices';
+import { AppModule } from './app.module';
+
+async function bootstrap() {
+  const app = await NestFactory.createMicroservice<MicroserviceOptions>(
+    AppModule,
+    {
+      transport: Transport.RMQ,
+      options: {
+        urls: ['amqp://localhost:5672'], // Connection string
+        queue: 'pdf_processing_queue',   // The specific queue to listen to
+        queueOptions: {
+          durable: true, // The queue survives broker restarts
+        },
+        // We set noAck: false to require explicit acknowledgement of success
+        // Note: In NestJS, returning from the controller method auto-acks.
+        // Throwing an error NACKs (rejects) the message.
+        noAck: false, 
+      },
+    },
+  );
+  await app.listen();
+}
+```
+
+```typescript
+// server/app.controller.ts
+import { Controller } from '@nestjs/common';
+import { EventPattern, Payload, Ctx, RmqContext } from '@nestjs/microservices';
+
+@Controller()
+export class AppController {
+  
+  @EventPattern('generate_pdf')
+  async handlePdfGeneration(@Payload() data: any, @Ctx() context: RmqContext) {
+    console.log(`Processing PDF for user ${data.userId}`);
+    
+    // Simulate long running task
+    await new Promise(resolve => setTimeout(resolve, 5000));
+    
+    // Because noAck is false, NestJS will automatically acknowledge the message
+    // to RabbitMQ the moment this function successfully returns.
+    // If it threw an error here, the message would remain in the queue!
+  }
+}
+```
+
+### 3. The RMQ Client
+The client sends messages to the queue. Note that the client must specify the *same* queue name.
+
+```typescript
+// client/app.module.ts
+import { Module } from '@nestjs/common';
+import { ClientsModule, Transport } from '@nestjs/microservices';
+
+@Module({
+  imports: [
+    ClientsModule.register([
+      {
+        name: 'PDF_SERVICE',
+        transport: Transport.RMQ,
+        options: {
+          urls: ['amqp://localhost:5672'],
+          queue: 'pdf_processing_queue',
+          queueOptions: { durable: true },
+        },
+      },
+    ]),
+  ],
+})
+export class AppModule {}
+```
+
+## Best Practices
+- **Manual Acknowledgements**: For financial transactions or heavy processing (like video encoding), automatic ACKs are dangerous. If your app crashes halfway through encoding a video, NestJS might have already ACK'd it, losing the job forever. Use Manual ACKs (`noAck: false` and extracting the `channel` from the `RmqContext` to call `channel.ack(originalMsg)`) to ensure a message is only deleted *after* the work is 100% complete.
+- **Dead Letter Exchanges (DLX)**: Configure your RabbitMQ queues with a DLX. If a message is malformed and your NestJS controller throws an error every time it receives it, RMQ will retry indefinitely, creating an infinite loop. A DLX catches messages that fail too many times and routes them to a "failed_jobs" queue for manual inspection.

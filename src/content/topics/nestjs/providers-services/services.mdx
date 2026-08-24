@@ -1,0 +1,64 @@
+---
+title: "Services"
+description: "Services in NestJS"
+importance: "LOW"
+revisionTime: 14
+category: "NestJS"
+subcategory: "Providers & Services"
+order: 410
+---
+
+*Services are a specific type of Provider that encapsulate the core business logic of your application.*
+
+## Overview
+In the context of NestJS (and software architecture in general), a Service is responsible for retrieving and storing data. It sits between the Controller (which handles HTTP transport) and the Database/Repository layer.
+
+Technically, a "Service" in NestJS is just a class annotated with `@Injectable()`. Nest doesn't differentiate between a "Service" and a "Provider" under the hood—a Service is simply the conceptual name given to a Provider that handles business rules.
+
+## Key Concepts
+- **Separation of Concerns**: Controllers should not contain business logic. Services should not know about HTTP requests or responses.
+- **Reusability**: Because a Service abstracts business logic, it can be injected and used by multiple Controllers, CLI commands, or Background Jobs.
+- **Data Access**: Services typically inject Repositories (if using an ORM like TypeORM) or Database Connections to perform CRUD operations.
+
+## Code Examples
+
+### A Typical Business Logic Service
+
+```typescript
+import { Injectable, NotFoundException } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { User } from './entities/user.entity';
+import { CreateUserDto } from './dto/create-user.dto';
+
+@Injectable()
+export class UsersService {
+  // Inject the database repository
+  constructor(
+    @InjectRepository(User)
+    private usersRepository: Repository<User>,
+  ) {}
+
+  async create(createUserDto: CreateUserDto): Promise<User> {
+    // 1. Apply business rules (e.g., hash password, check if email exists)
+    const user = this.usersRepository.create(createUserDto);
+    
+    // 2. Persist to database
+    return this.usersRepository.save(user);
+  }
+
+  async findOne(id: number): Promise<User> {
+    const user = await this.usersRepository.findOneBy({ id });
+    if (!user) {
+      // 3. Services can throw standard HTTP exceptions which Nest handles automatically
+      throw new NotFoundException(`User with ID ${id} not found`);
+    }
+    return user;
+  }
+}
+```
+
+## Best Practices
+- **Framework Agnostic**: Try to keep your Services as framework-agnostic as possible. Avoid passing Express `Request` or `Response` objects into service methods. Pass only the strictly necessary DTOs or primitive values.
+- **Handle Errors Gracefully**: Services should throw appropriate exceptions (like `NotFoundException` or `ConflictException`) when business rules are violated, rather than returning nulls that the controller has to constantly check.
+- **Keep them Small**: If a Service grows too large (e.g., thousands of lines), it's a sign it's handling too many responsibilities. Break it down into smaller, domain-specific services.

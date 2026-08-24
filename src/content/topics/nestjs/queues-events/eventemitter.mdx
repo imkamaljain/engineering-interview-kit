@@ -1,0 +1,102 @@
+---
+title: "EventEmitter"
+description: "EventEmitter in NestJS"
+importance: "LOW"
+revisionTime: 13
+category: "NestJS"
+subcategory: "Queues & Events"
+order: 1920
+---
+
+*The `@nestjs/event-emitter` package provides a simple, in-memory Publish-Subscribe (Pub/Sub) mechanism. It allows different parts of your monolithic application to communicate without being tightly coupled to each other.*
+
+## Overview
+Often, when a specific action occurs (like a user registering), several unrelated things need to happen: sending a welcome email, creating a default profile, and logging an analytics metric. 
+
+Instead of injecting the `EmailService`, `ProfileService`, and `AnalyticsService` directly into the `UsersService` (creating tight coupling), you can use the `EventEmitter`. The `UsersService` simply announces *"A user was registered!"*, and the other services listen for that announcement and react independently.
+
+## Key Concepts
+- **In-Memory**: The Event Emitter runs entirely within the Node.js memory space. If the server crashes, unprocessed events are lost. It does not use external brokers like Redis or RabbitMQ.
+- **Synchronous vs. Asynchronous**: By default, `EventEmitter2` (which NestJS uses under the hood) calls listeners synchronously in the order they were registered. However, NestJS wraps this to encourage asynchronous execution.
+- **Loose Coupling**: The publisher has zero dependencies on the subscribers.
+
+## Code Examples
+
+### 1. Installation and Setup
+Install the package: `npm i @nestjs/event-emitter`.
+
+```typescript
+// app.module.ts
+import { Module } from '@nestjs/common';
+import { EventEmitterModule } from '@nestjs/event-emitter';
+
+@Module({
+  imports: [
+    // Initialize the event emitter globally
+    EventEmitterModule.forRoot({
+      wildcard: true, // Enables listening to 'user.*'
+      delimiter: '.',
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+### 2. Emitting an Event
+Inject the `EventEmitter2` class and use the `emit` or `emitAsync` methods.
+
+```typescript
+// users.service.ts
+import { Injectable } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+
+// Create a strictly typed payload object
+export class UserCreatedEvent {
+  constructor(public readonly userId: number, public readonly email: string) {}
+}
+
+@Injectable()
+export class UsersService {
+  constructor(private eventEmitter: EventEmitter2) {}
+
+  async createUser(email: string) {
+    const user = { id: 123, email }; // Save to DB...
+
+    // Announce the event!
+    // The first argument is the event name. The second is the payload.
+    this.eventEmitter.emit(
+      'user.created',
+      new UserCreatedEvent(user.id, user.email),
+    );
+
+    return user;
+  }
+}
+```
+
+### 3. Listening to an Event
+Use the `@OnEvent()` decorator on any method in any service to listen for the event.
+
+```typescript
+// emails.service.ts
+import { Injectable } from '@nestjs/common';
+import { OnEvent } from '@nestjs/event-emitter';
+import { UserCreatedEvent } from './users.service';
+
+@Injectable()
+export class EmailsService {
+  
+  // Listen for the specific string used in emit()
+  @OnEvent('user.created')
+  async handleUserCreatedEvent(payload: UserCreatedEvent) {
+    console.log(`Sending welcome email to ${payload.email}...`);
+    // Wait for the email provider...
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    console.log('Email sent!');
+  }
+}
+```
+
+## Best Practices
+- **Use Classes for Payloads**: Don't use raw objects or `any` for event payloads. Always create a specific Class or Interface (like `UserCreatedEvent`). This provides type safety and makes it much easier to find where events are being emitted and consumed in a large codebase.
+- **Use Async Events Carefully**: If your `handleUserCreatedEvent` is `async` and takes 5 seconds, it will NOT block the `createUser` HTTP response (which is good). However, if the server restarts during those 5 seconds, the email will never be sent. For critical operations (like charging a credit card), do NOT use the in-memory `EventEmitter`. Use a durable Job Queue like BullMQ instead.

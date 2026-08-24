@@ -1,0 +1,90 @@
+---
+title: "Timeout Interceptors"
+description: "Timeout Interceptors in NestJS"
+importance: "HIGH"
+revisionTime: 14
+category: "NestJS"
+subcategory: "Interceptors"
+order: 840
+---
+
+*Timeout Interceptors ensure that a route handler does not hang indefinitely, protecting your application's resources by automatically cancelling requests that take too long.*
+
+## Overview
+In distributed systems, your controller might rely on a third-party API or a slow database query. If that external service hangs, your NestJS controller will hang, keeping the HTTP connection open. If enough requests hang, your server will run out of memory or connections and crash.
+
+A Timeout Interceptor uses RxJS operators to enforce a strict time limit on the controller's execution.
+
+## Key Concepts
+- **`timeout()` Operator**: An RxJS operator that throws a `TimeoutError` if the observable stream does not emit a value within the specified duration.
+- **`catchError()` Operator**: Used to catch that specific `TimeoutError` and translate it into a standard HTTP 408 Request Timeout response.
+
+## Code Examples
+
+### Implementing a Global Timeout
+This interceptor enforces a strict 5-second limit on any route it is applied to.
+
+```typescript
+import { Injectable, NestInterceptor, ExecutionContext, CallHandler, RequestTimeoutException } from '@nestjs/common';
+import { Observable, throwError, TimeoutError } from 'rxjs';
+import { catchError, timeout } from 'rxjs/operators';
+
+@Injectable()
+export class TimeoutInterceptor implements NestInterceptor {
+  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+    
+    return next.handle().pipe(
+      // 1. Wait a maximum of 5000 milliseconds for the controller to return data
+      timeout(5000),
+      
+      // 2. If it takes longer than 5000ms, RxJS throws a TimeoutError. Catch it!
+      catchError(err => {
+        if (err instanceof TimeoutError) {
+          // Translate it to an HTTP 408 response
+          return throwError(() => new RequestTimeoutException('The request took too long to process.'));
+        }
+        
+        // If it was a normal error (e.g., 404, 400), just pass it through
+        return throwError(() => err);
+      }),
+    );
+  }
+}
+```
+
+### Applying Custom Timeouts via Metadata
+A global 5-second timeout might be too short for a file upload route, but too long for a simple health check. We can use the `Reflector` to allow custom timeouts per-route.
+
+```typescript
+// 1. Create a custom decorator
+export const SetTimeout = (timeout: number) => SetMetadata('timeout', timeout);
+
+// 2. Modify the Interceptor to read the metadata
+@Injectable()
+export class CustomTimeoutInterceptor implements NestInterceptor {
+  constructor(private reflector: Reflector) {}
+
+  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+    // Read the timeout metadata, default to 5000ms if not provided
+    const timeoutDuration = this.reflector.get<number>('timeout', context.getHandler()) || 5000;
+
+    return next.handle().pipe(
+      timeout(timeoutDuration),
+      catchError(err => { /* ... handling logic ... */ }),
+    );
+  }
+}
+
+// 3. Use it in the controller
+@Controller('reports')
+export class ReportsController {
+  
+  @Get('generate')
+  @SetTimeout(30000) // Allow 30 seconds for this heavy report generation!
+  generateReport() { ... }
+}
+```
+
+## Best Practices
+- **Essential for Microservices**: If you are using NestJS microservices (TCP, Redis, etc.), timeout interceptors are absolutely critical. Network latency and dropped packets can cause microservice calls to hang forever if a timeout is not enforced.
+- **Graceful Degradation**: When a timeout occurs, the client receives a 408 error, but *the Node.js event loop is still processing the slow task in the background*. NestJS cannot forcefully kill a running synchronous JavaScript thread. Timeouts are about freeing up the *client's* connection, not necessarily stopping the backend work.

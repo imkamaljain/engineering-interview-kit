@@ -1,0 +1,97 @@
+---
+title: "Integration Testing"
+description: "Integration Testing in NestJS"
+importance: "HIGH"
+revisionTime: 5
+category: "NestJS"
+subcategory: "Testing"
+order: 2280
+---
+
+*Integration Testing in NestJS focuses on verifying that multiple modules, services, or external dependencies (like a database or Redis) work correctly together, without spinning up the entire HTTP server layer.*
+
+## Overview
+Unit tests mock everything. E2E tests spin up the whole world. Integration tests sit comfortably in the middle.
+
+If you have a `UserService` that relies on a `UserRepository` (which talks to PostgreSQL), a Unit Test would mock the repository and assume it works. An Integration Test instantiates the *real* `UserService` and the *real* `UserRepository`, connects to a *real* test database, and verifies that the complex SQL joins actually return the correct data. It does *not*, however, test the HTTP Controller or Guards.
+
+## Key Concepts
+- **Partial Module Bootstrapping**: Instead of importing `AppModule` (which pulls in everything), you only import the specific module you are testing (e.g., `UserModule`) alongside the database module.
+- **Real Infrastructure**: Integration tests typically require real backing services. Tools like **Testcontainers** (which spin up ephemeral Docker containers for PostgreSQL/Redis just for the test) are highly recommended.
+
+## Code Examples
+
+### 1. Setting up an Integration Test
+In this example, we test the `UserService` interacting with a real TypeORM database connection, but we do not start the HTTP server.
+
+```typescript
+import { Test, TestingModule } from '@nestjs/testing';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { UserService } from './user.service';
+import { User } from './user.entity';
+
+describe('UserService (Integration)', () => {
+  let service: UserService;
+  let module: TestingModule;
+
+  beforeAll(async () => {
+    // 1. Bootstrap a mini NestJS application containing ONLY the database and the UserService
+    module = await Test.createTestingModule({
+      imports: [
+        // Connect to a dedicated test database
+        TypeOrmModule.forRoot({
+          type: 'sqlite', // In-memory SQLite is great for fast integration tests!
+          database: ':memory:',
+          entities: [User],
+          synchronize: true, // Auto-create tables for the test
+        }),
+        TypeOrmModule.forFeature([User]),
+      ],
+      providers: [UserService],
+    }).compile();
+
+    // 2. Extract the service from the Dependency Injection container
+    service = module.get<UserService>(UserService);
+  });
+
+  afterAll(async () => {
+    // Ensure we close the database connection
+    await module.close();
+  });
+
+  // 3. The Test
+  it('should successfully save and retrieve a user from the database', async () => {
+    // Act
+    const createdUser = await service.createUser('test@integration.com', 'password');
+    const retrievedUser = await service.findByEmail('test@integration.com');
+
+    // Assert
+    expect(createdUser.id).toBeDefined();
+    expect(retrievedUser).toBeDefined();
+    expect(retrievedUser.email).toEqual('test@integration.com');
+  });
+});
+```
+
+### 2. Testing Transactions
+Integration tests are crucial for testing complex database transactions (e.g., deducting money from User A and adding it to User B). A unit test with mocks cannot reliably verify that a transaction rolls back on failure.
+
+```typescript
+it('should rollback transaction if User B does not exist', async () => {
+  // Setup: Create User A with $100
+  const userA = await service.createUser('usera@bank.com', 'pass', 100);
+
+  // Act: Attempt to transfer to a non-existent user
+  await expect(
+    service.transferFunds(userA.id, 99999, 50)
+  ).rejects.toThrow('Recipient not found');
+
+  // Assert: Verify the transaction rolled back and User A still has $100
+  const updatedUserA = await service.findById(userA.id);
+  expect(updatedUserA.balance).toEqual(100);
+});
+```
+
+## Best Practices
+- **Testcontainers vs In-Memory Databases**: While SQLite `:memory:` is incredibly fast for testing, it behaves differently than PostgreSQL (e.g., date formatting, specific JSONB queries). If your app uses advanced PostgreSQL features, use [Testcontainers for Node.js](https://testcontainers.com/modules/nodejs/) to spin up a real Postgres Docker container before the test suite runs.
+- **Don't Overlap with E2E**: Keep Integration tests focused on complex logic involving the database or Redis (e.g., complex SQL aggregations, transaction rollbacks, caching layers). Leave the testing of HTTP status codes, routing, and Guards to E2E tests.

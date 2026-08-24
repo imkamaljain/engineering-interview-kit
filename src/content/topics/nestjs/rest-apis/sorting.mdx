@@ -1,0 +1,107 @@
+---
+title: "Sorting"
+description: "Sorting in NestJS"
+importance: "MEDIUM"
+revisionTime: 13
+category: "NestJS"
+subcategory: "REST APIs"
+order: 1510
+---
+
+*Sorting allows API consumers to specify the order in which data should be returned (e.g., newest first, alphabetical order) using URL query parameters.*
+
+## Overview
+When a client requests a list of resources (`GET /products`), they usually want to control the order. An e-commerce frontend needs to display products sorted by `price` (ascending) or by `createdAt` (descending).
+
+In a REST API, this is typically handled via query parameters like `?sortBy=price&sortOrder=DESC`. The NestJS backend extracts these parameters and translates them into the corresponding ORM `ORDER BY` clause.
+
+## Key Concepts
+- **`sortBy`**: The field/column the data should be ordered by.
+- **`sortOrder`**: The direction of the sort. Usually limited to `ASC` (Ascending) or `DESC` (Descending).
+- **Validation**: You must strictly validate the `sortBy` field. If a user passes `?sortBy=passwordHash`, your app might crash or leak data if you blindly pass that string into your ORM.
+
+## Code Examples
+
+### 1. The Validation DTO
+Create an Enum for the allowed sort orders and carefully type the allowed fields.
+
+```typescript
+// sort.dto.ts
+import { IsOptional, IsEnum, IsString, IsIn } from 'class-validator';
+
+// 1. Limit the directions
+export enum SortOrder {
+  ASC = 'ASC',
+  DESC = 'DESC',
+}
+
+// 2. Explicitly define which database columns are allowed to be sorted on!
+// Never allow a user to pass an arbitrary string directly to the database.
+const ALLOWED_SORT_FIELDS = ['id', 'price', 'createdAt', 'name'];
+
+export class SortQueryDto {
+  @IsOptional()
+  @IsString()
+  @IsIn(ALLOWED_SORT_FIELDS, {
+    message: `sortBy must be one of: ${ALLOWED_SORT_FIELDS.join(', ')}`
+  })
+  sortBy?: string = 'createdAt'; // Default sort field
+
+  @IsOptional()
+  @IsEnum(SortOrder)
+  sortOrder?: SortOrder = SortOrder.DESC; // Default sort direction
+}
+```
+
+### 2. The Controller
+Grab the query parameters. (This is usually combined with the Pagination DTO in real applications).
+
+```typescript
+// products.controller.ts
+import { Controller, Get, Query } from '@nestjs/common';
+
+@Controller('products')
+export class ProductsController {
+  constructor(private productsService: ProductsService) {}
+
+  @Get()
+  findAll(@Query() sortQuery: SortQueryDto) {
+    return this.productsService.findAll(sortQuery);
+  }
+}
+```
+
+### 3. The Service (TypeORM)
+Translate the validated DTO strings into a TypeORM `order` object.
+
+```typescript
+// products.service.ts
+import { Injectable } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+
+@Injectable()
+export class ProductsService {
+  constructor(@InjectRepository(Product) private repo: Repository<Product>) {}
+
+  async findAll(query: SortQueryDto) {
+    const { sortBy, sortOrder } = query;
+
+    // Because we used @IsIn() in the DTO, we are 100% sure that 
+    // `sortBy` is a valid column name, making this dynamic key assignment safe.
+    const orderConfig = {
+      [sortBy]: sortOrder
+    };
+
+    return this.repo.find({
+      order: orderConfig 
+      // TypeORM translates this to: ORDER BY "createdAt" DESC
+    });
+  }
+}
+```
+
+## Best Practices
+- **Never Trust `sortBy` Input**: The most critical rule of sorting is validating the `sortBy` parameter against an explicit whitelist of allowed columns (using `@IsIn()`). If you don't, malicious users can attempt SQL Injection or crash your database by sorting on non-existent columns.
+- **Provide Sane Defaults**: Always have a default sort configuration. If the user just calls `GET /products`, the database should deterministically return results (e.g., always `createdAt DESC`).
+- **Combine with Pagination**: Sorting is almost always implemented alongside pagination. Ensure your service method accepts a combined `QueryDto` that handles `page`, `limit`, `sortBy`, and `sortOrder` simultaneously.

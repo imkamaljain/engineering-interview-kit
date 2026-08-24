@@ -1,0 +1,108 @@
+---
+title: "Testing Middleware"
+description: "Testing Middleware in NestJS"
+importance: "HIGH"
+revisionTime: 6
+category: "NestJS"
+subcategory: "Testing"
+order: 2390
+---
+
+*Testing Middleware involves simulating the Express `Request`, `Response`, and `NextFunction` objects to verify that the middleware correctly mutates the request or terminates it before it reaches the controller.*
+
+## Overview
+Middleware in NestJS operates exactly like Express middleware. It is a function (or a class implementing `NestMiddleware`) that receives `(req, res, next)`. 
+
+Because middleware sits at the very edge of the application (before Guards, Interceptors, and Pipes), unit testing it requires manually mocking the raw HTTP objects. 
+
+## Key Concepts
+- **`req` and `res` Mocking**: You must provide partial implementations of the Express Request and Response objects. 
+- **`next()` Function**: The `next` function is just a callback. Your test must verify whether `next()` was called (meaning the request is allowed to proceed) or if it was not called (meaning the middleware intercepted and ended the request).
+
+## Code Examples
+
+### 1. Testing a Class-Based Middleware
+Imagine a middleware that checks for a specific custom header and attaches a user ID to the request. If the header is missing, it returns a 401 Unauthorized immediately, terminating the request.
+
+```typescript
+// auth.middleware.ts
+import { Injectable, NestMiddleware, UnauthorizedException } from '@nestjs/common';
+import { Request, Response, NextFunction } from 'express';
+
+@Injectable()
+export class AuthMiddleware implements NestMiddleware {
+  use(req: Request, res: Response, next: NextFunction) {
+    const token = req.headers['x-custom-token'];
+    
+    if (!token) {
+      throw new UnauthorizedException('Token is missing');
+    }
+
+    if (token === 'valid-token') {
+      req['userId'] = 123;
+      next();
+    } else {
+      throw new UnauthorizedException('Invalid token');
+    }
+  }
+}
+```
+
+Now, the Unit Test:
+
+```typescript
+// auth.middleware.spec.ts
+import { AuthMiddleware } from './auth.middleware';
+import { UnauthorizedException } from '@nestjs/common';
+import { Request, Response, NextFunction } from 'express';
+
+describe('AuthMiddleware', () => {
+  let middleware: AuthMiddleware;
+  let mockRequest: Partial<Request>;
+  let mockResponse: Partial<Response>;
+  let nextFunction: NextFunction;
+
+  beforeEach(() => {
+    middleware = new AuthMiddleware();
+    
+    // We only mock the properties of the Request that the middleware actually uses
+    mockRequest = {
+      headers: {},
+    };
+    
+    mockResponse = {}; // Empty mock, as this middleware doesn't modify the response directly
+    
+    // next is just a Jest mock function
+    nextFunction = jest.fn(); 
+  });
+
+  it('should call next() and attach userId if token is valid', () => {
+    // Arrange
+    mockRequest.headers = { 'x-custom-token': 'valid-token' };
+
+    // Act
+    middleware.use(mockRequest as Request, mockResponse as Response, nextFunction);
+
+    // Assert
+    expect(mockRequest['userId']).toBe(123);
+    expect(nextFunction).toHaveBeenCalledTimes(1);
+  });
+
+  it('should throw UnauthorizedException if token is missing', () => {
+    // Arrange
+    mockRequest.headers = {};
+
+    // Act & Assert
+    expect(() => {
+      middleware.use(mockRequest as Request, mockResponse as Response, nextFunction);
+    }).toThrow(UnauthorizedException);
+    
+    // next() should NEVER be called if an exception is thrown
+    expect(nextFunction).not.toHaveBeenCalled(); 
+  });
+});
+```
+
+## Best Practices
+- **Use `Partial<T>`**: Always use TypeScript's built-in `Partial<Request>` when mocking standard Express/Fastify objects. Creating a full mock of the Express `Request` object is nearly impossible because it has dozens of complex methods and properties. `Partial` allows you to only stub what you need.
+- **Testing Dependency Injection in Middleware**: If your middleware requires dependencies (e.g., `constructor(private db: DbService)`), do not use `new AuthMiddleware()`. Instead, use `Test.createTestingModule()` to compile the module, provide a mock for `DbService`, and then retrieve the middleware using `module.get(AuthMiddleware)`.

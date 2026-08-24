@@ -1,0 +1,106 @@
+---
+title: "Retry Strategies"
+description: "Retry Strategies in NestJS"
+importance: "LOW"
+revisionTime: 11
+category: "NestJS"
+subcategory: "Queues & Events"
+order: 2010
+---
+
+*Retry Strategies define how a job queue should behave when a background task fails due to an unexpected error. Implementing intelligent retries ensures temporary network glitches don't result in permanent data loss.*
+
+## Overview
+Background jobs often interact with flaky external systems (third-party APIs, databases, SMTP servers). If a worker tries to send an email and SendGrid is down for 5 seconds, the job will throw an error. 
+
+If you have no retry strategy, the job fails permanently. If you retry immediately, it will likely fail again. A good retry strategy utilizes a "Backoff" algorithm to wait increasing amounts of time between each attempt.
+
+## Key Concepts
+- **Attempts**: The maximum number of times a queue will try to process a job before giving up completely. (e.g., 1 initial try + 4 retries = 5 attempts).
+- **Fixed Backoff**: Waiting a static amount of time between retries (e.g., wait exactly 5 seconds every time).
+- **Exponential Backoff**: Waiting an exponentially increasing amount of time between retries (e.g., wait 2s, then 4s, then 8s, then 16s). This is critical to avoid accidentally DDoS-ing a recovering external API.
+
+## Code Examples
+
+### 1. Configuring Retries in Bull
+You configure retry strategies when the Producer *adds* the job to the queue, not on the Consumer.
+
+```typescript
+import { Controller, Post } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bull';
+import { Queue } from 'bull';
+
+@Controller('webhooks')
+export class WebhookController {
+  constructor(@InjectQueue('webhooks') private webhookQueue: Queue) {}
+
+  @Post('fire')
+  async fireWebhook() {
+    
+    // Attempt 1: Immediate
+    // Attempt 2: After 5 seconds
+    // Attempt 3: After 25 seconds (5^2)
+    // Attempt 4: After 125 seconds (5^3)
+    
+    await this.webhookQueue.add(
+      'send_webhook', 
+      { url: 'https://flaky-api.com/hook' }, 
+      {
+        attempts: 4, // Max total attempts
+        backoff: {
+          type: 'exponential', // 'fixed' or 'exponential'
+          delay: 5000,         // Base delay in milliseconds
+        },
+      }
+    );
+
+    return 'Webhook queued!';
+  }
+}
+```
+
+### 2. Custom Backoff Strategies
+Sometimes exponential backoff is too aggressive. Bull allows you to define custom backoff strategies when you register the queue in your module.
+
+```typescript
+// app.module.ts
+import { Module } from '@nestjs/common';
+import { BullModule } from '@nestjs/bull';
+
+@Module({
+  imports: [
+    BullModule.registerQueue({
+      name: 'webhooks',
+      // Define custom backoff functions
+      settings: {
+        backoffStrategies: {
+          // A custom strategy named 'jitter'
+          jitter: function (attemptsMade: number, err: Error) {
+            // Adds random noise (jitter) to prevent the "Thundering Herd" problem
+            // where 1000 failing jobs all retry at the exact same millisecond.
+            const baseDelay = 5000 * attemptsMade;
+            const randomJitter = Math.random() * 2000;
+            return baseDelay + randomJitter;
+          },
+        },
+      },
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+You then use this custom strategy when producing the job:
+
+```typescript
+await this.webhookQueue.add('send_webhook', payload, {
+  attempts: 5,
+  backoff: {
+    type: 'jitter', // Matches the name defined in the module!
+  },
+});
+```
+
+## Best Practices
+- **Don't Retry Non-Transient Errors**: A network timeout is a *transient* error; retrying might work. A `400 Bad Request` or a `TypeError: undefined is not a function` is a *deterministic* error; retrying 50 times will never fix it. Your worker should catch these specific errors and instruct Bull to fail immediately without retrying by calling `job.discard()` (in Bull) before throwing, or by throwing a custom `UnrecoverableError` (in BullMQ).
+- **Idempotency (Again)**: Retries are dangerous if your jobs aren't idempotent. Imagine a job that 1) Charges Stripe, and 2) Updates your local DB. If step 2 fails due to a DB lock, the job throws an error. 5 seconds later, the retry triggers. If you don't check if Stripe was already charged, you will charge the customer a second time!

@@ -1,0 +1,89 @@
+---
+title: "REST vs GraphQL"
+description: "REST vs GraphQL in NestJS"
+importance: "MEDIUM"
+revisionTime: 14
+category: "NestJS"
+subcategory: "Interview Patterns"
+order: 3030
+---
+
+*NestJS is unique in that it offers first-class, officially supported modules for both traditional REST APIs and GraphQL. Understanding when to choose which architecture—and how NestJS handles them—is a crucial architectural decision.*
+
+## Overview
+- **REST**: Represents data as distinct resources accessed via URLs (`GET /users/1`, `POST /orders`). It relies on standard HTTP methods and status codes.
+- **GraphQL**: Represents data as a graph. There is only one endpoint (`POST /graphql`). The client sends a query specifying exactly what data it wants, and the server returns exactly that—no more, no less.
+
+## Key Differences in NestJS
+
+### 1. Controllers vs Resolvers
+- **REST**: Uses `@Controller()` classes with method decorators like `@Get()`, `@Post()`, and `@Body()`.
+- **GraphQL**: Uses `@Resolver()` classes with method decorators like `@Query()`, `@Mutation()`, and `@Args()`.
+
+### 2. Over-fetching and Under-fetching
+- **REST**: If a mobile app needs a user's name and their last 3 orders, it might have to hit `/users/1` (fetching a massive User object it doesn't need all of) and then `/users/1/orders` (making two round trips).
+- **GraphQL**: The mobile app sends exactly one query: `{ user(id: 1) { name, orders(limit: 3) { id, total } } }`. The server resolves only those specific fields.
+
+### 3. Schema and Typing
+- **REST**: Relies on OpenAPI/Swagger for documentation. The server dictates the shape of the response.
+- **GraphQL**: Is strictly typed by a Schema. NestJS supports two ways to generate this schema: Code-First (writing TypeScript classes that generate the schema) or Schema-First (writing `.graphql` files that generate TypeScript definitions).
+
+## Code Examples
+
+### A REST Implementation
+```typescript
+// users.controller.ts
+import { Controller, Get, Param } from '@nestjs/common';
+import { UsersService } from './users.service';
+import { User } from './user.entity';
+
+@Controller('users')
+export class UsersController {
+  constructor(private usersService: UsersService) {}
+
+  @Get(':id')
+  async getUser(@Param('id') id: string): Promise<User> {
+    // Returns the entire user object, regardless of what the client actually needs
+    return this.usersService.findById(id); 
+  }
+}
+```
+
+### A GraphQL Implementation (Code-First)
+```typescript
+// users.resolver.ts
+import { Resolver, Query, Args, ResolveField, Parent } from '@nestjs/graphql';
+import { UsersService } from './users.service';
+import { OrdersService } from './orders.service';
+import { User } from './user.model'; // Decorated with @ObjectType()
+
+@Resolver(() => User)
+export class UsersResolver {
+  constructor(
+    private usersService: UsersService,
+    private ordersService: OrdersService,
+  ) {}
+
+  // Equivalent to GET /users/:id
+  @Query(() => User)
+  async getUser(@Args('id') id: string): Promise<User> {
+    return this.usersService.findById(id);
+  }
+
+  // This method ONLY runs if the client explicitly asked for the 'orders' field in their query!
+  @ResolveField()
+  async orders(@Parent() user: User) {
+    return this.ordersService.findOrdersForUser(user.id);
+  }
+}
+```
+
+## Best Practices
+- **When to choose REST**: 
+  - The API is public-facing and meant to be consumed by third-party scripts.
+  - The application is heavily reliant on HTTP caching (CDNs, Varnish). GraphQL is notoriously difficult to cache at the HTTP layer because everything is a `POST` request.
+  - File uploads are a primary feature (GraphQL file uploads are clunky).
+- **When to choose GraphQL**:
+  - You have multiple frontends (Mobile, Web, Smartwatch) that require vastly different data shapes.
+  - Your domain model is highly relational (e.g., a social network where users have friends, who have posts, which have comments).
+- **The NestJS Advantage**: Because NestJS abstracts the HTTP layer, you can actually use *both* simultaneously in the same application. A `UserService` can be injected into both a `UsersController` (for a public REST API) and a `UsersResolver` (for your internal React frontend).

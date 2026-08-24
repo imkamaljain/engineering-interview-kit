@@ -1,0 +1,140 @@
+---
+title: "Plugin Architecture"
+description: "Plugin Architecture in NestJS"
+importance: "MEDIUM"
+revisionTime: 8
+category: "NestJS"
+subcategory: "Advanced Architecture"
+order: 2790
+---
+
+*Plugin Architecture (or Microkernel Architecture) allows an application to be extended dynamically without modifying the core system. It is heavily used in CMS platforms, IDEs, and extensible SaaS products.*
+
+## Overview
+Imagine you are building a payment processing engine. Your core engine knows how to validate carts and calculate taxes. However, you want to support Stripe, PayPal, and Square. Instead of hardcoding all three into your core engine, you define a Plugin interface. 
+
+The core system (Microkernel) loads available plugins at startup and delegates the actual payment processing to whichever plugin is currently active or requested.
+
+NestJS's Dependency Injection system makes Plugin Architecture trivial. By utilizing Custom Providers (specifically using Injection Tokens and `useClass` or `useFactory`), you can register multiple implementations of the same interface.
+
+## Key Concepts
+- **Core System (Microkernel)**: The main application that contains the foundational logic. It defines the extension points (Interfaces).
+- **Plugins**: Independent modules that implement the extension points. They can be built-in, or even loaded dynamically at runtime from external npm packages.
+- **Extension Points**: The defined Interfaces or Abstract Classes that plugins must adhere to.
+- **Registry / Discovery**: The mechanism by which the core system finds and registers the available plugins.
+
+## Code Examples
+
+### 1. Defining the Extension Point
+Define the interface that all plugins must implement.
+
+```typescript
+// plugin.interface.ts
+export const PAYMENT_PLUGIN = Symbol('PAYMENT_PLUGIN');
+
+export interface PaymentPlugin {
+  getProviderName(): string;
+  processPayment(amount: number): Promise<boolean>;
+}
+```
+
+### 2. Creating the Plugins
+Create independent services that implement the interface.
+
+```typescript
+// stripe.plugin.ts
+import { Injectable } from '@nestjs/common';
+import { PaymentPlugin } from './plugin.interface';
+
+@Injectable()
+export class StripePlugin implements PaymentPlugin {
+  getProviderName() { return 'stripe'; }
+  
+  async processPayment(amount: number) {
+    console.log(`Processing $${amount} via Stripe`);
+    return true;
+  }
+}
+
+// paypal.plugin.ts
+import { Injectable } from '@nestjs/common';
+import { PaymentPlugin } from './plugin.interface';
+
+@Injectable()
+export class PaypalPlugin implements PaymentPlugin {
+  getProviderName() { return 'paypal'; }
+  
+  async processPayment(amount: number) {
+    console.log(`Processing $${amount} via PayPal`);
+    return true;
+  }
+}
+```
+
+### 3. Registering the Plugins (The Registry)
+In your module, you register all available plugins under the *same* injection token.
+
+```typescript
+// payment.module.ts
+import { Module } from '@nestjs/common';
+import { PaymentService } from './payment.service';
+import { StripePlugin } from './stripe.plugin';
+import { PaypalPlugin } from './paypal.plugin';
+import { PAYMENT_PLUGIN } from './plugin.interface';
+
+@Module({
+  providers: [
+    PaymentService,
+    // Note: We don't use 'useClass', we just register the classes normally
+    StripePlugin,
+    PaypalPlugin,
+    // Then we create a factory that returns an ARRAY of the plugins!
+    {
+      provide: PAYMENT_PLUGIN,
+      useFactory: (stripe: StripePlugin, paypal: PaypalPlugin) => {
+        return [stripe, paypal]; // Return array of plugins
+      },
+      inject: [StripePlugin, PaypalPlugin],
+    }
+  ],
+})
+export class PaymentModule {}
+```
+
+### 4. The Core Engine Consuming the Plugins
+The core engine injects the array of plugins. When a request comes in, it dynamically selects the correct plugin.
+
+```typescript
+// payment.service.ts
+import { Injectable, Inject, BadRequestException } from '@nestjs/common';
+import { PaymentPlugin, PAYMENT_PLUGIN } from './plugin.interface';
+
+@Injectable()
+export class PaymentService {
+  private pluginRegistry = new Map<string, PaymentPlugin>();
+
+  constructor(
+    // We inject the array of plugins!
+    @Inject(PAYMENT_PLUGIN) plugins: PaymentPlugin[]
+  ) {
+    // Build a dictionary for fast O(1) lookup
+    for (const plugin of plugins) {
+      this.pluginRegistry.set(plugin.getProviderName(), plugin);
+    }
+  }
+
+  async checkout(providerName: string, amount: number) {
+    const plugin = this.pluginRegistry.get(providerName);
+    
+    if (!plugin) {
+      throw new BadRequestException(`Payment provider ${providerName} not found`);
+    }
+
+    return plugin.processPayment(amount);
+  }
+}
+```
+
+## Best Practices
+- **Dynamic Module Loading**: For true plugin architectures, you might not want to hardcode the `inject: [StripePlugin, PaypalPlugin]` array. You can use Node.js tools like `fs.readdirSync` in your `AppModule` to read a `/plugins` folder, dynamically `import()` the files, and register them into the NestJS DI container before the app bootstraps.
+- **Isolate Plugins**: If you are allowing third parties to write plugins for your system, ensure the plugins run in a secure, isolated context (or as separate microservices) so a poorly written plugin doesn't crash the core Microkernel.

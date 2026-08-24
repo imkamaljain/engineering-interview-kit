@@ -1,0 +1,116 @@
+---
+title: "Mongoose"
+description: "Mongoose in NestJS"
+importance: "LOW"
+revisionTime: 5
+category: "NestJS"
+subcategory: "Database & ORM"
+order: 1250
+---
+
+*Mongoose is the most popular Object Data Modeling (ODM) library for MongoDB and Node.js. NestJS provides the `@nestjs/mongoose` package for seamless integration.*
+
+## Overview
+While TypeORM supports MongoDB, Mongoose is usually preferred by the community because it was built specifically for Mongo's NoSQL document structure. 
+
+MongoDB is inherently schemaless. Mongoose adds a rigid schema layer at the application level, ensuring that the documents you insert have the correct types, required fields, and default values.
+
+In NestJS, you define your Mongoose Schemas using TypeScript classes and decorators, similar to TypeORM, but you inject `Model` objects instead of `Repositories`.
+
+## Key Concepts
+- **Schema**: A definition of the structure of a document within a collection.
+- **Model**: A compiled constructor based on a Schema. Models handle the actual querying, creating, and updating of documents in the database.
+- **`@Prop()`**: The NestJS decorator used to define a property on a Mongoose schema.
+
+## Code Examples
+
+### 1. Defining a Mongoose Schema in NestJS
+NestJS provides decorators that automatically compile into raw Mongoose schemas.
+
+```typescript
+// cat.schema.ts
+import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
+import { Document } from 'mongoose';
+
+// Creates a TypeScript type combining your class with Mongoose's Document
+export type CatDocument = Cat & Document;
+
+@Schema({ timestamps: true }) // Automatically adds createdAt and updatedAt
+export class Cat {
+  @Prop({ required: true })
+  name: string;
+
+  @Prop()
+  age: number;
+
+  @Prop({ default: 'calico' })
+  breed: string;
+  
+  // Example of nesting an object
+  @Prop({ type: { city: String, state: String } })
+  location: Record<string, any>;
+}
+
+// Compiles the class into a Mongoose Schema object
+export const CatSchema = SchemaFactory.createForClass(Cat);
+```
+
+### 2. Module Registration
+Similar to TypeORM, you have a global connection and feature-level model registration.
+
+```typescript
+// app.module.ts
+import { MongooseModule } from '@nestjs/mongoose';
+
+@Module({
+  imports: [
+    MongooseModule.forRoot('mongodb://localhost/nest'),
+    CatsModule,
+  ],
+})
+export class AppModule {}
+
+// cats.module.ts
+@Module({
+  imports: [
+    // Register the schema. The 'name' is how you will inject it later.
+    MongooseModule.forFeature([{ name: Cat.name, schema: CatSchema }])
+  ],
+  providers: [CatsService],
+})
+export class CatsModule {}
+```
+
+### 3. Injecting and Using the Model
+You inject the Model using `@InjectModel()`, passing the class name.
+
+```typescript
+// cats.service.ts
+import { Model } from 'mongoose';
+import { Injectable } from '@nestjs/common';
+import { InjectModel } from '@nestjs/mongoose';
+import { Cat, CatDocument } from './cat.schema';
+
+@Injectable()
+export class CatsService {
+  constructor(
+    // Inject the Model
+    @InjectModel(Cat.name) private catModel: Model<CatDocument>
+  ) {}
+
+  async create(createCatDto: any): Promise<Cat> {
+    const createdCat = new this.catModel(createCatDto);
+    // .save() returns a Promise, inserting the doc into Mongo
+    return createdCat.save();
+  }
+
+  async findAll(): Promise<Cat[]> {
+    // Standard Mongoose query syntax
+    return this.catModel.find().exec();
+  }
+}
+```
+
+## Best Practices
+- **Use `.exec()`**: While Mongoose queries (like `Model.find()`) act like promises (they have a `.then()` method), they are actually "Query" objects. You should always append `.exec()` to the end of your queries to return a true JavaScript Promise, which ensures better stack traces if an error occurs.
+- **Understand `_id` vs `id`**: MongoDB uses `_id` (an ObjectId) as the primary key. When sending data to the client, you often want to map this to a string `id`. You can configure your Mongoose schema's `toJSON` transform function to automatically do this mapping so your controllers don't have to.

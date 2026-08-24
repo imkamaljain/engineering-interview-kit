@@ -1,0 +1,89 @@
+---
+title: "Dynamic Modules"
+description: "Dynamic Modules in NestJS"
+importance: "MEDIUM"
+revisionTime: 8
+category: "NestJS"
+subcategory: "Modules & Dependency Injection"
+order: 180
+---
+
+*Dynamic Modules are a powerful feature that allows you to easily create customizable modules that can register and configure providers dynamically.*
+
+## Overview
+Standard NestJS modules are static—you declare the `imports`, `providers`, `controllers`, and `exports` statically in the `@Module()` decorator.
+
+However, sometimes you need to build a module that behaves differently depending on configuration (e.g., a Database Module that needs connection strings, or a Config Module that needs a path to an `.env` file). Dynamic Modules allow you to pass arguments into a module during import.
+
+## Key Concepts
+- **`forRoot()` / `register()` methods**: By convention, dynamic modules have static methods (usually named `forRoot`, `register`, or `forRootAsync`) that return a `DynamicModule` object.
+- **`DynamicModule` Interface**: The object returned by the static method must match this interface, which looks exactly like the properties of the `@Module()` decorator, plus a mandatory `module` property.
+
+## Code Examples
+
+### Defining a Dynamic Module
+Let's build a simple `ConfigModule` that accepts an options object.
+
+```typescript
+import { Module, DynamicModule, Global } from '@nestjs/common';
+import { ConfigService } from './config.service';
+
+@Global()
+@Module({}) // We leave the decorator empty
+export class ConfigModule {
+  
+  // The static method that accepts options
+  static register(options: { folder: string }): DynamicModule {
+    return {
+      // The module property is required
+      module: ConfigModule, 
+      
+      providers: [
+        {
+          provide: 'CONFIG_OPTIONS',
+          useValue: options,
+        },
+        ConfigService,
+      ],
+      exports: [ConfigService],
+    };
+  }
+}
+```
+
+### Consuming a Dynamic Module
+Instead of just importing the class, we call the static method.
+
+```typescript
+import { Module } from '@nestjs/common';
+import { ConfigModule } from './config/config.module';
+
+@Module({
+  imports: [
+    // Pass the configuration dynamically!
+    ConfigModule.register({ folder: './config' }),
+  ],
+})
+export class AppModule {}
+```
+
+### Using the injected options in the service
+The `ConfigService` can now inject the options we passed in.
+
+```typescript
+import { Injectable, Inject } from '@nestjs/common';
+
+@Injectable()
+export class ConfigService {
+  constructor(@Inject('CONFIG_OPTIONS') private options: { folder: string }) {
+    console.log('Loading configs from:', this.options.folder);
+  }
+}
+```
+
+## Best Practices
+- **Follow Naming Conventions**:
+  - `register()`: Use when you expect a module to be configured specifically for the calling module (e.g., different configs for different feature modules).
+  - `forRoot()`: Use when configuring a module globally (e.g., `TypeOrmModule.forRoot(...)`).
+  - `forFeature()`: Use when importing a module in a feature context after it was configured globally (e.g., `TypeOrmModule.forFeature([UserEntity])`).
+- **Use ConfigurableModuleBuilder**: For complex dynamic modules, use NestJS 9+'s `ConfigurableModuleBuilder` to automatically generate the `forRoot/register` static methods and the async equivalents, saving massive amounts of boilerplate.

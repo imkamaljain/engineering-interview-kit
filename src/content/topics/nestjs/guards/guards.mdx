@@ -1,0 +1,75 @@
+---
+title: "Guards"
+description: "Guards in NestJS"
+importance: "MEDIUM"
+revisionTime: 5
+category: "NestJS"
+subcategory: "Guards"
+order: 710
+---
+
+*Guards determine whether a given request will be handled by the route handler or not, based on certain conditions (like permissions, roles, or ACLs) present at runtime.*
+
+## Overview
+A guard is a class annotated with the `@Injectable()` decorator, which implements the `CanActivate` interface.
+
+Guards have a single, focused responsibility: they determine if a request is allowed to proceed to the controller. If the guard returns `true`, the request continues. If it returns `false`, NestJS automatically blocks the request and throws a `403 Forbidden` exception.
+
+## Key Concepts
+- **`CanActivate` Interface**: All guards must implement this interface and its `canActivate()` method.
+- **Execution Context**: Guards have access to the `ExecutionContext`, giving them deep insight into the specific class and method about to be executed.
+- **Placement**: Guards are executed *after* all middleware, but *before* any interceptors or pipes.
+
+## Code Examples
+
+### A Simple Guard
+This guard simply checks if a `User-Agent` header is present. If it's missing, the request is blocked.
+
+```typescript
+import { Injectable, CanActivate, ExecutionContext } from '@nestjs/common';
+import { Observable } from 'rxjs';
+
+@Injectable()
+export class UserAgentGuard implements CanActivate {
+  canActivate(
+    context: ExecutionContext,
+  ): boolean | Promise<boolean> | Observable<boolean> {
+    
+    // Switch the context to HTTP to access the Express request object
+    const request = context.switchToHttp().getRequest();
+    const userAgent = request.headers['user-agent'];
+
+    // If there is no User-Agent, block the request!
+    if (!userAgent) {
+      return false; // Nest automatically translates this to a 403 Forbidden
+    }
+
+    return true; // Allow the request to proceed
+  }
+}
+```
+
+### Applying Guards
+Guards can be applied at three different scopes: globally, controller-level, or method-level.
+
+```typescript
+import { Controller, Get, UseGuards } from '@nestjs/common';
+import { UserAgentGuard } from './user-agent.guard';
+
+// 1. Controller scope: applies to all routes within this controller
+@Controller('users')
+@UseGuards(UserAgentGuard) 
+export class UsersController {
+  
+  // 2. Method scope: applies only to this specific route
+  @Get('profile')
+  @UseGuards(AnotherGuard) 
+  getProfile() {
+    return 'This only executes if BOTH UserAgentGuard and AnotherGuard return true';
+  }
+}
+```
+
+## Best Practices
+- **Guards are for Security**: Do not use guards to mutate the request object (that's what Middleware/Interceptors are for) or to validate JSON payload shapes (that's what Pipes are for). Use guards exclusively for Authentication (Who are you?) and Authorization (Are you allowed to do this?).
+- **Fail Gracefully**: If you return `false`, Nest returns a generic `403 Forbidden`. If you want to return a specific error message (e.g., `401 Unauthorized` with a custom message "Token expired"), you can explicitly throw an `HttpException` inside the `canActivate` method instead of returning `false`.

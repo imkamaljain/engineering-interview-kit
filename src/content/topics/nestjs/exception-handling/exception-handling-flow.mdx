@@ -1,0 +1,94 @@
+---
+title: "Exception Handling Flow"
+description: "Exception Handling Flow in NestJS"
+importance: "LOW"
+revisionTime: 14
+category: "NestJS"
+subcategory: "Exception Handling"
+order: 950
+---
+
+*Understanding the exact flow of how an exception travels from the point of failure to the client response is critical for debugging and architecting complex applications.*
+
+## Overview
+In NestJS, an exception thrown anywhere in the request lifecycle (Middleware, Guards, Interceptors, Pipes, Controllers, or Services) will bubble up until it is caught. 
+
+If it is not caught by a `try/catch` block or an RxJS `catchError` operator, it hits the **Exception Layer**. The Exception Layer evaluates the active Exception Filters based on their scope (Method -> Controller -> Global) and executes the most specific one it finds.
+
+## Key Concepts
+- **Bubbling**: Exceptions always bubble *up* the call stack. A database error thrown in a deep Service method bubbles up to the Controller, and then up to the Exception Layer.
+- **Scope Resolution**: Nest searches for filters starting from the most tightly scoped (Method level) outwards to the least tightly scoped (Global level).
+- **First Match Wins**: Once a filter catches an exception, the flow stops. It does *not* cascade to other filters.
+
+## Code Examples
+
+### The Hierarchy in Action
+Consider this setup where we have multiple filters handling different scopes.
+
+```typescript
+// 1. The Global Filter (Catches everything)
+@Catch()
+class GlobalFilter implements ExceptionFilter {
+  catch() { console.log('Caught globally!'); }
+}
+
+// 2. The Controller Filter (Catches HttpExceptions)
+@Catch(HttpException)
+class ControllerFilter implements ExceptionFilter {
+  catch() { console.log('Caught at Controller level!'); }
+}
+
+// 3. The Method Filter (Catches NotFoundExceptions)
+@Catch(NotFoundException)
+class MethodFilter implements ExceptionFilter {
+  catch() { console.log('Caught at Method level!'); }
+}
+```
+
+### Flow Scenarios
+Given the setup above, let's look at how different thrown exceptions are handled.
+
+```typescript
+@Controller('cats')
+@UseFilters(ControllerFilter) // Scope 2
+export class CatsController {
+
+  @Get('scenario-1')
+  @UseFilters(MethodFilter) // Scope 3
+  scenarioOne() {
+    // Throws: NotFoundException
+    // Flow: 
+    // 1. Nest checks the method. MethodFilter @Catch(NotFoundException) matches!
+    // 2. MethodFilter executes. Output: "Caught at Method level!"
+    // 3. Flow stops.
+    throw new NotFoundException();
+  }
+
+  @Get('scenario-2')
+  @UseFilters(MethodFilter)
+  scenarioTwo() {
+    // Throws: BadRequestException (which extends HttpException)
+    // Flow:
+    // 1. Nest checks the method. MethodFilter only catches NotFoundException. No match.
+    // 2. Nest checks the controller. ControllerFilter @Catch(HttpException) matches!
+    // 3. ControllerFilter executes. Output: "Caught at Controller level!"
+    // 4. Flow stops.
+    throw new BadRequestException();
+  }
+
+  @Get('scenario-3')
+  scenarioThree() {
+    // Throws: Error (generic JS error, e.g. from a typo 'undefined.map()')
+    // Flow:
+    // 1. No method filter.
+    // 2. Nest checks the controller. ControllerFilter only catches HttpExceptions. No match.
+    // 3. Nest checks the global scope. GlobalFilter @Catch() matches everything!
+    // 4. GlobalFilter executes. Output: "Caught globally!"
+    throw new Error('Boom');
+  }
+}
+```
+
+## Best Practices
+- **Do Not `try/catch` Controllers**: If you wrap your entire controller method in a `try/catch` and don't re-throw the error, the NestJS Exception Layer is bypassed entirely! Let the framework do its job. Only use `try/catch` in a controller if you specifically need to execute fallback logic *before* throwing an HTTP exception.
+- **Interceptors vs Filters**: Remember that Interceptors (via RxJS `catchError`) run *before* Exception Filters. If an Interceptor catches an error and returns `throwError(() => new ConflictException())`, the original error is gone, and the Exception Layer will now process the new `ConflictException`.

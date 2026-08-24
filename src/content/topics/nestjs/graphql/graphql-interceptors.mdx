@@ -1,0 +1,105 @@
+---
+title: "GraphQL Interceptors"
+description: "GraphQL Interceptors in NestJS"
+importance: "HIGH"
+revisionTime: 6
+category: "NestJS"
+subcategory: "GraphQL"
+order: 1730
+---
+
+*Interceptors in GraphQL allow you to intercept the execution flow of a resolver. You can execute logic before the resolver runs, mutate the result returned by the resolver, or handle errors globally.*
+
+## Overview
+Just like Guards, NestJS Interceptors are largely framework-agnostic. The exact same Interceptor you wrote to measure the response time of a REST API endpoint can often be used on a GraphQL resolver.
+
+The only difference is how you access the request context (using `GqlExecutionContext` instead of the standard `ExecutionContext`) if your interceptor needs to read HTTP headers or the logged-in user.
+
+## Key Concepts
+- **Aspect-Oriented Programming (AOP)**: Interceptors implement AOP, allowing you to extract cross-cutting concerns (like logging, caching, or performance tracking) out of your business logic.
+- **`CallHandler.handle()`**: The RxJS Observable that triggers the actual execution of the Resolver method.
+- **`@UseInterceptors()`**: The decorator used to apply the interceptor.
+
+## Code Examples
+
+### 1. A Simple Logging Interceptor
+This interceptor measures how long a GraphQL query takes to resolve.
+
+```typescript
+// logging.interceptor.ts
+import { Injectable, NestInterceptor, ExecutionContext, CallHandler } from '@nestjs/common';
+import { GqlExecutionContext } from '@nestjs/graphql';
+import { Observable } from 'rxjs';
+import { tap } from 'rxjs/operators';
+
+@Injectable()
+export class LoggingInterceptor implements NestInterceptor {
+  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+    const ctx = GqlExecutionContext.create(context);
+    const info = ctx.getInfo(); // Contains metadata about the GraphQL query!
+    
+    // The name of the query or mutation (e.g., 'getAuthor')
+    const fieldName = info.fieldName; 
+    
+    const now = Date.now();
+    
+    return next
+      .handle()
+      .pipe(
+        tap(() => console.log(`GraphQL Execution [${fieldName}]: ${Date.now() - now}ms`)),
+      );
+  }
+}
+```
+
+### 2. A Data Transformation Interceptor
+Interceptors can alter the data *after* the resolver finishes, before it is sent to the client. This is useful for things like stripping null values or transforming output structures.
+
+```typescript
+// transform.interceptor.ts
+import { Injectable, NestInterceptor, ExecutionContext, CallHandler } from '@nestjs/common';
+import { Observable } from 'rxjs';
+import { map } from 'rxjs/operators';
+
+export interface Response<T> {
+  data: T;
+  timestamp: string;
+}
+
+@Injectable()
+export class TransformInterceptor<T> implements NestInterceptor<T, Response<T>> {
+  intercept(context: ExecutionContext, next: CallHandler): Observable<Response<T>> {
+    return next.handle().pipe(
+      map(data => ({
+        data,
+        timestamp: new Date().toISOString()
+      }))
+    );
+  }
+}
+```
+*(Note: Wrapping data in a `{ data }` envelope is a REST pattern. In GraphQL, the engine automatically wraps the final response in a `{"data": { ... }}` object, so you rarely need to do this manually. Transformation interceptors in GraphQL are more commonly used for sanitization).*
+
+### 3. Applying the Interceptor
+You can apply it globally, per-resolver, or per-method.
+
+```typescript
+import { Resolver, Query } from '@nestjs/graphql';
+import { UseInterceptors } from '@nestjs/common';
+import { LoggingInterceptor } from './logging.interceptor';
+
+// Apply to all queries/mutations in this class
+@UseInterceptors(LoggingInterceptor) 
+@Resolver('Author')
+export class AuthorsResolver {
+  
+  @Query()
+  getAuthor() {
+    return { name: 'Jane' };
+  }
+}
+```
+
+## Best Practices
+- **Beware Field Resolvers**: If you apply an Interceptor globally (`app.useGlobalInterceptors(...)`) or at the class level of a Resolver, it will execute not only for the root `@Query()`, but also for every single `@ResolveField()` method that fires. If you have an interceptor that logs to a database, and the client queries an Author with 100 Posts, your interceptor might write to the database 101 times! Ensure your interceptor logic is extremely fast, or apply them only to specific `@Query()` methods.
+- **Use `ctx.getInfo()`**: The `getInfo()` method on `GqlExecutionContext` returns the `GraphQLResolveInfo` object. This object contains the entire AST (Abstract Syntax Tree) of the client's query. Advanced interceptors can parse this tree to see exactly which fields the client requested, allowing for dynamic SQL generation.

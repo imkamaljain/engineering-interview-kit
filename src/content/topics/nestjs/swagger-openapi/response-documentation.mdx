@@ -1,0 +1,115 @@
+---
+title: "Response Documentation"
+description: "Response Documentation in NestJS"
+importance: "LOW"
+revisionTime: 5
+category: "NestJS"
+subcategory: "Swagger & OpenAPI"
+order: 1600
+---
+
+*Response Documentation clarifies what HTTP status codes an endpoint can return, and what the JSON body will look like for each of those status codes.*
+
+## Overview
+A common mistake in API documentation is only describing the "Happy Path" (the 200 OK or 201 Created response). 
+
+A robust OpenAPI specification must also document the "Sad Paths" (the 400 Bad Request, 404 Not Found, 403 Forbidden). This allows frontend developers to write comprehensive error-handling logic (e.g., knowing whether an endpoint returns `{ "message": "string" }` or `{ "errors": [] }` on failure).
+
+## Key Concepts
+- **`@ApiResponse()`**: The base decorator for documenting a specific HTTP status code.
+- **Convenience Decorators**: NestJS provides shorthand decorators like `@ApiOkResponse()`, `@ApiCreatedResponse()`, `@ApiNotFoundResponse()`, etc.
+- **`type` property**: Maps the response body to a specific DTO class, allowing Swagger to generate the full JSON schema for the response.
+
+## Code Examples
+
+### 1. Documenting the Happy Path
+Use the convenience decorators to describe what the successful return payload looks like.
+
+```typescript
+import { Controller, Get, Post, Body } from '@nestjs/common';
+import { ApiOkResponse, ApiCreatedResponse, ApiOperation } from '@nestjs/swagger';
+import { UserResponseDto } from './user-response.dto';
+import { CreateUserDto } from './create-user.dto';
+
+@Controller('users')
+export class UsersController {
+  
+  @Get()
+  @ApiOperation({ summary: 'Get all users' })
+  // Using isArray: true tells Swagger this returns an Array of UserResponseDto
+  @ApiOkResponse({ 
+    description: 'Returns an array of users.',
+    type: UserResponseDto,
+    isArray: true 
+  })
+  findAll() {
+    // Logic returning UserResponseDto[]
+  }
+
+  @Post()
+  @ApiOperation({ summary: 'Create a user' })
+  // Standard 201 Created documentation
+  @ApiCreatedResponse({ 
+    description: 'The user has been successfully created.',
+    type: UserResponseDto
+  })
+  create(@Body() dto: CreateUserDto) {
+    // Logic returning a single UserResponseDto
+  }
+}
+```
+
+### 2. Documenting Error Responses (The Sad Path)
+You should document the most common exceptions your controller might throw.
+
+```typescript
+import { Controller, Get, Param, NotFoundException } from '@nestjs/common';
+import { ApiOkResponse, ApiNotFoundResponse, ApiBadRequestResponse } from '@nestjs/swagger';
+import { UserResponseDto } from './user-response.dto';
+
+@Controller('users')
+export class UsersController {
+  
+  @Get(':id')
+  @ApiOkResponse({ type: UserResponseDto })
+  
+  // Documenting that a 404 is possible if the ID isn't in the database
+  @ApiNotFoundResponse({ 
+    description: 'No user found matching the provided UUID.' 
+  })
+  
+  // Documenting that a 400 is possible if the ID format is invalid (e.g., not a UUID)
+  @ApiBadRequestResponse({ 
+    description: 'The provided ID was not a valid UUID format.' 
+  })
+  
+  findOne(@Param('id') id: string) {
+    // If user is not found:
+    throw new NotFoundException('User not found');
+  }
+}
+```
+
+### 3. Custom Error DTOs
+By default, Swagger assumes your errors look like standard strings. If you have a custom Exception Filter that formats errors (e.g., into `{ errorCode: 123, msg: "Failed" }`), you can document that shape.
+
+```typescript
+class CustomErrorResponse {
+  @ApiProperty()
+  errorCode: number;
+
+  @ApiProperty()
+  msg: string;
+}
+
+@Get(':id')
+@ApiNotFoundResponse({ 
+  description: 'User not found',
+  type: CustomErrorResponse // Tell Swagger exactly what the 404 JSON looks like
+})
+findOne() { ... }
+```
+
+## Best Practices
+- **Standardize Error Responses**: Don't define custom error shapes for every endpoint. Use NestJS's built-in exceptions (`NotFoundException`, `BadRequestException`), which all follow a standard format `{ statusCode, message, error }`. Documenting the `description` string is usually enough; you rarely need custom `type`s for standard errors.
+- **Don't over-document 500s**: You generally don't need to add `@ApiInternalServerErrorResponse()` to every single endpoint. It's implicitly understood that any API can throw a 500 if the database goes down. Focus your documentation on *expected* client errors (4xx codes).

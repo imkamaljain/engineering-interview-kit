@@ -1,0 +1,112 @@
+---
+title: "Swagger Decorators"
+description: "Swagger Decorators in NestJS"
+importance: "HIGH"
+revisionTime: 9
+category: "NestJS"
+subcategory: "Swagger & OpenAPI"
+order: 1620
+---
+
+*Swagger Decorators are the building blocks used to enrich your auto-generated OpenAPI documentation. They allow you to add human-readable descriptions, mark fields as deprecated, define response types, and group endpoints.*
+
+## Overview
+While the NestJS CLI plugin can automatically infer that a field is a `string` or a `number`, it cannot infer the *purpose* of that field, nor can it guess what HTTP status codes your controller might throw.
+
+To add this crucial context, NestJS provides a suite of `@Api...` decorators that you apply directly to your Controllers, Methods, and DTO properties.
+
+## Key Concepts
+- **Controller Level**: Decorators like `@ApiTags()` (to group routes) and `@ApiBearerAuth()` (to mandate security).
+- **Method Level**: Decorators like `@ApiOperation()` (to describe what the route does) and `@ApiResponse()` (to define the possible return types and status codes).
+- **Property/DTO Level**: Decorators like `@ApiProperty()` (to provide examples, descriptions, and constraints).
+
+## Code Examples
+
+### 1. DTO Decorators (`@ApiProperty`)
+Used to document the properties of classes used in request bodies or responses.
+
+```typescript
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsString, IsInt, Min, Max } from 'class-validator';
+
+export class CreateUserDto {
+  @ApiProperty({
+    description: 'The primary email address of the user',
+    example: 'john.doe@example.com',
+  })
+  @IsString()
+  email: string;
+
+  @ApiProperty({
+    description: 'User age in years',
+    minimum: 18,
+    maximum: 120,
+    example: 25,
+  })
+  @IsInt()
+  @Min(18)
+  @Max(120)
+  age: number;
+
+  @ApiPropertyOptional({
+    description: 'Optional bio for the user profile',
+    example: 'I love coding in NestJS!',
+  })
+  @IsString()
+  bio?: string;
+}
+```
+
+### 2. Controller & Method Decorators
+Used to document the endpoint itself.
+
+```typescript
+import { Controller, Post, Body, Get, Param } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiResponse, ApiParam } from '@nestjs/swagger';
+import { CreateUserDto } from './create-user.dto';
+import { UserResponseDto } from './user-response.dto';
+
+// 1. Group all endpoints in this controller under the "Users" section in Swagger UI
+@ApiTags('Users')
+@Controller('users')
+export class UsersController {
+  
+  @Post()
+  // 2. Describe what the endpoint does
+  @ApiOperation({ 
+    summary: 'Create a new user',
+    description: 'Registers a new user in the system and triggers a welcome email.'
+  })
+  // 3. Define the expected successful response type
+  @ApiResponse({ 
+    status: 201, 
+    description: 'The user has been successfully created.',
+    type: UserResponseDto 
+  })
+  // 4. Document possible errors
+  @ApiResponse({ status: 400, description: 'Validation failed.' })
+  @ApiResponse({ status: 409, description: 'Email already exists.' })
+  create(@Body() createUserDto: CreateUserDto) {
+    return 'Creates user';
+  }
+
+  @Get(':id')
+  @ApiOperation({ summary: 'Find a user by ID' })
+  // 5. Document URL parameters explicitly
+  @ApiParam({ 
+    name: 'id', 
+    type: 'string', 
+    description: 'The UUID of the user',
+    example: '123e4567-e89b-12d3-a456-426614174000'
+  })
+  @ApiResponse({ status: 200, type: UserResponseDto })
+  @ApiResponse({ status: 404, description: 'User not found.' })
+  findOne(@Param('id') id: string) {
+    return 'Finds user';
+  }
+}
+```
+
+## Best Practices
+- **Use the CLI Plugin (Seriously!)**: If you enable `@nestjs/swagger/plugin` in your `nest-cli.json`, you do **not** need to write `@ApiProperty()` for basic types (strings, numbers, booleans) or `@ApiResponse({ type: MyDto })`. The compiler infers them automatically. Only use these decorators when you need to add specific text descriptions or examples.
+- **Provide Rich Examples**: A Swagger document with realistic `example: 'john@example.com'` properties is infinitely more useful to a frontend developer than one that just says `type: string`. Provide examples for every complex property.

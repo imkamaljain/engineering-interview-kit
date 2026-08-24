@@ -1,0 +1,109 @@
+---
+title: "Mocking Providers"
+description: "Mocking Providers in NestJS"
+importance: "HIGH"
+revisionTime: 14
+category: "NestJS"
+subcategory: "Testing"
+order: 2320
+---
+
+*Mocking Providers is the NestJS-specific technique of replacing registered dependencies in the Inversion of Control (IoC) container with fake implementations during tests, utilizing `TestingModule`.*
+
+## Overview
+While you can manually instantiate classes and pass mocks into their constructors (as shown in standard dependency mocking), NestJS provides a powerful `TestingModule` that mimics the real application context.
+
+When testing a Controller that requires a Service, you don't instantiate the Controller with `new Controller(new Service())`. Instead, you ask the `TestingModule` to compile the module, but you intercept the Dependency Injection process to substitute the real `Service` with a mock object.
+
+## Key Concepts
+- **Custom Providers (`useValue`, `useFactory`)**: NestJS allows you to override how a provider is instantiated. For testing, we almost exclusively use `{ provide: SomeService, useValue: mockObject }`.
+- **`overrideProvider()`**: A method used during E2E or Integration testing to forcefully replace a provider deep within the module tree, even if you didn't explicitly import it in the test module.
+
+## Code Examples
+
+### 1. Mocking a Provider in a Unit Test
+When unit testing a Controller, you provide the Controller normally, but you provide a *mock* of the Service it depends on.
+
+```typescript
+import { Test, TestingModule } from '@nestjs/testing';
+import { UsersController } from './users.controller';
+import { UsersService } from './users.service';
+
+describe('UsersController', () => {
+  let controller: UsersController;
+  let usersService: UsersService; // Type is the real service, but the instance will be a mock
+
+  // 1. Create the mock object
+  const mockUsersService = {
+    findAll: jest.fn().mockResolvedValue(['Alice', 'Bob']),
+    create: jest.fn(),
+  };
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      controllers: [UsersController],
+      providers: [
+        // 2. Intercept the DI container. 
+        // Whenever someone asks for 'UsersService', give them 'mockUsersService' instead.
+        {
+          provide: UsersService,
+          useValue: mockUsersService, 
+        },
+      ],
+    }).compile();
+
+    // 3. Retrieve the instances from the compiled module
+    controller = module.get<UsersController>(UsersController);
+    
+    // We can also retrieve the mock back from the container if needed
+    usersService = module.get<UsersService>(UsersService); 
+  });
+
+  it('should return an array of users', async () => {
+    const result = await controller.getAllUsers();
+    
+    expect(result).toEqual(['Alice', 'Bob']);
+    expect(mockUsersService.findAll).toHaveBeenCalled();
+  });
+});
+```
+
+### 2. Overriding Providers in E2E Tests
+If you are bootstrapping the entire `AppModule` for an E2E test, you can't easily swap out providers using `useValue` because `AppModule` already defines the real providers. 
+
+Instead, you use `overrideProvider()`. This is incredibly useful for mocking external APIs (like a Payment Gateway) during E2E tests, while leaving the database and controllers real.
+
+```typescript
+// app.e2e-spec.ts
+import { Test, TestingModule } from '@nestjs/testing';
+import { AppModule } from './../src/app.module';
+import { StripePaymentService } from './payment/stripe.service';
+
+describe('AppController (e2e)', () => {
+  let app;
+  
+  const mockStripeService = {
+    chargeCreditCard: jest.fn().mockResolvedValue({ success: true, transactionId: 'txn_123' }),
+  };
+
+  beforeAll(async () => {
+    const moduleFixture: TestingModule = await Test.createTestingModule({
+      imports: [AppModule], // Imports the entire real application
+    })
+      // Intercept the specific provider deep in the dependency tree
+      .overrideProvider(StripePaymentService)
+      .useValue(mockStripeService) // Replace it with the mock!
+      .compile();
+
+    app = moduleFixture.createNestApplication();
+    await app.init();
+  });
+
+  // Now, when the test runs, it hits the real database, but fake Stripe.
+});
+```
+
+## Best Practices
+- **`@golevelup/ts-jest` for Deep Mocking**: Manually typing out `{ findOne: jest.fn(), create: jest.fn() }` gets tedious for large classes. The community standard is to use the `@golevelup/ts-jest` package, which provides a `createMock<T>()` function. It automatically generates a deeply-nested mock object with `jest.fn()` for every method on your real class, saving massive amounts of boilerplate.
+  - Example: `useValue: createMock<UsersService>()`
+- **Don't Mock Standard Libraries**: You shouldn't mock built-in Node.js modules (like `fs` or `path`) or external utility libraries (like `lodash`) using DI overrides. Only mock architectural dependencies (Services, Repositories).

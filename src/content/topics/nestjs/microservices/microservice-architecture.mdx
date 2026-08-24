@@ -1,0 +1,64 @@
+---
+title: "Microservice Architecture"
+description: "Microservice Architecture in NestJS"
+importance: "MEDIUM"
+revisionTime: 13
+category: "NestJS"
+subcategory: "Microservices"
+order: 1780
+---
+
+*Microservice Architecture is a design pattern where an application is structured as a collection of loosely coupled, independently deployable services, usually organized around specific business capabilities.*
+
+## Overview
+When a standard monolithic NestJS application grows too large, teams often struggle with slow CI/CD pipelines, merge conflicts, and the inability to scale specific parts of the app independently. 
+
+Microservice architecture solves this by breaking the monolith into smaller NestJS apps. For example, instead of one `AppModule` with a `UsersModule` and an `OrdersModule`, you create two entirely separate NestJS projects: a `Users Service` and an `Orders Service`. 
+
+## Key Concepts
+- **Independent Scaling**: If the `Orders Service` is under heavy load during Black Friday, you can deploy 10 instances of it without wasting resources scaling the `Users Service`.
+- **Fault Isolation**: If the `Orders Service` crashes due to a memory leak, the `Users Service` stays online, allowing users to still log in and view their profiles.
+- **Network Boundaries**: In a monolith, services communicate via fast, in-memory function calls. In microservices, they communicate over a network (TCP, Kafka, HTTP), which introduces latency, serialization overhead, and the possibility of network failures.
+
+## Architectural Patterns with NestJS
+
+### 1. The API Gateway Pattern
+Frontend applications shouldn't need to know the IP addresses of 20 different microservices. Instead, they talk to a single API Gateway.
+
+```
+[ Frontend (React) ] 
+       | (HTTP POST /checkout)
+       v
+[ API Gateway (NestJS HTTP App) ]
+       | 
+       | (Redis / TCP Message: 'process_order')
+       v
+[ Orders Microservice (NestJS) ] 
+       | (Kafka Event: 'order_created')
+       v
+[ Billing Microservice (NestJS) ]
+```
+The API Gateway handles authentication, rate limiting, and routing. It translates the incoming REST/GraphQL request into a microservice message.
+
+### 2. The Monorepo Approach
+Managing 20 different Git repositories for 20 microservices is painful. NestJS provides native support for Monorepos using the Nest CLI.
+
+```bash
+# Create a standard NestJS app (acting as the Gateway)
+nest new my-monorepo
+
+cd my-monorepo
+
+# Generate a new microservice inside the 'apps' folder
+nest generate app orders-service
+nest generate app billing-service
+
+# Generate a shared library for DTOs and Interfaces
+nest generate library shared-types
+```
+This structure allows you to run `nest start orders-service` and share the `shared-types` library across all microservices without publishing it to NPM.
+
+## Best Practices
+- **Don't Start with Microservices**: Microservices solve organizational and scaling problems, but they introduce massive operational complexity (distributed tracing, eventual consistency, complex deployments). Always start with a well-structured Monolith. Only split it into microservices when the Monolith causes tangible pain.
+- **Database per Service**: A true microservice architecture requires that each microservice owns its own database. The `Orders Service` should NEVER connect directly to the `Users` database. If it needs user data, it must ask the `Users Service` for it. Sharing a database defeats the purpose of microservices (loose coupling).
+- **Embrace Eventual Consistency**: Because microservices don't share a database, you cannot use SQL Transactions across them (e.g., you can't rollback the `Users` DB if the `Orders` DB fails). You must design your system using patterns like Saga or Outbox to handle distributed transactions.

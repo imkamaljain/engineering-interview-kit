@@ -1,0 +1,101 @@
+---
+title: "Code-first vs Schema-first"
+description: "Code-first vs Schema-first in NestJS"
+importance: "HIGH"
+revisionTime: 10
+category: "NestJS"
+subcategory: "GraphQL"
+order: 1640
+---
+
+*NestJS offers two distinct ways to build GraphQL applications: Code-First (generating the schema from TypeScript classes) and Schema-First (generating TypeScript interfaces from a manually written GraphQL schema).*
+
+## Overview
+Every GraphQL API requires a Schema Definition Language (SDL) file (usually `.graphql` or `.gql`). This file is the source of truth for your API. The debate is: *who writes this file?* You, or the machine?
+
+In **Schema-First**, you write the `.graphql` file by hand. NestJS reads it and generates TypeScript interfaces for you to implement.
+In **Code-First**, you write TypeScript classes with decorators (`@ObjectType()`, `@Field()`). NestJS reads the decorators and generates the `.graphql` file for you.
+
+## Key Concepts
+- **Schema-First**: Top-down approach. You define the contract (Schema) first, then write code to fulfill it.
+- **Code-First**: Bottom-up approach. You write code (Decorators) first, and the contract (Schema) is generated as an artifact.
+- **AST (Abstract Syntax Tree)**: The internal representation that NestJS uses to parse your decorators in the Code-First approach.
+
+## Code Examples
+
+### 1. Schema-First Approach
+You must manually write the `.graphql` file.
+
+```graphql
+# src/cats/cats.graphql
+type Cat {
+  id: Int!
+  name: String!
+  age: Int
+}
+
+type Query {
+  cats: [Cat]!
+  cat(id: ID!): Cat
+}
+```
+
+Then, you configure `AppModule` to read these files and generate TypeScript definitions.
+
+```typescript
+// app.module.ts
+GraphQLModule.forRoot<ApolloDriverConfig>({
+  driver: ApolloDriver,
+  // Tell NestJS where your handwritten schemas are
+  typePaths: ['./**/*.graphql'], 
+  
+  // Tell NestJS to auto-generate TS interfaces based on those schemas
+  definitions: {
+    path: join(process.cwd(), 'src/graphql.ts'),
+    outputAs: 'class', // generate classes instead of interfaces
+  },
+})
+```
+
+You then write your Resolver to implement the generated types.
+
+### 2. Code-First Approach (Recommended by NestJS)
+You do not write a `.graphql` file. Instead, you write TypeScript classes.
+
+```typescript
+// src/cats/models/cat.model.ts
+import { Field, Int, ObjectType } from '@nestjs/graphql';
+
+// Tell NestJS this class represents a GraphQL 'type'
+@ObjectType()
+export class Cat {
+  
+  // The ! implies it is required (non-nullable in GraphQL)
+  @Field(type => Int)
+  id: number;
+
+  @Field()
+  name: string;
+
+  // { nullable: true } means this field can be null
+  @Field(type => Int, { nullable: true })
+  age?: number;
+}
+```
+
+You configure `AppModule` to generate the schema file automatically.
+
+```typescript
+// app.module.ts
+GraphQLModule.forRoot<ApolloDriverConfig>({
+  driver: ApolloDriver,
+  // NestJS will read your @ObjectType classes and create this file on startup
+  autoSchemaFile: join(process.cwd(), 'src/schema.gql'),
+})
+```
+
+NestJS will automatically generate the exact same `.graphql` file shown in Example 1.
+
+## Best Practices
+- **Prefer Code-First**: While both are fully supported, the NestJS community strongly prefers the **Code-First** approach. Why? Because you only have one source of truth: your TypeScript classes. In Schema-First, you often end up with duplicate mental models (maintaining a `.graphql` file and a TypeORM Entity file). With Code-First, you can sometimes apply both `@Entity()` (TypeORM) and `@ObjectType()` (GraphQL) to the exact same class, reducing boilerplate.
+- **Commit the Auto-Generated Schema**: If you use Code-First, you MUST commit the auto-generated `schema.gql` file to your Git repository. This allows frontend developers to see exactly how the API changed in a Pull Request, and allows CI/CD pipelines to run schema-validation tools (like GraphQL Inspector) to check for breaking changes.

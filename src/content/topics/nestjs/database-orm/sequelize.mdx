@@ -1,0 +1,126 @@
+---
+title: "Sequelize"
+description: "Sequelize in NestJS"
+importance: "MEDIUM"
+revisionTime: 13
+category: "NestJS"
+subcategory: "Database & ORM"
+order: 1230
+---
+
+*Sequelize is a mature, Promise-based Node.js ORM for Postgres, MySQL, MariaDB, SQLite, and Microsoft SQL Server. NestJS provides the `@nestjs/sequelize` package for integration.*
+
+## Overview
+Before TypeORM gained massive popularity, Sequelize was the undisputed king of Node.js ORMs. It is heavily battle-tested. 
+
+While it wasn't originally built with TypeScript in mind, modern versions (v6+) and the companion library `sequelize-typescript` allow you to use decorators to define your models, making it feel very similar to TypeORM within a NestJS application.
+
+## Key Concepts
+- **Models**: In Sequelize, a Model is a class that extends `Model` from `sequelize-typescript` and represents a database table.
+- **The Active Record Pattern**: Unlike TypeORM, which heavily pushes the Repository pattern in NestJS, Sequelize inherently favors the Active Record pattern (where the Model itself contains the methods to save, find, and delete). However, NestJS still wraps these in injectable providers.
+
+## Code Examples
+
+### 1. Defining a Sequelize Model
+Notice the similarity to TypeORM, but the decorators come from `sequelize-typescript`.
+
+```typescript
+// user.model.ts
+import { Column, Model, Table, DataType, Default } from 'sequelize-typescript';
+
+// Explicitly name the table if it differs from the class name
+@Table({ tableName: 'users', timestamps: true }) 
+export class User extends Model {
+  // Sequelize automatically adds an 'id' primary key by default!
+  // You only need to define it if you want to override its behavior.
+
+  @Column({
+    type: DataType.STRING,
+    allowNull: false,
+  })
+  firstName: string;
+
+  @Column(DataType.STRING) // Shorthand if no other options are needed
+  lastName: string;
+
+  @Default(true)
+  @Column(DataType.BOOLEAN)
+  isActive: boolean;
+}
+```
+
+### 2. Module Registration
+You must register the global connection and the feature models.
+
+```typescript
+// app.module.ts
+import { SequelizeModule } from '@nestjs/sequelize';
+import { User } from './users/user.model';
+
+@Module({
+  imports: [
+    SequelizeModule.forRoot({
+      dialect: 'mysql', // or 'postgres', 'sqlite', etc.
+      host: 'localhost',
+      port: 3306,
+      username: 'root',
+      password: 'password',
+      database: 'test',
+      models: [User], // Register all models here
+      autoLoadModels: true, // Automatically loads models registered in forFeature()
+      synchronize: true, // DO NOT USE IN PRODUCTION
+    }),
+    UsersModule,
+  ],
+})
+export class AppModule {}
+
+// users.module.ts
+@Module({
+  imports: [SequelizeModule.forFeature([User])],
+  providers: [UsersService],
+})
+export class UsersModule {}
+```
+
+### 3. Injecting and Using the Model
+You inject the Model directly into your service.
+
+```typescript
+// users.service.ts
+import { Injectable } from '@nestjs/common';
+import { InjectModel } from '@nestjs/sequelize';
+import { User } from './user.model';
+
+@Injectable()
+export class UsersService {
+  constructor(
+    // We inject the Model class, which provides the static methods
+    @InjectModel(User)
+    private userModel: typeof User,
+  ) {}
+
+  async findAll(): Promise<User[]> {
+    // Model.findAll() is a built-in Sequelize method
+    return this.userModel.findAll();
+  }
+
+  async findOne(id: string): Promise<User> {
+    return this.userModel.findOne({
+      where: {
+        id,
+      },
+    });
+  }
+
+  async remove(id: string): Promise<void> {
+    const user = await this.findOne(id);
+    // user.destroy() is an instance method on the returned object!
+    await user.destroy(); 
+  }
+}
+```
+
+## Best Practices
+- **TypeORM vs Sequelize**: If you are starting a brand new NestJS project today, TypeORM or Prisma are generally recommended over Sequelize because their TypeScript support is native and superior. Choose Sequelize if you are migrating a legacy Node.js app to NestJS and already have hundreds of Sequelize models defined.
+- **Transactions**: Sequelize handles transactions differently than TypeORM. You must manually pass the `transaction` object into every query method (e.g., `this.userModel.create(data, { transaction })`), making transaction management slightly more verbose.

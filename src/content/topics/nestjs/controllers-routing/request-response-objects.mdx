@@ -1,0 +1,82 @@
+---
+title: "Request & Response Objects"
+description: "Request & Response Objects in NestJS"
+importance: "HIGH"
+revisionTime: 9
+category: "NestJS"
+subcategory: "Controllers & Routing"
+order: 350
+---
+
+*Nest provides access to the underlying platform's (Express or Fastify) Request and Response objects.*
+
+## Overview
+By default, NestJS handles requests and responses for you. When you return a value from a controller, Nest serializes it to JSON and sends a `200 OK`.
+
+However, sometimes you need granular control over the raw HTTP request or you need to manually craft the HTTP response (e.g., streaming a file, setting cookies). For this, Nest provides the `@Req()` and `@Res()` decorators.
+
+## Key Concepts
+- **`@Req()` / `@Request()`**: Injects the raw request object. If you are using Express (the default), this is the `express.Request` object.
+- **`@Res()` / `@Response()`**: Injects the raw response object (e.g., `express.Response`).
+- **passthrough: true**: A critical option for `@Res()` if you want to modify the response (like adding a header) but still want Nest to handle the return value serialization.
+
+## Code Examples
+
+### Accessing the Raw Request
+Useful if you need to read obscure headers or raw IP data.
+
+```typescript
+import { Controller, Get, Req } from '@nestjs/common';
+import { Request } from 'express';
+
+@Controller('cats')
+export class CatsController {
+  @Get()
+  findAll(@Req() request: Request): string {
+    console.log(request.ip);
+    console.log(request.headers['user-agent']);
+    return 'This action returns all cats';
+  }
+}
+```
+
+### Manual Response Handling (Library-Specific Mode)
+When you inject `@Res()`, Nest assumes you want to take over response handling entirely. **You must call `res.send()` or `res.json()`, otherwise the request will hang indefinitely.**
+
+```typescript
+import { Controller, Get, Res, HttpStatus } from '@nestjs/common';
+import { Response } from 'express';
+
+@Controller('cats')
+export class CatsController {
+  @Get()
+  findAll(@Res() res: Response) {
+    // We are now responsible for sending the response
+    res.status(HttpStatus.OK).json({ data: [] });
+  }
+}
+```
+
+### The `passthrough` Option (Best of Both Worlds)
+What if you just want to set a cookie, but you still want Nest to handle the return value? Use `passthrough: true`.
+
+```typescript
+import { Controller, Get, Res } from '@nestjs/common';
+import { Response } from 'express';
+
+@Controller('auth')
+export class AuthController {
+  @Get('login')
+  login(@Res({ passthrough: true }) res: Response) {
+    // We can set a cookie manually
+    res.cookie('auth_token', '123456');
+    
+    // And Nest will still handle this return value correctly!
+    return { success: true };
+  }
+}
+```
+
+## Best Practices
+- **Avoid `@Req()` and `@Res()` if possible**: Using these ties your application to the underlying HTTP platform (usually Express). If you ever want to switch to Fastify for performance reasons, your code will break. Use Nest's built-in decorators (`@Headers()`, `@Ip()`, `@Session()`) instead.
+- **Use `passthrough: true`**: If you absolutely must use `@Res()` to set a header or cookie, always use `{ passthrough: true }`. Manually writing `res.json()` drops Nest's powerful Interceptors and automatic serialization.

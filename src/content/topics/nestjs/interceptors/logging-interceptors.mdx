@@ -1,0 +1,89 @@
+---
+title: "Logging Interceptors"
+description: "Logging Interceptors in NestJS"
+importance: "MEDIUM"
+revisionTime: 8
+category: "NestJS"
+subcategory: "Interceptors"
+order: 830
+---
+
+*Logging Interceptors are one of the most common and practical uses of the Interceptor pattern, allowing you to record request details and execution times without polluting your controller logic.*
+
+## Overview
+Every robust API needs logging to monitor performance and debug issues. You typically want to log:
+1. When a request arrives.
+2. What the request was (URL, User, IP).
+3. How long it took to process.
+
+Placing `console.log()` statements inside every controller method violates the DRY (Don't Repeat Yourself) principle. A global logging interceptor handles this elegantly.
+
+## Key Concepts
+- **`tap()` Operator**: Because logging is a "side-effect" (it doesn't change the response data), we use the RxJS `tap()` operator. `tap()` executes logic but transparently passes the data stream through untouched.
+- **Timing**: We capture the start time *before* `next.handle()`, and calculate the duration *inside* the `tap()` operator.
+
+## Code Examples
+
+### A Comprehensive Logging Interceptor
+This interceptor logs the HTTP method, the URL, the user (if authenticated), and the total execution time.
+
+```typescript
+import { Injectable, NestInterceptor, ExecutionContext, CallHandler, Logger } from '@nestjs/common';
+import { Observable } from 'rxjs';
+import { tap } from 'rxjs/operators';
+
+@Injectable()
+export class LoggingInterceptor implements NestInterceptor {
+  // Use Nest's built-in Logger class instead of console.log
+  private readonly logger = new Logger(LoggingInterceptor.name);
+
+  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+    const ctx = context.switchToHttp();
+    const request = ctx.getRequest();
+    
+    const method = request.method;
+    const url = request.url;
+    // Safely get the user ID if an AuthGuard has already populated it
+    const userId = request.user?.id || 'Anonymous';
+    
+    const now = Date.now();
+
+    this.logger.log(`[REQ] ${method} ${url} - User: ${userId}`);
+
+    return next
+      .handle()
+      .pipe(
+        tap(() => {
+          const delay = Date.now() - now;
+          this.logger.log(`[RES] ${method} ${url} - User: ${userId} - ${delay}ms`);
+        }),
+      );
+  }
+}
+```
+
+### Applying it Globally
+To ensure every request is logged, bind it globally in your `main.ts`.
+
+```typescript
+// main.ts
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from './app.module';
+import { LoggingInterceptor } from './interceptors/logging.interceptor';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+  
+  // Apply globally!
+  app.useGlobalInterceptors(new LoggingInterceptor());
+  
+  await app.listen(3000);
+}
+bootstrap();
+```
+
+## Best Practices
+- **Middleware vs. Interceptor for Logging**: 
+  - Use **Middleware** if you need to log requests *before* Authentication/Guards execute (e.g., logging every single hit, even unauthorized ones).
+  - Use **Interceptors** if you want to log the *User ID* (which is only available after Guards run) or if you want to log the execution time of the *Controller specifically*.
+- **Avoid Logging Sensitive Data**: Never log passwords, credit card numbers, or full authorization tokens. Be very careful if you choose to log `request.body`.

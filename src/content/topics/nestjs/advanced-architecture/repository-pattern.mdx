@@ -1,0 +1,125 @@
+---
+title: "Repository Pattern"
+description: "Repository Pattern in NestJS"
+importance: "LOW"
+revisionTime: 8
+category: "NestJS"
+subcategory: "Advanced Architecture"
+order: 2730
+---
+
+*The Repository Pattern abstracts the data access layer, providing a collection-like interface for accessing domain objects. It isolates the domain objects from the details of the database access code.*
+
+## Overview
+If your `UserService` contains raw SQL queries or direct calls to an ORM like TypeORM's `createQueryBuilder()`, your business logic is tightly coupled to your database technology.
+
+The Repository Pattern sits between the business logic (Service) and the database (ORM). To the Service, the Repository looks like a simple array of objects (`repository.save(user)`, `repository.findById(id)`). The Repository handles the dirty work of translating those commands into SQL, MongoDB queries, or REST API calls.
+
+## Key Concepts
+- **Abstraction**: The Service should not know if the data is coming from Postgres, MongoDB, or an external API. It just asks the Repository for the data.
+- **Collection-Like Interface**: A repository typically implements methods like `save`, `remove`, `findById`, and `findAll`.
+- **Domain Mapping**: In strict architectures (like Clean Architecture), the Repository is responsible for taking raw Database Entities and mapping them into pure Domain Entities before returning them to the Service.
+
+## Code Examples
+
+### 1. The Anti-Pattern (Leaking ORM details)
+Here, the Service knows too much about TypeORM.
+
+```typescript
+@Injectable()
+export class BadUserService {
+  constructor(
+    // Injecting the TypeORM repository directly
+    @InjectRepository(UserEntity)
+    private readonly ormRepo: Repository<UserEntity>,
+  ) {}
+
+  async findActiveUsers() {
+    // The Service is writing database-specific query builder code!
+    return this.ormRepo.createQueryBuilder('user')
+      .where('user.isActive = :active', { active: true })
+      .andWhere('user.lastLogin > :date', { date: new Date() })
+      .getMany();
+  }
+}
+```
+
+### 2. The Abstraction
+First, define an interface (a Port) that the Service will use.
+
+```typescript
+// user-repository.interface.ts
+export const IUserRepository = Symbol('IUserRepository');
+
+export interface IUserRepository {
+  findById(id: string): Promise<User>;
+  findActiveUsersSince(date: Date): Promise<User[]>;
+  save(user: User): Promise<void>;
+}
+```
+
+### 3. The Custom Repository Implementation
+Now, implement the interface using TypeORM. This class encapsulates all the nasty query builder logic.
+
+```typescript
+// typeorm-user.repository.ts
+import { Injectable } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { IUserRepository } from './user-repository.interface';
+import { UserEntity } from './user.entity';
+
+@Injectable()
+export class TypeOrmUserRepository implements IUserRepository {
+  constructor(
+    @InjectRepository(UserEntity)
+    private readonly ormRepo: Repository<UserEntity>,
+  ) {}
+
+  async findById(id: string): Promise<User> {
+    return this.ormRepo.findOneBy({ id });
+  }
+
+  async findActiveUsersSince(date: Date): Promise<User[]> {
+    // All the nasty SQL logic is hidden inside this repository class!
+    return this.ormRepo.createQueryBuilder('user')
+      .where('user.isActive = :active', { active: true })
+      .andWhere('user.lastLogin > :date', { date })
+      .getMany();
+  }
+
+  async save(user: User): Promise<void> {
+    await this.ormRepo.save(user);
+  }
+}
+```
+
+### 4. The Clean Service
+The Service now injects the Interface, not the TypeORM class.
+
+```typescript
+// user.service.ts
+import { Injectable, Inject } from '@nestjs/common';
+import { IUserRepository } from './user-repository.interface';
+
+@Injectable()
+export class UserService {
+  constructor(
+    @Inject(IUserRepository)
+    private readonly userRepository: IUserRepository,
+  ) {}
+
+  async notifyActiveUsers() {
+    // The Service code is clean, readable, and independent of TypeORM!
+    const users = await this.userRepository.findActiveUsersSince(new Date());
+    
+    for (const user of users) {
+      // send notification...
+    }
+  }
+}
+```
+
+## Best Practices
+- **Don't abstract the ORM too much**: TypeORM already implements the Data Mapper pattern and provides a generic `Repository` class. If your application is a simple CRUD app, wrapping TypeORM's `Repository` inside a custom Repository class is over-engineering. Use the Custom Repository pattern only when your queries are complex and you want to hide that complexity from your Services.
+- **Provide the Implementation**: Remember to tell NestJS to provide your custom repository in the module using a custom provider: `{ provide: IUserRepository, useClass: TypeOrmUserRepository }`.

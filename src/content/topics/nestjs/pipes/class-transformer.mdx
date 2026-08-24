@@ -1,0 +1,86 @@
+---
+title: "class-transformer"
+description: "class-transformer in NestJS"
+importance: "MEDIUM"
+revisionTime: 14
+category: "NestJS"
+subcategory: "Pipes"
+order: 700
+---
+
+*`class-transformer` is a library that allows you to transform plain JavaScript objects (like the JSON payload from an HTTP request) into instances of classes, and vice versa.*
+
+## Overview
+When data comes in over HTTP, it is parsed by Express (or Fastify) into a plain JavaScript object literal. Even if you type hint your Controller method parameter as `@Body() dto: CreateUserDto`, the `dto` variable is *not* an actual instance of the `CreateUserDto` class; it's just a plain object `{"name": "Alice"}`.
+
+This means you cannot call methods on it, and `class-validator` cannot reliably validate nested objects on it. `class-transformer` bridges this gap by automatically converting the plain JSON into a real class instance.
+
+## Key Concepts
+- **`plainToInstance`**: The core function that takes a plain object and a class constructor, and returns a real instance of that class. (NestJS's `ValidationPipe(transform: true)` does this for you automatically).
+- **`@Type()`**: A decorator required when your class has properties that are *other* classes (nested objects or arrays of objects). Because TypeScript metadata is lost at runtime, you have to explicitly tell `class-transformer` what type to instantiate.
+- **`@Exclude()` and `@Expose()`**: Used to strip sensitive data (like passwords) when transforming an internal class instance back into a plain JSON object to send to the client.
+
+## Code Examples
+
+### The `@Type` Decorator (Crucial for Nested Validation)
+If you have nested objects, `class-transformer` needs to know what class to use for the inner object.
+
+```typescript
+import { ValidateNested, IsString } from 'class-validator';
+import { Type } from 'class-transformer';
+
+class ProfileDto {
+  @IsString()
+  bio: string;
+}
+
+export class CreateUserDto {
+  @IsString()
+  username: string;
+
+  @ValidateNested() // Validates the nested object
+  @Type(() => ProfileDto) // CRITICAL: Tells class-transformer to convert the plain JSON into a ProfileDto instance
+  profile: ProfileDto;
+}
+```
+
+### Auto-Type Conversion in Query Parameters
+Query parameters are always strings (e.g., `?page=5&limit=10`). `class-transformer` can automatically convert them to numbers or booleans if configured properly.
+
+```typescript
+// pagination.dto.ts
+import { IsInt, Min, IsOptional } from 'class-validator';
+import { Type } from 'class-transformer';
+
+export class PaginationQueryDto {
+  @IsOptional()
+  @Type(() => Number) // Forces the string "5" to become the number 5
+  @IsInt() // Now this validator will pass!
+  @Min(1)
+  page?: number;
+}
+```
+*(Note: If you enable `enableImplicitConversion: true` in your global `ValidationPipe` settings, you don't even need the `@Type(() => Number)` decorator!)*
+
+### Excluding Sensitive Data (Serialization)
+You can use `class-transformer` on the way *out* of your API (usually combined with Nest's `ClassSerializerInterceptor`).
+
+```typescript
+import { Exclude } from 'class-transformer';
+
+export class UserEntity {
+  id: number;
+  username: string;
+
+  @Exclude() // This property will be removed when converted to JSON
+  passwordHash: string;
+
+  constructor(partial: Partial<UserEntity>) {
+    Object.assign(this, partial);
+  }
+}
+```
+
+## Best Practices
+- **Enable Global Transformation**: In `main.ts`, always configure your `ValidationPipe` with `{ transform: true }`. This enables `class-transformer` globally, meaning your DTOs in controllers are *actual* class instances, not plain objects.
+- **Implicit Conversion**: Consider enabling `enableImplicitConversion: true` in your `ValidationPipe` options. This allows `class-transformer` to guess the type (Number, Boolean) based on the TypeScript metadata, saving you from writing `@Type(() => Number)` on every query parameter DTO.

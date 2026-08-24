@@ -1,0 +1,92 @@
+---
+title: "Custom Exception Filters"
+description: "Custom Exception Filters in NestJS"
+importance: "LOW"
+revisionTime: 6
+category: "NestJS"
+subcategory: "Exception Handling"
+order: 930
+---
+
+*Custom Exception Filters give you total control over the exception layer, allowing you to catch specific errors and dictate exactly how they are transformed into HTTP responses.*
+
+## Overview
+While `AllExceptionsFilter` is great as a global safety net, you often need highly specific logic for certain types of errors. 
+
+For example, if you are building an API that uploads files, you might want to catch `MulterError` (thrown when a file is too large) and return a very specific, localized error message to the user, rather than a generic 500 error. A custom filter bound specifically to `MulterError` is the perfect solution.
+
+## Key Concepts
+- **Targeted Catching**: You specify exactly which exception class (or classes) the filter should handle by passing them into the `@Catch()` decorator.
+- **Multiple Classes**: You can pass a comma-separated list to the decorator to handle multiple error types with one filter (e.g., `@Catch(HttpException, RpcException)`).
+- **Execution Context**: Filters have access to the `ArgumentsHost`, meaning they can look at the Request (to see what URL caused the error) and modify the Response (to set headers or status codes).
+
+## Code Examples
+
+### A Domain-Specific Filter (Prisma ORM)
+Prisma throws very specific error objects. Let's catch a Prisma `P2002` error (Unique constraint failed) and turn it into a 409 Conflict.
+
+```typescript
+import { ExceptionFilter, Catch, ArgumentsHost, HttpStatus } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
+import { Response } from 'express';
+
+// 1. Tell Nest to only trigger this filter when a PrismaClientKnownRequestError is thrown
+@Catch(Prisma.PrismaClientKnownRequestError)
+export class PrismaClientExceptionFilter implements ExceptionFilter {
+  
+  catch(exception: Prisma.PrismaClientKnownRequestError, host: ArgumentsHost) {
+    const ctx = host.switchToHttp();
+    const response = ctx.getResponse<Response>();
+    
+    // 2. Check the specific Prisma error code
+    switch (exception.code) {
+      case 'P2002': { // Unique constraint violation
+        const status = HttpStatus.CONFLICT;
+        
+        // Extract the field that caused the conflict (e.g., 'email')
+        const target = exception.meta?.target as string[];
+        const field = target ? target.join(', ') : 'field';
+
+        return response.status(status).json({
+          statusCode: status,
+          message: `A record with this ${field} already exists.`,
+          error: 'Conflict'
+        });
+      }
+      case 'P2025': { // Record not found
+        return response.status(HttpStatus.NOT_FOUND).json({
+          statusCode: HttpStatus.NOT_FOUND,
+          message: 'The requested record could not be found.'
+        });
+      }
+      default:
+        // Unhandled Prisma errors become 500s
+        return response.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
+          statusCode: HttpStatus.INTERNAL_SERVER_ERROR,
+          message: 'Database error.'
+        });
+    }
+  }
+}
+```
+
+### Applying the Custom Filter
+You can apply it locally to a controller that uses Prisma, or globally if Prisma is used everywhere.
+
+```typescript
+@Controller('users')
+@UseFilters(PrismaClientExceptionFilter)
+export class UsersController {
+  constructor(private prisma: PrismaService) {}
+
+  @Post()
+  async create() {
+    // If this throws a unique constraint error, our filter catches it!
+    return this.prisma.user.create({ data: { email: 'duplicate@test.com' }});
+  }
+}
+```
+
+## Best Practices
+- **Don't Overuse**: Don't create a custom filter if throwing a standard `new BadRequestException('msg')` inside the controller works just fine. Custom filters are best used for translating 3rd-party library errors (like database errors, file upload errors, or Stripe billing errors) into HTTP responses.
+- **Filter Precedence**: If you have a local `@Catch(QueryFailedError)` on a method, and a global `@Catch()` filter, the local one will execute if a `QueryFailedError` is thrown. Nest prioritizes the most specific filter in scope.

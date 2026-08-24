@@ -1,0 +1,70 @@
+---
+title: "Dependency Injection"
+description: "Dependency Injection in NestJS"
+importance: "HIGH"
+revisionTime: 13
+category: "NestJS"
+subcategory: "Modules & Dependency Injection"
+order: 200
+---
+
+*Dependency Injection (DI) is a core feature of NestJS, managing the instantiation of classes and resolving their dependencies automatically.*
+
+## Overview
+While the basics of DI (constructor injection of singleton services) cover 90% of use cases, understanding the advanced features of the NestJS IoC (Inversion of Control) container is critical for building complex, scalable applications and libraries.
+
+Advanced DI features allow you to control injection scopes, deal with circular dependencies, inject plain values, and conditionally instantiate providers.
+
+## Key Concepts
+- **IoC Container**: The registry that holds references to all instantiated providers. When you ask for a dependency, Nest looks here first.
+- **Provider Resolution**: The process Nest goes through to determine exactly *what* to inject when it sees a token in a constructor.
+- **Injection Scopes**: By default, everything is a singleton (instantiated once). You can change this to `REQUEST` (new instance per incoming HTTP request) or `TRANSIENT` (new instance every time it is injected).
+- **Property-based Injection**: Injecting dependencies directly onto class properties instead of through the constructor using `@Inject()`.
+
+## Code Examples
+
+### Changing Injection Scope
+Sometimes a service needs to hold state specific to an individual incoming request (e.g., the currently authenticated user).
+
+```typescript
+import { Injectable, Scope, Inject } from '@nestjs/common';
+import { REQUEST } from '@nestjs/core';
+import { Request } from 'express';
+
+@Injectable({ scope: Scope.REQUEST })
+export class UsersService {
+  // We can inject the raw request object because this service
+  // is now instantiated newly for every single HTTP request
+  constructor(@Inject(REQUEST) private request: Request) {}
+
+  getCurrentUser() {
+    return this.request.user;
+  }
+}
+```
+*Warning: Request-scoped providers bubble up. Any service or controller that injects `UsersService` will ALSO become Request-scoped, which can negatively impact performance.*
+
+### Property-Based Injection
+Useful when a class extends another class, and you don't want to pass dependencies all the way up the `super()` chain.
+
+```typescript
+import { Injectable, Inject } from '@nestjs/common';
+import { LoggingService } from './logging.service';
+
+export class BaseService {
+  @Inject(LoggingService)
+  protected logger: LoggingService;
+}
+
+@Injectable()
+export class SpecificService extends BaseService {
+  // No constructor needed to pass logger up to BaseService!
+  doSomething() {
+    this.logger.log('Did something!');
+  }
+}
+```
+
+## Best Practices
+- **Stick to Singletons**: Use the default `DEFAULT` scope (Singleton) unless you have a very specific reason not to. Singletons are significantly faster and consume less memory.
+- **Avoid Property Injection when possible**: Constructor injection is strictly better for unit testing, as it makes dependencies explicit. If a class requires 10 dependencies in its constructor, it's a code smell that the class is doing too much, not a reason to switch to property injection.

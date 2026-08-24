@@ -1,0 +1,115 @@
+---
+title: "Hexagonal Architecture"
+description: "Hexagonal Architecture in NestJS"
+importance: "LOW"
+revisionTime: 7
+category: "NestJS"
+subcategory: "Advanced Architecture"
+order: 2670
+---
+
+*Hexagonal Architecture (also known as Ports and Adapters) is a design pattern created by Alistair Cockburn. It ensures that an application is equally drivable by users, programs, automated test or batch scripts, and can be developed and tested in isolation from its eventual run-time devices and databases.*
+
+## Overview
+Hexagonal Architecture is functionally very similar to Clean Architecture, but focuses heavily on the concepts of "Ports" and "Adapters". 
+
+Imagine a hexagon. The center is your core domain logic. The edges of the hexagon represent "Ports". 
+- An external system (like an HTTP request) uses an **Adapter** to plug into an **Inbound Port** to drive the application. 
+- The application uses an **Outbound Port** (an interface) to plug into an **Adapter** (like a Postgres database) to drive external systems.
+
+## Key Concepts
+- **Core Domain**: The pure business logic in the center. It has no dependencies on any external framework or technology.
+- **Ports (Interfaces)**: 
+  - *Primary (Inbound) Ports*: How outside things talk to the application (e.g., `IUserService`).
+  - *Secondary (Outbound) Ports*: How the application talks to outside things (e.g., `IUserRepository`).
+- **Adapters (Implementations)**:
+  - *Primary (Inbound) Adapters*: Controllers, GraphQL Resolvers, CLI commands. They adapt external input into something the Primary Port understands.
+  - *Secondary (Outbound) Adapters*: TypeORM repositories, external API clients. They implement the Secondary Ports.
+
+## Code Examples
+
+### 1. The Core Domain & Ports
+Define the pure business logic and the ports it requires.
+
+```typescript
+// domain/user.ts (Entity)
+export class User {
+  constructor(public id: string, public name: string) {}
+}
+
+// ports/outbound/user-repository.port.ts (Secondary Port)
+import { User } from '../../domain/user';
+export const IUserRepository = Symbol('IUserRepository');
+export interface IUserRepository {
+  save(user: User): Promise<void>;
+}
+
+// ports/inbound/user-service.port.ts (Primary Port)
+export const IUserService = Symbol('IUserService');
+export interface IUserService {
+  registerUser(name: string): Promise<User>;
+}
+```
+
+### 2. The Application Service (Implementing the Primary Port)
+The Application Service acts as the glue. It implements the Primary Port and uses the Secondary Port.
+
+```typescript
+// application/services/user.service.ts
+import { Injectable, Inject } from '@nestjs/common';
+import { IUserService } from '../../ports/inbound/user-service.port';
+import { IUserRepository } from '../../ports/outbound/user-repository.port';
+import { User } from '../../domain/user';
+
+@Injectable()
+export class UserService implements IUserService {
+  constructor(
+    // We inject the outbound port (Dependency Inversion!)
+    @Inject(IUserRepository) private readonly userRepository: IUserRepository,
+  ) {}
+
+  async registerUser(name: string): Promise<User> {
+    const user = new User(Date.now().toString(), name);
+    // We don't know WHERE this saves to, we just know it implements the Port
+    await this.userRepository.save(user);
+    return user;
+  }
+}
+```
+
+### 3. The Adapters (The Outer Hexagon)
+Adapters connect the outside world to the ports.
+
+```typescript
+// adapters/inbound/http/user.controller.ts (Primary Adapter)
+import { Controller, Post, Body, Inject } from '@nestjs/common';
+import { IUserService } from '../../../ports/inbound/user-service.port';
+
+@Controller('users')
+export class UserController {
+  // The Controller plugs into the Primary Port
+  constructor(@Inject(IUserService) private readonly userService: IUserService) {}
+
+  @Post()
+  async create(@Body('name') name: string) {
+    return this.userService.registerUser(name);
+  }
+}
+
+// adapters/outbound/database/postgres-user.repository.ts (Secondary Adapter)
+import { Injectable } from '@nestjs/common';
+import { IUserRepository } from '../../../ports/outbound/user-repository.port';
+import { User } from '../../../domain/user';
+
+@Injectable()
+export class PostgresUserRepository implements IUserRepository {
+  async save(user: User): Promise<void> {
+    // Actual TypeORM or Prisma code goes here!
+    console.log(`Saved user ${user.name} to Postgres`);
+  }
+}
+```
+
+## Best Practices
+- **Testing in Isolation**: The greatest strength of Hexagonal Architecture is testability. You can completely test your `UserService` without spinning up a database or an HTTP server. You just write a `MockUserRepository` (Secondary Adapter) and write a direct test script (Primary Adapter).
+- **Directory Structure**: Visually separating your folders into `domain`, `ports`, and `adapters` makes the architecture immediately apparent to new developers joining the team.

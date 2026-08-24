@@ -1,0 +1,124 @@
+---
+title: "Domain-Driven Design"
+description: "Domain-Driven Design in NestJS"
+importance: "LOW"
+revisionTime: 10
+category: "NestJS"
+subcategory: "Advanced Architecture"
+order: 2700
+---
+
+*Domain-Driven Design (DDD) is a software engineering approach that centers the design of the software around the business domain, its rules, and its terminology, rather than focusing purely on technical infrastructure (like databases or APIs).*
+
+## Overview
+DDD is not a framework or a specific folder structure; it's a way of thinking. In complex domains (like Banking, Logistics, or Healthcare), the business rules are the most critical and complex part of the application. 
+
+In a standard CRUD app, an "Order" is just a row in a database table. In a DDD app, an "Order" is a rich Domain Object that enforces business rules (e.g., "An order cannot be shipped if it hasn't been paid"). NestJS, with its strong typing and modularity, provides an excellent environment for building DDD applications.
+
+## Key Concepts
+- **Ubiquitous Language**: The code should use the exact same terminology as the business experts. If the sales team calls it a "Client", your class should be `Client`, not `CustomerAccount`.
+- **Entities**: Objects that have a distinct identity that runs through time and different states (e.g., a `User` with an ID).
+- **Value Objects**: Objects that have no conceptual identity and describe some characteristic of a thing (e.g., an `Address` or `Money`). Two $5 bills are identical and interchangeable.
+- **Aggregates**: A cluster of domain objects that can be treated as a single unit. For example, an `Order` (Aggregate Root) contains `OrderLineItems`. You should only interact with the Line Items *through* the Order.
+- **Repositories**: Interfaces that abstract away the persistence of Aggregates.
+
+## Code Examples
+
+### 1. Value Object
+A Value Object is immutable. If you want to change it, you replace it entirely. It encapsulates validation rules.
+
+```typescript
+// domain/value-objects/money.vo.ts
+export class Money {
+  constructor(
+    public readonly amount: number,
+    public readonly currency: string,
+  ) {
+    if (amount < 0) throw new Error('Money cannot be negative');
+    if (!['USD', 'EUR', 'GBP'].includes(currency)) {
+      throw new Error('Unsupported currency');
+    }
+  }
+
+  // Value objects handle their own logic
+  add(other: Money): Money {
+    if (this.currency !== other.currency) {
+      throw new Error('Cannot add different currencies');
+    }
+    // Returns a NEW immutable object
+    return new Money(this.amount + other.amount, this.currency); 
+  }
+}
+```
+
+### 2. Entity & Aggregate Root
+An Entity has an ID and contains business logic. It is *not* an anemic data container (just getters/setters).
+
+```typescript
+// domain/entities/account.entity.ts
+import { Money } from '../value-objects/money.vo';
+
+export class Account {
+  constructor(
+    public readonly id: string, // Identity
+    private balance: Money,     // Value Object
+    private status: 'ACTIVE' | 'FROZEN',
+  ) {}
+
+  // Business Logic Encapsulated in the Aggregate Root!
+  withdraw(amount: Money): void {
+    if (this.status === 'FROZEN') {
+      throw new Error('Cannot withdraw from a frozen account');
+    }
+    
+    if (amount.currency !== this.balance.currency) {
+      throw new Error('Currency mismatch');
+    }
+
+    if (amount.amount > this.balance.amount) {
+      throw new Error('Insufficient funds');
+    }
+
+    this.balance = new Money(this.balance.amount - amount.amount, this.balance.currency);
+  }
+
+  getBalance(): Money {
+    return this.balance;
+  }
+}
+```
+
+### 3. Application Service (Use Case)
+The Application layer coordinates the infrastructure (Repositories) and the Domain (Aggregates). It does NOT contain business logic itself!
+
+```typescript
+// application/services/withdrawal.service.ts
+import { Injectable, Inject } from '@nestjs/common';
+import { IAccountRepository } from '../../domain/repositories/account.repository.interface';
+import { Money } from '../../domain/value-objects/money.vo';
+
+@Injectable()
+export class WithdrawalService {
+  constructor(
+    @Inject('IAccountRepository') 
+    private readonly repository: IAccountRepository
+  ) {}
+
+  async execute(accountId: string, amountToWithdraw: number): Promise<void> {
+    // 1. Fetch the aggregate from infrastructure
+    const account = await this.repository.findById(accountId);
+    if (!account) throw new Error('Account not found');
+
+    // 2. Execute business logic on the Aggregate
+    const money = new Money(amountToWithdraw, 'USD');
+    account.withdraw(money); // The Account ensures this is a valid operation!
+
+    // 3. Save the state back to infrastructure
+    await this.repository.save(account);
+  }
+}
+```
+
+## Best Practices
+- **Avoid Anemic Domain Models**: A common anti-pattern is creating entities that are just bags of data (only getters and setters) and putting all the `if/else` business logic into the `WithdrawalService`. In DDD, the `WithdrawalService` should be incredibly "dumb", and the `Account` entity should be "smart".
+- **Isolate the Domain**: Your Domain entities (`Account`, `Money`) should have absolute ZERO imports from `@nestjs/common`, `typeorm`, `mongoose`, or any external libraries. They should be pure, easily testable TypeScript code. You map these pure Domain Entities to TypeORM Entities down in the Infrastructure layer.

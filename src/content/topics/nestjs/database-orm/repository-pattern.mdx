@@ -1,0 +1,107 @@
+---
+title: "Repository Pattern"
+description: "Repository Pattern in NestJS"
+importance: "LOW"
+revisionTime: 10
+category: "NestJS"
+subcategory: "Database & ORM"
+order: 1330
+---
+
+*The Repository Pattern is a design pattern that isolates the data access layer (database queries) from the business logic layer (services), providing a collection-like interface for domain objects.*
+
+## Overview
+If you write raw SQL queries directly inside your Controllers or Services, your application becomes tightly coupled to the database. If you decide to switch from PostgreSQL to MongoDB, you have to rewrite your entire application.
+
+The Repository Pattern solves this by creating an abstraction layer. A "Repository" acts like an in-memory collection of objects. Your Service asks the Repository for a `User`; it doesn't care *how* the Repository gets it. NestJS heavily promotes this pattern, and ORMs like TypeORM have it built-in.
+
+## Key Concepts
+- **Separation of Concerns**: Controllers handle HTTP. Services handle Business Logic. Repositories handle Database I/O.
+- **Testability**: Because the service depends on a Repository interface, you can easily swap out the real database repository for a "Mock" repository during unit testing.
+- **The Data Mapper**: The Repository Pattern is the implementation of the Data Mapper architectural pattern (as opposed to Active Record).
+
+## Code Examples
+
+### 1. The Anti-Pattern (Tightly Coupled)
+Here, the service is tightly coupled to the `User` entity's static methods (Active Record). Mocking this for tests is very difficult.
+
+```typescript
+@Injectable()
+export class UsersService {
+  async createUser(email: string) {
+    // Bad: The Service is directly executing database commands
+    const user = new User();
+    user.email = email;
+    return await user.save(); // Active Record pattern
+  }
+}
+```
+
+### 2. The Repository Pattern (Decoupled)
+Here, the service relies on an injected `Repository`.
+
+```typescript
+import { Injectable } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { User } from './user.entity';
+
+@Injectable()
+export class UsersService {
+  constructor(
+    // Good: The Service receives an instance of a Repository via Dependency Injection
+    @InjectRepository(User)
+    private readonly userRepository: Repository<User>,
+  ) {}
+
+  async createUser(email: string) {
+    // The Service asks the Repository to handle the data creation
+    const user = this.userRepository.create({ email });
+    return await this.userRepository.save(user);
+  }
+}
+```
+
+### 3. Mocking the Repository in Tests
+Because we used the pattern, unit testing the service without a real database is trivial.
+
+```typescript
+// users.service.spec.ts
+import { Test } from '@nestjs/testing';
+import { getRepositoryToken } from '@nestjs/typeorm';
+import { UsersService } from './users.service';
+import { User } from './user.entity';
+
+describe('UsersService', () => {
+  let service: UsersService;
+
+  // Create a mock object that implements the Repository methods we need
+  const mockUserRepository = {
+    create: jest.fn().mockImplementation(dto => dto),
+    save: jest.fn().mockImplementation(user => Promise.resolve({ id: 1, ...user })),
+  };
+
+  beforeEach(async () => {
+    const module = await Test.createTestingModule({
+      providers: [
+        UsersService,
+        {
+          // Swap the real repository for our mock repository!
+          provide: getRepositoryToken(User),
+          useValue: mockUserRepository,
+        },
+      ],
+    }).compile();
+
+    service = module.get<UsersService>(UsersService);
+  });
+
+  it('should create a user', async () => {
+    expect(await service.createUser('test@test.com')).toEqual({ id: 1, email: 'test@test.com' });
+  });
+});
+```
+
+## Best Practices
+- **Custom Repositories**: TypeORM generates a generic `Repository<User>` for you. If you have very complex, highly-specific queries (e.g., `findActiveUsersInRadius()`), you can create a Custom Repository class to encapsulate that complex SQL logic, keeping your Service clean.
+- **Don't Leak ORM Details**: A true implementation of the repository pattern means your Service shouldn't know you are using TypeORM. Therefore, you shouldn't pass TypeORM-specific objects (like `QueryRunner`) directly into your Service methods if you can avoid it.

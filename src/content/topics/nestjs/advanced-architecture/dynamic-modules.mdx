@@ -1,0 +1,138 @@
+---
+title: "Dynamic Modules"
+description: "Dynamic Modules in NestJS"
+importance: "HIGH"
+revisionTime: 11
+category: "NestJS"
+subcategory: "Advanced Architecture"
+order: 2770
+---
+
+*Dynamic Modules are a powerful feature in NestJS that allow you to create customizable modules that can accept configuration parameters when they are imported.*
+
+## Overview
+When you use a standard static module (`imports: [UsersModule]`), the module is fully self-contained. The `UsersModule` decides exactly what providers it registers.
+
+But what if you are building a reusable library, like a `DatabaseModule`? The `DatabaseModule` doesn't know what the connection string is. The consuming application needs to pass that information *into* the module. 
+
+Dynamic Modules solve this by exposing static methods (usually named `forRoot`, `forRootAsync`, or `register`) that return a `DynamicModule` object containing providers tailored to the provided configuration.
+
+## Key Concepts
+- **`register()` vs `forRoot()`**: By convention, `register()` is used when you are configuring a dynamic module specific to the calling module. `forRoot()` is used when you are configuring a dynamic module globally for the entire application (like TypeORM or ConfigModule).
+- **Synchronous vs Asynchronous Configuration**: `forRoot` usually accepts a static configuration object. `forRootAsync` accepts a factory function, allowing the module to wait for asynchronous data (like fetching secrets from a vault) before initializing.
+
+## Code Examples
+
+### 1. Creating a Synchronous Dynamic Module
+Let's build a reusable `LoggerModule` that accepts a prefix string.
+
+```typescript
+// logger.module.ts
+import { Module, DynamicModule } from '@nestjs/common';
+import { LoggerService } from './logger.service';
+
+@Module({})
+export class LoggerModule {
+  
+  // The static method returns a DynamicModule object
+  static register(options: { prefix: string }): DynamicModule {
+    return {
+      module: LoggerModule,
+      providers: [
+        // We use a Custom Provider to inject the options!
+        {
+          provide: 'LOGGER_OPTIONS',
+          useValue: options,
+        },
+        LoggerService, // The actual service
+      ],
+      exports: [LoggerService], // Export it so others can use it
+    };
+  }
+}
+```
+
+Now, the service can inject those options:
+```typescript
+// logger.service.ts
+import { Injectable, Inject } from '@nestjs/common';
+
+@Injectable()
+export class LoggerService {
+  constructor(@Inject('LOGGER_OPTIONS') private options: { prefix: string }) {}
+
+  log(message: string) {
+    console.log(`[${this.options.prefix}] ${message}`);
+  }
+}
+```
+
+### 2. Consuming the Dynamic Module
+In your `AppModule`, you call the static method instead of just importing the class.
+
+```typescript
+// app.module.ts
+import { Module } from '@nestjs/common';
+import { LoggerModule } from './logger.module';
+
+@Module({
+  imports: [
+    // We pass configuration INTO the module!
+    LoggerModule.register({ prefix: 'PaymentsAPI' }),
+  ],
+})
+export class AppModule {}
+```
+
+### 3. Asynchronous Dynamic Modules (Advanced)
+What if the prefix needs to come from an environment variable via `ConfigService`? You need an `Async` version of your registration method.
+
+```typescript
+// logger.module.ts
+import { Module, DynamicModule } from '@nestjs/common';
+
+export interface LoggerAsyncOptions {
+  imports?: any[];
+  inject?: any[];
+  useFactory: (...args: any[]) => Promise<{ prefix: string }> | { prefix: string };
+}
+
+@Module({})
+export class LoggerModule {
+  static registerAsync(options: LoggerAsyncOptions): DynamicModule {
+    return {
+      module: LoggerModule,
+      imports: options.imports || [], // Import modules needed by the factory
+      providers: [
+        {
+          provide: 'LOGGER_OPTIONS',
+          useFactory: options.useFactory,
+          inject: options.inject || [],
+        },
+        LoggerService,
+      ],
+      exports: [LoggerService],
+    };
+  }
+}
+```
+
+Consuming the async module:
+```typescript
+@Module({
+  imports: [
+    ConfigModule.forRoot(),
+    LoggerModule.registerAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        prefix: config.get('LOG_PREFIX') || 'Default',
+      }),
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+## Best Practices
+- **Use the Configurable Module Builder**: Writing the `register()` and `registerAsync()` methods manually involves a lot of boilerplate. NestJS v9 introduced the `ConfigurableModuleBuilder` class, which automatically generates these methods and injection tokens for you with full TypeScript safety. Always use it for new Dynamic Modules!

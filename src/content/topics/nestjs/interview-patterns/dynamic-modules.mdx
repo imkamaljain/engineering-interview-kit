@@ -1,0 +1,103 @@
+---
+title: "Dynamic Modules"
+description: "Dynamic Modules in NestJS"
+importance: "LOW"
+revisionTime: 11
+category: "NestJS"
+subcategory: "Interview Patterns"
+order: 2970
+---
+
+*Dynamic Modules allow you to pass configuration parameters into a module when you import it, enabling you to customize the module's providers dynamically at runtime.*
+
+## Overview
+When you use a standard static module (`imports: [UsersModule]`), the module is fully defined and cannot be changed. 
+
+But what if you are writing a reusable `DatabaseModule`? You don't want to hardcode the database URL inside `DatabaseModule`. You want the consumer of the module to pass the URL in. 
+
+You do this by creating a static method on your module class (usually named `register` or `forRoot`) that accepts an options object and returns a `DynamicModule` definition.
+
+## Key Concepts
+- **`register()` vs `forRoot()`**: By convention:
+  - Use `forRoot()` when configuring a module globally for the entire application (e.g., `TypeOrmModule.forRoot()`).
+  - Use `register()` when configuring a module specific to the calling feature (e.g., `BullModule.registerQueue()`).
+- **`DynamicModule` Interface**: The return type of the static method. It looks exactly like the object you pass to the `@Module()` decorator, plus an extra `module` property.
+
+## Code Examples
+
+### 1. Creating a Dynamic Module
+Let's build a reusable `LoggerModule` that accepts an API key to send logs to a third-party service like Datadog.
+
+```typescript
+// logger.module.ts
+import { Module, DynamicModule, Global } from '@nestjs/common';
+import { LoggerService } from './logger.service';
+
+export interface LoggerModuleOptions {
+  apiKey: string;
+  level: 'info' | 'debug' | 'error';
+}
+
+@Global() // Optional: Make it available everywhere without re-importing
+@Module({})
+export class LoggerModule {
+  
+  static forRoot(options: LoggerModuleOptions): DynamicModule {
+    return {
+      module: LoggerModule,
+      providers: [
+        // 1. Provide the configuration object so other services can inject it
+        {
+          provide: 'LOGGER_OPTIONS',
+          useValue: options,
+        },
+        // 2. Provide the actual service
+        LoggerService,
+      ],
+      exports: [LoggerService], // Export it so consumers can use it
+    };
+  }
+}
+```
+
+### 2. Using the Injected Options
+The `LoggerService` injects the custom configuration token we defined in the dynamic module.
+
+```typescript
+// logger.service.ts
+import { Injectable, Inject } from '@nestjs/common';
+
+@Injectable()
+export class LoggerService {
+  constructor(@Inject('LOGGER_OPTIONS') private options: any) {
+    console.log(`Logger initialized with level: ${this.options.level}`);
+  }
+
+  log(message: string) {
+    // Uses this.options.apiKey to send to external service
+  }
+}
+```
+
+### 3. Importing the Dynamic Module
+In the root `AppModule`, we call the static method and pass the required configuration.
+
+```typescript
+// app.module.ts
+import { Module } from '@nestjs/common';
+import { LoggerModule } from './logger.module';
+
+@Module({
+  imports: [
+    LoggerModule.forRoot({
+      apiKey: 'secret_123',
+      level: 'debug',
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+## Best Practices
+- **`forRootAsync`**: Hardcoding options in `forRoot` is fine for libraries, but in a real application, you usually need to read the `apiKey` from environment variables *first*. Therefore, almost every dynamic module should also expose a `forRootAsync` method that accepts a `useFactory` function, allowing it to inject the `ConfigService`.
+- **ConfigurableModuleBuilder**: Writing `forRoot` and `forRootAsync` manually requires a lot of boilerplate. NestJS provides the `@nestjs/common` `ConfigurableModuleBuilder` class, which automatically generates `register`, `registerAsync`, `forRoot`, and `forRootAsync` methods for you with just three lines of code. It is highly recommended to use this builder for modern NestJS applications.

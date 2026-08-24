@@ -1,0 +1,76 @@
+---
+title: "Custom Validators"
+description: "Custom Validators in NestJS"
+importance: "LOW"
+revisionTime: 9
+category: "NestJS"
+subcategory: "Validation & DTOs"
+order: 1040
+---
+
+*Custom Validators allow you to create your own `@Is...` decorators to encapsulate complex, domain-specific validation logic that isn't covered by the built-in `class-validator` library.*
+
+## Overview
+While `@IsString()` and `@IsEmail()` are great, what if you need to validate that a string is a valid "ISBN-13 Book Number"? Or what if you need to query the database to ensure an email address isn't already taken *before* the controller runs?
+
+You can write Custom Validation classes and register them as decorators to keep your DTOs clean and declarative.
+
+## Key Concepts
+- **`ValidatorConstraintInterface`**: The interface your custom class must implement. It requires a `validate` method (which returns a boolean) and an optional `defaultMessage` method.
+- **`@ValidatorConstraint()`**: A decorator applied to your custom class to register it.
+- **`registerDecorator()`**: A function used to link your custom class to a `@Decorator` function that can be applied to DTO properties.
+
+## Code Examples
+
+### 1. A Simple Custom Validator (No Dependency Injection)
+Let's create a validator that ensures a string only contains alphanumeric characters and underscores (e.g., a Twitter handle).
+
+```typescript
+import { 
+  registerDecorator, 
+  ValidationOptions, 
+  ValidatorConstraint, 
+  ValidatorConstraintInterface, 
+  ValidationArguments 
+} from 'class-validator';
+
+// 1. Define the Constraint Class
+@ValidatorConstraint({ name: 'isHandle', async: false })
+export class IsHandleConstraint implements ValidatorConstraintInterface {
+  validate(text: string, args: ValidationArguments) {
+    // Return true if valid, false if invalid
+    return typeof text === 'string' && /^[a-zA-Z0-9_]+$/.test(text);
+  }
+
+  defaultMessage(args: ValidationArguments) {
+    return 'Handle ($value) can only contain letters, numbers, and underscores!';
+  }
+}
+
+// 2. Create the Decorator Function
+export function IsHandle(validationOptions?: ValidationOptions) {
+  return function (object: Object, propertyName: string) {
+    registerDecorator({
+      target: object.constructor,
+      propertyName: propertyName,
+      options: validationOptions,
+      constraints: [],
+      validator: IsHandleConstraint,
+    });
+  };
+}
+```
+
+### 3. Using the Custom Validator
+Now you can use it just like any built-in decorator!
+
+```typescript
+export class CreateProfileDto {
+  @IsHandle({ message: 'Custom message overrides the default!' })
+  twitterHandle: string;
+}
+```
+
+## Best Practices
+- **Dependency Injection (Advanced)**: Custom validators can be incredibly powerful if you need them to query the database (e.g., `@IsEmailUnique()`). To do this, you must make the Constraint class `@Injectable()`, inject your Service into its constructor, set `async: true`, and crucially, configure NestJS's `useContainer` in `main.ts` so `class-validator` knows how to resolve Nest dependencies.
+- **Reusability**: If you find yourself writing a `@ValidateIf` or complex `@Matches` Regex in multiple DTOs, extract it into a Custom Validator. It makes your code much cleaner and easier to test.

@@ -1,0 +1,82 @@
+---
+title: "Socket.IO"
+description: "Socket.IO in NestJS"
+importance: "HIGH"
+revisionTime: 6
+category: "NestJS"
+subcategory: "WebSockets"
+order: 2060
+---
+
+*Socket.IO is a widely used JavaScript library that enables real-time, bidirectional communication. It is the default WebSocket adapter provided by NestJS.*
+
+## Overview
+While standard HTML5 WebSockets (`ws`) provide raw TCP communication, Socket.IO provides a higher-level abstraction. It adds features that are essential for production applications, such as automatic reconnections, broadcasting to specific "rooms", and fallback mechanisms (like long-polling) if standard WebSockets are blocked by corporate firewalls.
+
+In NestJS, using `@nestjs/platform-socket.io` allows you to leverage all of Socket.IO's features while maintaining the clean, class-based, decorator-driven architecture of NestJS.
+
+## Key Concepts
+- **Rooms and Namespaces**: Socket.IO allows you to partition your WebSocket server into separate channels. (e.g., users in "Room A" only receive messages sent to "Room A").
+- **Broadcasting**: The ability to send a message to *everyone* except the person who sent it, or to everyone in a specific room.
+- **Acknowledgments**: Socket.IO allows the server to send an immediate callback/acknowledgment back to the specific client who fired an event.
+
+## Code Examples
+
+### 1. Emitting Messages (Server to Client)
+Inside a NestJS Gateway, you can access the underlying Socket.IO `Server` instance using the `@WebSocketServer()` decorator. This allows you to broadcast messages proactively.
+
+```typescript
+import { WebSocketGateway, WebSocketServer, SubscribeMessage } from '@nestjs/websockets';
+import { Server, Socket } from 'socket.io';
+
+@WebSocketGateway({ cors: { origin: '*' } })
+export class NotificationGateway {
+  
+  // This property gives you direct access to the Socket.IO Server instance!
+  @WebSocketServer()
+  server: Server;
+
+  // Example: Broadcasting to EVERY connected client
+  @SubscribeMessage('global_announcement')
+  handleAnnouncement(client: Socket, payload: { message: string }) {
+    
+    // server.emit sends to everyone, INCLUDING the sender
+    this.server.emit('receive_notification', { text: payload.message });
+  }
+
+  // Example: Broadcasting to everyone EXCEPT the sender
+  @SubscribeMessage('typing')
+  handleTyping(client: Socket) {
+    // client.broadcast.emit sends to everyone EXCEPT the sender
+    client.broadcast.emit('user_typing', { userId: client.id });
+  }
+}
+```
+
+### 2. Proactive Server Emits
+You don't have to wait for a client to send a message to use the `server` instance. You can inject the Gateway into any standard REST API Controller and trigger WebSocket events from an HTTP request!
+
+```typescript
+// notification.controller.ts
+import { Controller, Post, Body } from '@nestjs/common';
+import { NotificationGateway } from './notification.gateway';
+
+@Controller('admin')
+export class AdminController {
+  // Inject the Gateway!
+  constructor(private readonly gateway: NotificationGateway) {}
+
+  @Post('alert')
+  triggerSystemAlert(@Body() data: { alert: string }) {
+    
+    // Trigger a WebSocket broadcast from an HTTP POST request!
+    this.gateway.server.emit('system_alert', { message: data.alert });
+    
+    return { success: true };
+  }
+}
+```
+
+## Best Practices
+- **Use the Right Adapter**: Socket.IO is feature-rich but comes with overhead. If you are building a massive, high-throughput data firehose (like live cryptocurrency ticker prices) where you don't need rooms or reconnections, swap to the `@nestjs/platform-ws` adapter instead. It uses the raw `ws` library and is significantly faster and more memory-efficient.
+- **Stateless Architecture**: Socket.IO connections are stateful; the connection lives on one specific server. If you deploy 5 instances of your NestJS app behind a load balancer, "User A" might connect to Server 1, and "User B" might connect to Server 2. If Server 1 broadcasts a message, User B won't hear it! To fix this, you MUST configure the **Socket.IO Redis Adapter** in your `main.ts`. This allows the 5 servers to share events via Redis.

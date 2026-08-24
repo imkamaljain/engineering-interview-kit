@@ -1,0 +1,104 @@
+---
+title: "Testing Pipes"
+description: "Testing Pipes in NestJS"
+importance: "LOW"
+revisionTime: 6
+category: "NestJS"
+subcategory: "Testing"
+order: 2370
+---
+
+*Testing Pipes involves validating that the pipe correctly transforms incoming data formats (e.g., string to integer) or throws a `BadRequestException` when the data fails validation criteria.*
+
+## Overview
+Pipes in NestJS implement the `transform(value, metadata)` method. 
+Because Pipes are generally pure functions (they take input and return output without relying heavily on external state), they are incredibly easy to unit test. You simply instantiate the Pipe, pass in test data, and assert the output.
+
+## Key Concepts
+- **`value`**: The raw data coming from the HTTP request (e.g., the string `"123"` from a query parameter, or a raw JSON object from the body).
+- **`metadata`**: An `ArgumentMetadata` object provided by NestJS that tells the pipe what *type* of data it is processing (e.g., `@Body`, `@Query`, `@Param`) and the expected TypeScript metatype.
+
+## Code Examples
+
+### 1. Testing a Custom Validation Pipe
+Imagine a pipe that ensures a provided string is a valid UUID, and throws a 400 Error if it isn't.
+
+```typescript
+// parse-uuid.pipe.spec.ts
+import { ParseUuidPipe } from './parse-uuid.pipe';
+import { BadRequestException, ArgumentMetadata } from '@nestjs/common';
+
+describe('ParseUuidPipe', () => {
+  let pipe: ParseUuidPipe;
+
+  beforeEach(() => {
+    pipe = new ParseUuidPipe();
+  });
+
+  it('should return the value if it is a valid UUID', () => {
+    // Arrange
+    const validUuid = '123e4567-e89b-12d3-a456-426614174000';
+    const metadata: ArgumentMetadata = { type: 'param' }; // Mock metadata
+
+    // Act
+    const result = pipe.transform(validUuid, metadata);
+
+    // Assert
+    expect(result).toBe(validUuid);
+  });
+
+  it('should throw a BadRequestException if the value is not a valid UUID', () => {
+    // Arrange
+    const invalidUuid = 'not-a-uuid-string';
+    const metadata: ArgumentMetadata = { type: 'param' };
+
+    // Act & Assert
+    expect(() => pipe.transform(invalidUuid, metadata)).toThrow(BadRequestException);
+  });
+});
+```
+
+### 2. Testing the built-in `ValidationPipe`
+You rarely need to test the built-in `ValidationPipe` itself, but you *do* need to test that your DTOs are configured correctly with the `class-validator` decorators. You can do this by instantiating `ValidationPipe` manually in a test!
+
+```typescript
+// create-user.dto.spec.ts
+import { ValidationPipe, ArgumentMetadata } from '@nestjs/common';
+import { CreateUserDto } from './create-user.dto';
+
+describe('CreateUserDto Validation', () => {
+  let validationPipe: ValidationPipe;
+
+  beforeAll(() => {
+    validationPipe = new ValidationPipe({ transform: true, whitelist: true });
+  });
+
+  it('should fail if email is invalid', async () => {
+    // Arrange: Create a raw javascript object pretending to be the request body
+    const badPayload = { email: 'invalid-email', password: 'StrongPassword1!' };
+    
+    // Simulate the metadata NestJS creates when it sees `@Body() dto: CreateUserDto`
+    const metadata: ArgumentMetadata = { type: 'body', metatype: CreateUserDto };
+
+    // Act & Assert: The pipe should throw an error when trying to transform the bad payload
+    await expect(
+      validationPipe.transform(badPayload, metadata)
+    ).rejects.toThrow();
+  });
+
+  it('should pass if payload is valid', async () => {
+    const goodPayload = { email: 'test@test.com', password: 'StrongPassword1!' };
+    const metadata: ArgumentMetadata = { type: 'body', metatype: CreateUserDto };
+
+    const result = await validationPipe.transform(goodPayload, metadata);
+    
+    // It should successfully transform it into an instance of CreateUserDto
+    expect(result).toBeInstanceOf(CreateUserDto);
+    expect(result.email).toBe('test@test.com');
+  });
+});
+```
+
+## Best Practices
+- **Test DTOs via `ValidationPipe`**: The example above (Testing DTOs using `ValidationPipe.transform()`) is much better than writing E2E tests just to check if email validation works. It is extremely fast and tests exactly the boundary you care about.
+- **Pure Functions**: Keep custom Pipes as pure functions whenever possible. If a Pipe requires database access (e.g., a `UserExistsPipe` that queries the database), it becomes much harder to test and violates separation of concerns. Database checks should usually happen in the Service layer, not the Pipe layer.

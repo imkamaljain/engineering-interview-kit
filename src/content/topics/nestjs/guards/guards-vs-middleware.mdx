@@ -1,0 +1,88 @@
+---
+title: "Guards vs Middleware"
+description: "Guards vs Middleware in NestJS"
+importance: "HIGH"
+revisionTime: 13
+category: "NestJS"
+subcategory: "Guards"
+order: 780
+---
+
+*While both Guards and Middleware intercept incoming HTTP requests, they are fundamentally different in their capabilities and their place in the NestJS architecture.*
+
+## Overview
+In traditional Express applications, middleware handles almost everything: logging, body parsing, authentication, and authorization. 
+
+NestJS introduces a strict separation of concerns. While middleware is still used for low-level HTTP protocol tasks, Guards are introduced specifically to handle authorization. The primary reason for this split is that **Middleware is "dumb"** (it doesn't know what route is being hit), while **Guards are "smart"** (they know exactly which Controller method will execute).
+
+## Key Concepts
+
+### Middleware (The Network Layer)
+- **Execution**: Runs absolutely first, before anything else in the NestJS lifecycle.
+- **Context**: It only knows about the raw `Request` and `Response` objects. 
+- **Limitations**: It does not know about Controllers, Methods, or Decorators. It only knows the string URL path (e.g. `/users/123`).
+- **Best For**: CORS, body parsing (JSON, URL-encoded), security headers (`helmet`), and logging request times.
+
+### Guards (The Application Layer)
+- **Execution**: Runs *after* middleware, but before interceptors and pipes.
+- **Context**: Has access to the `ExecutionContext`.
+- **Advantage**: It knows exactly which Controller class and method is the ultimate target. It can read custom metadata attached to those methods (like `@Roles('admin')`).
+- **Best For**: Authentication (verifying JWTs) and Authorization (checking permissions).
+
+## Code Examples
+
+### The Middleware Problem (Hardcoded URLs)
+If you try to write authorization logic in middleware, you have to hardcode the URLs you want to protect.
+
+```typescript
+// ❌ Anti-pattern: Authorization in Middleware
+export class AdminMiddleware implements NestMiddleware {
+  use(req: Request, res: Response, next: NextFunction) {
+    if (req.user.role !== 'admin') {
+      return res.status(403).send('Forbidden');
+    }
+    next();
+  }
+}
+
+// In app.module.ts
+consumer
+  .apply(AdminMiddleware)
+  // If a developer renames the route in the controller to '/v1/users', 
+  // this middleware silently fails to protect it!
+  .forRoutes('users/delete', 'users/update'); 
+```
+
+### The Guard Solution (Metadata)
+Guards attach the security rules directly to the code that executes the logic.
+
+```typescript
+// ✅ Correct approach: Authorization in Guards
+@Injectable()
+export class RolesGuard implements CanActivate {
+  constructor(private reflector: Reflector) {}
+
+  canActivate(context: ExecutionContext): boolean {
+    const roles = this.reflector.get<string[]>('roles', context.getHandler());
+    // ... check roles
+    return true;
+  }
+}
+```
+
+```typescript
+// The security rule is bound to the method, not the URL!
+// Even if the URL changes, the protection remains.
+@Controller('users')
+export class UsersController {
+  
+  @Delete(':id')
+  @Roles('admin') // Guard reads this
+  @UseGuards(RolesGuard)
+  deleteUser() { ... }
+}
+```
+
+## Best Practices
+- **Never use Middleware for Authorization**: Relying on string-matching URLs in middleware for security is brittle and leads to severe vulnerabilities when API routes are refactored. Always use Guards.
+- **Authentication Exceptions**: The only time you might do "authentication" in middleware is if you are using an old-school session cookie parser (like `express-session`), but even then, verifying the user session should be done in a Guard.

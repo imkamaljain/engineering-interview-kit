@@ -1,0 +1,118 @@
+---
+title: "Metrics"
+description: "Metrics in NestJS"
+importance: "LOW"
+revisionTime: 12
+category: "NestJS"
+subcategory: "Observability"
+order: 2840
+---
+
+*Metrics provide quantitative data about your application's performance and usage over time, answering questions like "What is our average response time?" or "How many active users are currently connected?"*
+
+## Overview
+While logs tell you *what* happened in a specific request, metrics give you the *aggregate* view. 
+
+If CPU usage spikes to 99%, logs are too noisy to figure out why. A metric graph will clearly show that the `generate_pdf` endpoint suddenly started receiving 500 requests per minute.
+
+In the Node.js and Kubernetes ecosystems, **Prometheus** is the absolute standard for metrics. Prometheus works on a "pull" model: your NestJS app exposes a `/metrics` endpoint, and the Prometheus server scrapes that endpoint every 15 seconds to collect the data.
+
+## Key Concepts
+- **Counters**: A metric that only goes up (e.g., total HTTP requests processed, total orders created).
+- **Gauges**: A metric that can go up and down (e.g., current memory usage, number of active WebSocket connections).
+- **Histograms**: Used to measure distributions, typically used for response latencies (e.g., "95% of requests finished in under 200ms").
+- **Prometheus Exporter**: The `/metrics` endpoint that outputs data in a specific text format that Prometheus understands.
+
+## Code Examples
+
+### 1. Setting up Prometheus in NestJS
+The easiest way to integrate Prometheus is using the `@willsoto/nestjs-prometheus` wrapper around the official `prom-client`.
+
+```bash
+npm install @willsoto/nestjs-prometheus prom-client
+```
+
+Register it in your root module:
+
+```typescript
+// app.module.ts
+import { Module } from '@nestjs/common';
+import { PrometheusModule } from '@willsoto/nestjs-prometheus';
+
+@Module({
+  imports: [
+    // This automatically creates a /metrics endpoint!
+    PrometheusModule.register({
+      path: '/metrics',
+      defaultMetrics: {
+        enabled: true, // Automatically collects Node.js CPU and Memory metrics
+      },
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+### 2. Creating a Custom Counter Metric
+Let's track how many times a specific action occurs in our business logic.
+
+```typescript
+// orders.module.ts
+import { Module } from '@nestjs/common';
+import { makeCounterProvider } from '@willsoto/nestjs-prometheus';
+import { OrdersService } from './orders.service';
+
+@Module({
+  providers: [
+    OrdersService,
+    // 1. Define the metric provider
+    makeCounterProvider({
+      name: 'app_orders_created_total',
+      help: 'The total number of orders created',
+      labelNames: ['status'], // We can slice the data by success/failure
+    }),
+  ],
+})
+export class OrdersModule {}
+```
+
+```typescript
+// orders.service.ts
+import { Injectable } from '@nestjs/common';
+import { InjectMetric } from '@willsoto/nestjs-prometheus';
+import { Counter } from 'prom-client';
+
+@Injectable()
+export class OrdersService {
+  constructor(
+    // 2. Inject the metric using its name
+    @InjectMetric('app_orders_created_total') public counter: Counter<string>,
+  ) {}
+
+  async createOrder() {
+    try {
+      await this.db.saveOrder();
+      // 3. Increment the counter with a 'success' label
+      this.counter.inc({ status: 'success' });
+    } catch (e) {
+      // Increment the counter with a 'failed' label
+      this.counter.inc({ status: 'failed' });
+      throw e;
+    }
+  }
+}
+```
+
+### 3. Tracking HTTP Latency (Histogram)
+To track API response times automatically, you would create a Histogram metric and update it inside an Interceptor (or middleware) when the request finishes.
+
+```typescript
+// (Inside an Interceptor)
+const end = this.histogram.startTimer();
+// ... request finishes ...
+end({ route: request.url, method: request.method, status_code: response.statusCode });
+```
+
+## Best Practices
+- **Cardinality Explosion**: Be extremely careful with `labelNames`. If you add `user_id` as a label to your HTTP Request Counter, Prometheus will create a separate time-series database entry for *every single user* who visits your site. If you have 1 million users, you just created 1 million metrics, which will crash your Prometheus server. Labels should only be used for low-cardinality data (like `HTTP method`, `status_code`, or `region`).
+- **Use Grafana**: Prometheus just collects the raw data. To actually visualize it, you connect Grafana to your Prometheus database to build beautiful dashboards.

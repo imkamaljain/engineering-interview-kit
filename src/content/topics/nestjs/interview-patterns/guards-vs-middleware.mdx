@@ -1,0 +1,89 @@
+---
+title: "Guards vs Middleware"
+description: "Guards vs Middleware in NestJS"
+importance: "MEDIUM"
+revisionTime: 9
+category: "NestJS"
+subcategory: "Interview Patterns"
+order: 2990
+---
+
+*A frequent interview question asks to contrast Guards and Middleware. While both sit in the request pipeline before the Controller, they have entirely different levels of context awareness and distinct responsibilities.*
+
+## Overview
+- **Middleware**: Runs *before* the NestJS application context is fully established. It is essentially raw Express/Fastify middleware. It only knows about the raw `Request` and `Response` objects. It is blind to which Controller or Method is about to be executed.
+- **Guards**: Run *after* Middleware. They are fully integrated into the NestJS lifecycle. They have access to the `ExecutionContext`, meaning they know exactly which class (`UserController`) and which method (`deleteUser`) is going to handle the request, and they can read custom decorators/metadata attached to that method.
+
+## When to use which?
+
+### Use Middleware for:
+- **Global HTTP Modifications**: Parsing cookies (`cookie-parser`), parsing JSON bodies, or adding security headers (`helmet`).
+- **Logging**: Logging raw incoming HTTP requests (method, URL, IP address) before any routing happens.
+- **Framework-Agnostic Logic**: Integrating third-party tools that are designed for Express, like standard rate limiters or CSRF protections.
+
+### Use Guards for:
+- **Authentication**: Determining if a user is logged in (e.g., verifying a JWT).
+- **Authorization**: Determining if a user has permission to access a specific route (e.g., Role-Based Access Control).
+
+## Why are Guards better for Authentication?
+In plain Express, you would use Middleware for Authentication. So why does NestJS prefer Guards?
+
+Because Guards have access to the `Reflector` and Metadata.
+
+Imagine an API where 95% of routes are secured, but 5% are public. 
+If you use **Middleware**, it runs on every route. It doesn't know if the route is `/login` or `/profile`. You have to write messy regex inside the middleware: `if (req.url === '/login') return next()`.
+
+If you use a **Guard**, you can apply a `@Public()` decorator to your `/login` route. The Guard can inspect the route's metadata. If it sees `@Public()`, it immediately returns `true` and allows the request. If it doesn't see the metadata, it enforces authentication. This is significantly cleaner and less error-prone.
+
+## Code Examples
+
+### The Middleware (Blind to Context)
+Notice it only receives `req, res, next`.
+
+```typescript
+import { Injectable, NestMiddleware } from '@nestjs/common';
+import { Request, Response, NextFunction } from 'express';
+
+@Injectable()
+export class LoggerMiddleware implements NestMiddleware {
+  use(req: Request, res: Response, next: NextFunction) {
+    console.log(`[Middleware] Incoming Request: ${req.method} ${req.url}`);
+    
+    // It has NO IDEA if this route even exists, or what controller will handle it!
+    next(); 
+  }
+}
+```
+
+### The Guard (Context Aware)
+Notice it receives the `ExecutionContext`.
+
+```typescript
+import { Injectable, CanActivate, ExecutionContext } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
+
+@Injectable()
+export class RolesGuard implements CanActivate {
+  constructor(private reflector: Reflector) {}
+
+  canActivate(context: ExecutionContext): boolean {
+    const req = context.switchToHttp().getRequest();
+    
+    // The Guard knows EXACTLY which handler is about to execute!
+    const handler = context.getHandler();
+    console.log(`[Guard] About to execute method: ${handler.name}`);
+    
+    // It can read custom metadata attached to that specific method
+    const requiredRoles = this.reflector.get<string[]>('roles', handler);
+
+    if (!requiredRoles) {
+      return true; // No roles required, allow access
+    }
+
+    return requiredRoles.includes(req.user?.role);
+  }
+}
+```
+
+## Best Practices
+- **Don't mutate the Request in a Guard**: The official documentation states that Guards should only return a boolean. They should not mutate the request object (e.g., attaching `req.user`). While attaching `req.user` inside a Guard technically works and is done frequently by the `@nestjs/passport` library out of necessity, conceptually, mutating requests is the job of Middleware or Interceptors. Guards should strictly answer the question: "Yes or No?"

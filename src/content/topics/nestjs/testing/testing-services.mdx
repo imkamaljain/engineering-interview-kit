@@ -1,0 +1,98 @@
+---
+title: "Testing Services"
+description: "Testing Services in NestJS"
+importance: "HIGH"
+revisionTime: 7
+category: "NestJS"
+subcategory: "Testing"
+order: 2350
+---
+
+*Testing Services is the core of Unit Testing in NestJS. Since business logic resides almost entirely within services, this is where you will write the vast majority of your tests, ensuring the core algorithms and rules of your application are sound.*
+
+## Overview
+A `Service` is a class annotated with `@Injectable()`. It typically injects Repositories (to access the database) or other external Services (like an HTTP client).
+
+To test a service, you must use the `TestingModule` to instantiate the service while providing mocked versions of all its injected dependencies.
+
+## Key Concepts
+- **Business Logic Focus**: You are testing the `if/else` statements, calculations, and data transformations inside the service methods. You are *not* testing if the database can successfully save a record.
+- **Provider Overrides**: Using `{ provide: Dependency, useValue: mockDependency }` to satisfy the constructor requirements of the service being tested.
+
+## Code Examples
+
+### 1. Testing a Service with Repository Dependencies
+Assume we have an `OrderService` that calculates discounts and then saves the order using a TypeORM `OrderRepository`.
+
+```typescript
+import { Test, TestingModule } from '@nestjs/testing';
+import { getRepositoryToken } from '@nestjs/typeorm';
+import { OrderService } from './order.service';
+import { Order } from './order.entity';
+
+describe('OrderService', () => {
+  let service: OrderService;
+  
+  // Create a mock for the TypeORM Repository
+  const mockOrderRepository = {
+    save: jest.fn(),
+    findOne: jest.fn(),
+  };
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        OrderService, // The service we are actually testing
+        {
+          // When OrderService asks for the Order repository, give it the mock!
+          provide: getRepositoryToken(Order), 
+          useValue: mockOrderRepository,
+        },
+      ],
+    }).compile();
+
+    service = module.get<OrderService>(OrderService);
+  });
+
+  afterEach(() => {
+    jest.clearAllMocks();
+  });
+
+  describe('createOrder', () => {
+    it('should apply a 10% discount if the user is VIP', async () => {
+      // Arrange
+      const mockSavedOrder = { id: 1, total: 90, isVip: true };
+      
+      // Tell the mock repository what to return when save() is called
+      mockOrderRepository.save.mockResolvedValue(mockSavedOrder);
+
+      // Act: Call the service method
+      // Assume base price is 100, user is VIP
+      const result = await service.createOrder(100, true);
+
+      // Assert: Verify the business logic correctly calculated 90
+      expect(result.total).toBe(90);
+      
+      // Assert: Verify the service passed the correct calculated data to the database
+      expect(mockOrderRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({ total: 90 }) // We only care that the total was 90
+      );
+    });
+
+    it('should throw an error if the base price is negative', async () => {
+      // Act & Assert
+      await expect(service.createOrder(-50, false))
+        .rejects
+        .toThrow('Price cannot be negative');
+        
+      // Verify that the database was NEVER called if the price was invalid
+      expect(mockOrderRepository.save).not.toHaveBeenCalled();
+    });
+  });
+});
+```
+
+## Best Practices
+- **Use `getRepositoryToken`**: When mocking TypeORM repositories, you must use the `getRepositoryToken(EntityClass)` function as the injection token. You cannot use the string name of the entity, as NestJS internally generates a specific token string for repositories.
+- **Don't Mock Internal Methods**: If `MethodA` calls `MethodB` (both inside the same Service), do *not* mock `MethodB` when testing `MethodA`. Test `MethodA` as a complete, cohesive unit of work. Only mock external classes injected via the constructor.
+- **Use `expect.objectContaining()`**: When asserting that a mock was called with specific arguments, avoid asserting against massive, deeply nested objects if you only care about one specific field (like the calculated discount). Use `expect.objectContaining({ discount: 10 })` to make tests less brittle when unrelated properties change.

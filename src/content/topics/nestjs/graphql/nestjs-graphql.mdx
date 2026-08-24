@@ -1,0 +1,71 @@
+---
+title: "NestJS GraphQL"
+description: "NestJS GraphQL in NestJS"
+importance: "LOW"
+revisionTime: 6
+category: "NestJS"
+subcategory: "GraphQL"
+order: 1630
+---
+
+*NestJS provides a deeply integrated, powerful module for building GraphQL applications. It acts as a wrapper around the popular Apollo Server (or Mercurius), allowing you to write GraphQL APIs using the same Dependency Injection, Guards, and Interceptors you use for REST.*
+
+## Overview
+While REST APIs expose multiple endpoints (`/users`, `/posts`), a GraphQL API exposes a single endpoint (usually `/graphql`). Clients send a query string to this endpoint specifying exactly what data they want, and the server returns exactly that data—no more, no less.
+
+NestJS's `@nestjs/graphql` module allows you to build these APIs seamlessly. You can share your existing TypeORM services and authentication guards directly with your GraphQL resolvers, meaning you can often build a GraphQL API alongside an existing REST API with minimal code duplication.
+
+## Key Concepts
+- **`GraphQLModule`**: The core module you import into your `AppModule` to bootstrap the GraphQL server.
+- **Drivers**: NestJS GraphQL is driver-agnostic. The most common driver is `@nestjs/apollo` (which uses Apollo Server under the hood), but you can also use `@nestjs/mercurius` (which uses Fastify/Mercurius for higher performance).
+- **Resolvers**: The GraphQL equivalent of REST Controllers. They "resolve" queries and mutations into actual data.
+
+## Code Examples
+
+### 1. Installation
+To get started with the default Apollo driver, you need to install several packages.
+`npm i @nestjs/graphql @nestjs/apollo @apollo/server graphql`
+
+### 2. Bootstrapping the Module
+You configure the `GraphQLModule` in your root `AppModule`. The most critical decision here is choosing between the "Code-First" or "Schema-First" approach (discussed in the next topic). This example uses the Code-First approach.
+
+```typescript
+// app.module.ts
+import { Module } from '@nestjs/common';
+import { GraphQLModule } from '@nestjs/graphql';
+import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo';
+import { join } from 'path';
+import { CatsModule } from './cats/cats.module';
+
+@Module({
+  imports: [
+    GraphQLModule.forRoot<ApolloDriverConfig>({
+      // 1. Specify the driver
+      driver: ApolloDriver,
+      
+      // 2. Code-First config: Tell NestJS where to automatically generate the schema file
+      autoSchemaFile: join(process.cwd(), 'src/schema.gql'),
+      
+      // 3. Sort the auto-generated schema alphabetically (optional but highly recommended for git diffs)
+      sortSchema: true,
+      
+      // 4. Enable the GraphQL Playground (the interactive UI available at /graphql)
+      // Note: In Apollo v4, Playground is replaced by Apollo Sandbox by default in dev mode.
+      playground: true, 
+    }),
+    CatsModule, // Your feature modules go here as usual
+  ],
+})
+export class AppModule {}
+```
+
+### 3. What Happens on Startup
+When you start the NestJS application with the configuration above:
+1. NestJS scans all your loaded modules looking for `@Resolver()` classes.
+2. It reads the TypeScript decorators (`@Query()`, `@Mutation()`) on those classes.
+3. It automatically generates a standard GraphQL Schema Definition Language (SDL) file at `src/schema.gql`.
+4. It boots up an Apollo Server on the `/graphql` route.
+
+## Best Practices
+- **Use the Apollo Driver**: Unless you are building an extremely high-throughput application where microsecond latency matters, stick with the `ApolloDriver`. It has the largest ecosystem, the best documentation, and seamlessly integrates with Apollo Federation if you ever move to a microservices architecture. (Use `Mercurius` only if you are already using Fastify and need extreme performance).
+- **Sort Your Schema**: Always set `sortSchema: true`. Because NestJS generates the schema file dynamically based on module loading order, the generated `schema.gql` file can randomly change order between reboots, causing massive, annoying Git conflicts. Sorting it ensures the file is deterministic.

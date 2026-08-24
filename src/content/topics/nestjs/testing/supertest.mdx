@@ -1,0 +1,83 @@
+---
+title: "Supertest"
+description: "Supertest in NestJS"
+importance: "MEDIUM"
+revisionTime: 5
+category: "NestJS"
+subcategory: "Testing"
+order: 2400
+---
+
+*Supertest is a specialized library used primarily in E2E testing to simulate HTTP requests against a Node.js server (like NestJS/Express) and assert against the HTTP responses without requiring the server to actually listen on a network port.*
+
+## Overview
+Normally, testing an API requires starting the server on a port (e.g., `localhost:3000`), using `fetch` or `axios` to make a request, and then shutting the server down. 
+
+Supertest eliminates this overhead. It binds directly to the underlying HTTP server instance created by NestJS, routing requests internally in memory. This makes tests much faster, prevents port-collision errors when running tests in parallel, and provides a fluent API for asserting status codes, headers, and body payloads.
+
+## Key Concepts
+- **`request(app.getHttpServer())`**: The entry point for Supertest. You pass it the raw HTTP server instance, not the NestJS application wrapper.
+- **Fluent Assertions**: Supertest methods can be chained. Calling `.expect(200)` automatically asserts the status code and fails the test if it doesn't match.
+
+## Code Examples
+
+### 1. Basic Supertest Syntax
+Supertest supports all HTTP verbs and handles JSON serialization/deserialization automatically.
+
+```typescript
+import * as request from 'supertest';
+import { INestApplication } from '@nestjs/common';
+
+// Assume 'app' is your bootstrapped INestApplication
+
+describe('UsersController (e2e)', () => {
+  
+  it('GET /users - should return 200 and an array', () => {
+    return request(app.getHttpServer())
+      .get('/users')               // Define the route
+      .set('Accept', 'application/json') // Set headers
+      .expect('Content-Type', /json/)    // Assert the response header matches regex
+      .expect(200)                       // Assert the status code
+      .then(response => {
+        // You can run standard Jest assertions on the response body
+        expect(Array.isArray(response.body)).toBeTruthy();
+      });
+  });
+
+  it('POST /users - should create a user', () => {
+    return request(app.getHttpServer())
+      .post('/users')
+      .send({ email: 'new@test.com', name: 'John' }) // Automatically serialized to JSON
+      .expect(201)
+      .expect((res) => { // Custom assertion callback
+         if (!res.body.id) throw new Error("Missing ID in response");
+      });
+  });
+});
+```
+
+### 2. Handling File Uploads
+Supertest has specialized methods for dealing with `multipart/form-data`, which is essential for testing file upload endpoints.
+
+```typescript
+it('POST /upload - should upload a file', async () => {
+  // Use .attach() instead of .send() for files
+  const response = await request(app.getHttpServer())
+    .post('/upload')
+    .set('Authorization', 'Bearer my-test-token')
+    .field('description', 'Profile Picture') // Standard text fields
+    .attach('file', Buffer.from('fake image data'), 'profile.jpg') // The file data
+    .expect(201);
+    
+  expect(response.body.url).toContain('profile.jpg');
+});
+```
+
+## Best Practices
+- **Await or Return**: Supertest requests return a Promise. If you forget to `return request(...)` or `await request(...)`, Jest will assume the test completed instantly and successfully, even if the endpoint actually threw a 500 error! Always use `await` or `return`.
+- **Debugging 500 Errors**: If an E2E test fails with `expected 200 "OK", got 500 "Internal Server Error"`, Supertest won't automatically log the stack trace of the server error. A quick trick is to assert `response.body` on failure to see the NestJS error payload:
+  ```typescript
+  const res = await request(app.getHttpServer()).get('/error-route');
+  if (res.status === 500) console.error(res.body); 
+  expect(res.status).toBe(200);
+  ```

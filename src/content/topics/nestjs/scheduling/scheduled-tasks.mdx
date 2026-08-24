@@ -1,0 +1,95 @@
+---
+title: "Scheduled Tasks"
+description: "Scheduled Tasks in NestJS"
+importance: "MEDIUM"
+revisionTime: 11
+category: "NestJS"
+subcategory: "Scheduling"
+order: 2250
+---
+
+*Scheduled Tasks in NestJS provide a centralized way to execute recurring business logic, but they require careful architectural consideration to avoid blocking the main event loop or executing redundantly across multiple servers.*
+
+## Overview
+While `@Cron`, `@Interval`, and `@Timeout` are easy to use, placing complex business logic directly inside the decorated methods is an anti-pattern. Scheduled tasks should be treated as entry points (like Controllers), delegating the actual work to dedicated Services.
+
+Furthermore, monitoring and debugging scheduled tasks can be difficult because they operate asynchronously in the background, without an HTTP request context attached to them.
+
+## Key Concepts
+- **Delegation**: Scheduled task classes should act merely as triggers.
+- **Context Loss**: Background tasks do not have access to the Request object. You cannot inject `REQUEST` scoped providers into a service that is triggered by a Cron job.
+- **Logging**: Because tasks run silently in the background, rigorous logging is essential.
+
+## Code Examples
+
+### 1. The Delegation Pattern
+Treat the Scheduled Task class like a Controller.
+
+```typescript
+// bad-task.service.ts
+@Injectable()
+export class BadTaskService {
+  constructor(private db: DatabaseService) {}
+
+  @Cron('0 0 * * *')
+  async cleanDatabase() {
+    // Bad: Complex business logic directly inside the task method
+    const oldRecords = await this.db.query('SELECT * FROM logs WHERE date < ?', [date]);
+    for (const record of oldRecords) {
+        // ... 50 lines of complex processing ...
+    }
+  }
+}
+
+// good-task.service.ts
+@Injectable()
+export class GoodTaskScheduler {
+  // Inject the service that actually does the work
+  constructor(private cleanupService: LogCleanupService) {}
+
+  @Cron('0 0 * * *')
+  async triggerCleanup() {
+    // Good: The scheduler acts only as a trigger
+    await this.cleanupService.deleteOldLogs();
+  }
+}
+```
+
+### 2. Proper Logging and Error Handling
+If an HTTP request fails, the user gets a 500 error. If a Cron job fails, nobody knows unless it's logged properly.
+
+```typescript
+import { Injectable, Logger } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
+
+@Injectable()
+export class BillingScheduler {
+  // Create a dedicated logger context for this scheduler
+  private readonly logger = new Logger(BillingScheduler.name);
+
+  constructor(private billingService: BillingService) {}
+
+  @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
+  async processSubscriptions() {
+    this.logger.log('Starting daily subscription processing...');
+    const startTime = Date.now();
+
+    try {
+      const processedCount = await this.billingService.processAll();
+      
+      const duration = Date.now() - startTime;
+      this.logger.log(`Successfully processed ${processedCount} subscriptions in ${duration}ms`);
+    } catch (error) {
+      // CRITICAL: Catch errors! Otherwise they bubble up and can crash Node.js
+      this.logger.error('Failed to process subscriptions', error.stack);
+      
+      // Optionally integrate with an alerting system (Sentry, PagerDuty, etc.)
+      // this.alertingService.triggerPage(error);
+    }
+  }
+}
+```
+
+## Best Practices
+- **Never use Request Scope**: If any provider in your dependency tree uses `Scope.REQUEST`, NestJS will fail to inject it into your scheduled task (because there is no HTTP request!). Scheduled tasks must rely on `Scope.DEFAULT` (Singleton) or `Scope.TRANSIENT` providers.
+- **Graceful Shutdown**: If you deploy a new version of your app while a heavy 10-minute Cron job is in the middle of executing, NestJS will kill the Node process, leaving data in a corrupted state. Implement `OnApplicationShutdown` lifecycle hooks to check if jobs are currently running, and delay the server shutdown until they finish.

@@ -1,0 +1,104 @@
+---
+title: "Testing Controllers"
+description: "Testing Controllers in NestJS"
+importance: "HIGH"
+revisionTime: 5
+category: "NestJS"
+subcategory: "Testing"
+order: 2340
+---
+
+*Testing Controllers involves isolating the HTTP routing layer (the Controller) from the business logic layer (the Service). Unit tests for controllers ensure that parameters are passed correctly to services and that the controller returns the expected HTTP responses.*
+
+## Overview
+A well-written NestJS Controller should have almost zero business logic. Its only job is to receive an HTTP Request, extract the DTOs/Parameters, pass them to a Service, and return the result.
+
+Therefore, when Unit Testing a controller, you should *never* hit a database. You must mock the underlying Service. The goal of the test is simply to verify: "If the Service returns X, does the Controller return X?" or "Did the Controller pass the correct `@Body()` to the Service?"
+
+## Key Concepts
+- **Isolation**: The Controller is tested independently of Guards, Interceptors, Pipes, and Filters. (If you want to test if a Guard blocks a request, you must write an E2E test, as unit tests instantiate the controller class directly and bypass the NestJS request pipeline).
+- **Service Mocking**: Replacing the injected Service with a `jest.fn()` mock via the `TestingModule`.
+
+## Code Examples
+
+### 1. Setting up the Controller Test
+We use `Test.createTestingModule` to instantiate the Controller, but we provide a mock of the `UsersService`.
+
+```typescript
+import { Test, TestingModule } from '@nestjs/testing';
+import { UsersController } from './users.controller';
+import { UsersService } from './users.service';
+
+describe('UsersController', () => {
+  let controller: UsersController;
+  let service: UsersService;
+
+  // 1. Define the mock service
+  const mockUsersService = {
+    create: jest.fn(),
+    findOne: jest.fn(),
+  };
+
+  beforeEach(async () => {
+    // 2. Bootstrap the TestingModule
+    const module: TestingModule = await Test.createTestingModule({
+      controllers: [UsersController],
+      providers: [
+        {
+          provide: UsersService,
+          useValue: mockUsersService, // Inject the mock
+        },
+      ],
+    }).compile();
+
+    controller = module.get<UsersController>(UsersController);
+    service = module.get<UsersService>(UsersService);
+  });
+
+  afterEach(() => {
+    jest.clearAllMocks(); // Reset call counts between tests
+  });
+  
+  // Tests go here...
+});
+```
+
+### 2. Testing Controller Methods
+Notice that we call the controller method directly as a standard TypeScript function. We do not use Supertest or HTTP requests here.
+
+```typescript
+  describe('findOne', () => {
+    it('should return a user by ID', async () => {
+      // Arrange: Tell the mock service what to return
+      const fakeUser = { id: 1, name: 'Alice' };
+      jest.spyOn(service, 'findOne').mockResolvedValue(fakeUser);
+
+      // Act: Call the controller method directly
+      // (Pretending we are the NestJS framework passing in the @Param)
+      const result = await controller.findOne('1');
+
+      // Assert: Verify the controller returned what the service returned
+      expect(result).toEqual(fakeUser);
+      
+      // Assert: Verify the controller passed the correct arguments to the service
+      expect(service.findOne).toHaveBeenCalledWith(1); 
+    });
+  });
+
+  describe('create', () => {
+    it('should pass the DTO to the service and return the new user', async () => {
+      const dto = { name: 'Bob', email: 'bob@test.com' };
+      const createdUser = { id: 2, ...dto };
+      
+      jest.spyOn(service, 'create').mockResolvedValue(createdUser);
+
+      const result = await controller.create(dto);
+
+      expect(result).toEqual(createdUser);
+      expect(service.create).toHaveBeenCalledWith(dto);
+    });
+  });
+```
+
+## Best Practices
+- **Don't test the Framework in a Unit Test**: A common mistake is trying to write a Unit Test to verify that a `@Post()` decorator actually handles POST requests, or that `ValidationPipe` rejects a bad DTO. You cannot test those things in a Unit Test because you are just calling `controller.create(badDto)` manually as a JavaScript function! To test decorators, pipes, and routing, you *must* write an E2E test using Supertest. Controller unit tests only verify the code *inside* the curly braces of the method.

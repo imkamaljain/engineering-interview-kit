@@ -1,0 +1,74 @@
+---
+title: "Compression"
+description: "Compression in NestJS"
+importance: "MEDIUM"
+revisionTime: 10
+category: "NestJS"
+subcategory: "Performance & Scalability"
+order: 2510
+---
+
+*Compression reduces the size of the HTTP response body before it is sent over the network, drastically decreasing bandwidth usage and improving perceived load times for clients.*
+
+## Overview
+When an API returns a massive JSON payload (e.g., 5MB of analytics data), transferring that data over a 3G mobile connection could take several seconds. 
+
+By enabling gzip or Brotli compression, that 5MB JSON string can often be compressed down to 500KB (a 90% reduction), significantly speeding up the transfer. The client's browser or HTTP library automatically decompresses it upon receipt.
+
+## Key Concepts
+- **Gzip**: The historical standard for HTTP compression. Fast and universally supported by all clients.
+- **Brotli (`br`)**: A newer compression algorithm developed by Google. It offers significantly better compression ratios than Gzip, especially for text (JSON/HTML), but uses slightly more CPU to compress.
+- **Trade-off (CPU vs Network)**: Compression trades CPU cycles for network bandwidth. It takes CPU power to compress the JSON string.
+
+## Code Examples
+
+### 1. Enabling Compression in NestJS
+NestJS provides an easy wrapper via the `compression` middleware package.
+
+```bash
+npm install compression
+npm install @types/compression -D
+```
+
+Enable it in your `main.ts` file:
+
+```typescript
+// main.ts
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from './app.module';
+import * as compression from 'compression';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+  
+  // Enable gzip compression for all routes
+  app.use(compression());
+  
+  await app.listen(3000);
+}
+bootstrap();
+```
+
+### 2. Advanced Configuration
+By default, the `compression` middleware uses Gzip. You can configure the threshold (don't compress tiny payloads, as the CPU cost isn't worth the microscopic network savings) and filter which requests get compressed.
+
+```typescript
+app.use(compression({
+  // Only compress responses larger than 1024 bytes (1KB)
+  threshold: 1024,
+  
+  // Custom filter logic
+  filter: (req, res) => {
+    if (req.headers['x-no-compression']) {
+      // Don't compress responses if this specific header is present
+      return false;
+    }
+    // Fallback to standard compression filter (compresses standard text/json types)
+    return compression.filter(req, res);
+  }
+}));
+```
+
+## Best Practices
+- **Offload Compression to the Reverse Proxy (Recommended)**: While doing compression inside Node.js is easy, Node.js is single-threaded. Compressing a 10MB JSON payload will block the event loop, causing latency spikes for all other users. For high-performance systems, **do not enable compression in NestJS**. Instead, place an Nginx reverse proxy or an AWS Application Load Balancer (ALB) in front of your Node app and let *them* handle the compression. They are written in C/C++ and handle compression much more efficiently than Node.js.
+- **Don't Compress Everything**: Never compress images (JPEG, PNG, WebP) or videos (MP4). They are already highly compressed formats. Attempting to gzip a JPEG will waste CPU and might actually increase the file size. Only compress text-based formats (JSON, XML, HTML, CSS, JS).

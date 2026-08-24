@@ -1,0 +1,78 @@
+---
+title: "Authentication Guards"
+description: "Authentication Guards in NestJS"
+importance: "HIGH"
+revisionTime: 7
+category: "NestJS"
+subcategory: "Guards"
+order: 730
+---
+
+*Authentication is the process of verifying *who* a user is (e.g., verifying a JWT token). In NestJS, this is handled by Authentication Guards.*
+
+## Overview
+While you *could* write your own Authentication Guard from scratch by reading the `Authorization` header and verifying the token using the `jsonwebtoken` library, the standard approach in the NestJS ecosystem is to use the `@nestjs/passport` module.
+
+Passport is the most popular Node.js authentication library. NestJS provides a wrapper around it, allowing you to implement complex authentication strategies (Local, JWT, OAuth, SAML) rapidly using Guards.
+
+## Key Concepts
+- **`AuthGuard()`**: A factory function provided by `@nestjs/passport` that automatically generates a `CanActivate` guard for a specific passport strategy.
+- **Passport Strategies**: Classes that contain the actual logic for verifying credentials (e.g., `JwtStrategy`, `LocalStrategy`).
+- **`req.user`**: The primary goal of an Authentication Guard is to verify the token, extract the user's identity, and attach it to the request object (`req.user`) so that subsequent Guards and Controllers can use it.
+
+## Code Examples
+
+### Implementing a JWT Strategy
+First, you define the logic for verifying the token using the `PassportStrategy` class.
+
+```typescript
+import { ExtractJwt, Strategy } from 'passport-jwt';
+import { PassportStrategy } from '@nestjs/passport';
+import { Injectable } from '@nestjs/common';
+
+@Injectable()
+// "jwt" is the name of this strategy
+export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
+  constructor() {
+    super({
+      // Tell passport to look for a Bearer token in the Authorization header
+      jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
+      ignoreExpiration: false,
+      secretOrKey: 'YOUR_SECRET_KEY', 
+    });
+  }
+
+  // If passport successfully verifies the token signature, it calls this method
+  // with the decoded JSON payload from the token.
+  async validate(payload: any) {
+    // Whatever we return here is automatically attached to `req.user`!
+    return { userId: payload.sub, username: payload.username, role: payload.role };
+  }
+}
+```
+
+### Applying the Authentication Guard
+Now that the strategy is defined, we can protect our routes using the automatically generated `AuthGuard`.
+
+```typescript
+import { Controller, Get, UseGuards, Request } from '@nestjs/common';
+import { AuthGuard } from '@nestjs/passport';
+
+@Controller('profile')
+export class ProfileController {
+  
+  @Get()
+  // 1. AuthGuard('jwt') invokes the JwtStrategy.
+  // 2. If the token is missing or invalid, it throws a 401 Unauthorized.
+  // 3. If valid, the request proceeds!
+  @UseGuards(AuthGuard('jwt'))
+  getProfile(@Request() req) {
+    // We can now safely access req.user, populated by our JwtStrategy!
+    return req.user;
+  }
+}
+```
+
+## Best Practices
+- **Global Authentication**: Most modern APIs require authentication on almost every route. Instead of adding `@UseGuards(AuthGuard('jwt'))` to every controller, register the guard globally in your `AppModule` using `APP_GUARD`.
+- **Public Routes**: If you use a global authentication guard, you will need a way to bypass it for routes like login or registration. Create a custom `@Public()` decorator using `SetMetadata` and check for it in a custom AuthGuard wrapper to bypass the JWT verification.

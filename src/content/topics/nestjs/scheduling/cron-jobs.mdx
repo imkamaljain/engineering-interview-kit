@@ -1,0 +1,100 @@
+---
+title: "Cron Jobs"
+description: "Cron Jobs in NestJS"
+importance: "HIGH"
+revisionTime: 6
+category: "NestJS"
+subcategory: "Scheduling"
+order: 2220
+---
+
+*Cron Jobs allow you to schedule functions to execute at specific dates, times, or recurring intervals based on the standard Unix cron expression syntax.*
+
+## Overview
+When you need a task to run exactly at "midnight every Sunday", or "at 9:00 AM on the 1st of every month", simple JavaScript intervals (`setInterval`) are insufficient. They drift over time and don't understand calendars, leap years, or timezones.
+
+The `@Cron()` decorator relies on the `cron` package to parse standard 6-field cron expressions, ensuring your tasks run accurately according to the clock.
+
+## Key Concepts
+- **Cron Expression**: A string of 6 space-separated fields representing (in order): `Seconds`, `Minutes`, `Hours`, `Day of Month`, `Months`, `Day of Week`.
+- **Timezones**: By default, cron jobs run based on the server's local timezone. You can force them to run in a specific timezone (like `America/New_York`).
+- **CronExpression Enum**: NestJS provides a helpful Enum for common expressions so you don't have to memorize the syntax.
+
+## Code Examples
+
+### 1. Basic Cron Syntax
+The 6 fields are: `* * * * * *`
+- `*` means "every"
+- `,` is a value list separator (e.g., `1,5`)
+- `-` is a range of values (e.g., `1-5`)
+- `/` specifies increments (e.g., `*/10` means every 10 units)
+
+```typescript
+import { Injectable } from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
+
+@Injectable()
+export class ReportService {
+
+  // Runs exactly at 45 seconds past the minute, every minute of every day.
+  @Cron('45 * * * * *')
+  handleEveryMinuteAt45Seconds() {}
+
+  // Runs at 0 seconds, 0 minutes, exactly at Midnight, every day.
+  @Cron('0 0 * * * *')
+  handleMidnight() {}
+
+  // Runs on the 1st of every month at 8:30 AM
+  @Cron('0 30 8 1 * *')
+  handleMonthlyBilling() {}
+
+  // Runs every Monday through Friday (1-5) at 9:00 AM
+  @Cron('0 0 9 * * 1-5')
+  handleWeekdayMornings() {}
+}
+```
+
+### 2. Using the CronExpression Enum
+To avoid syntax errors and make your code more readable, NestJS exports the `CronExpression` enum.
+
+```typescript
+import { Injectable } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
+
+@Injectable()
+export class MaintenanceService {
+
+  // Much easier to read!
+  @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
+  runDailyBackup() {
+    console.log('Backing up database...');
+  }
+
+  @Cron(CronExpression.EVERY_1ST_DAY_OF_MONTH_AT_NOON)
+  generateMonthlyInvoices() {}
+}
+```
+
+### 3. Handling Timezones
+If your server is in London (UTC), but your business operates in New York (EST), a midnight cron job will run at 7:00 PM New York time! You must specify the timezone.
+
+```typescript
+import { Injectable } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
+
+@Injectable()
+export class LocalizedService {
+
+  @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT, {
+    name: 'nyc_midnight_task',
+    timeZone: 'America/New_York', // Uses IANA timezone strings
+  })
+  runAtNewYorkMidnight() {
+    console.log('It is midnight in New York!');
+  }
+}
+```
+
+## Best Practices
+- **Always Specify Timezones**: Unless your application is purely internal and timezone-agnostic, always provide the `timeZone` option. If you migrate your server from AWS us-east-1 to AWS eu-central-1, the server's default timezone might change, breaking all your scheduled jobs!
+- **Long-Running Jobs**: If your cron job takes 5 minutes to run, and it is scheduled to run every 1 minute (`* * * * *`), the executions will overlap! This can cause database deadlocks and memory crashes. Either ensure the job runs faster than its interval, or implement locking (e.g., using Redis) so a second instance of the job immediately aborts if the first instance is still running.

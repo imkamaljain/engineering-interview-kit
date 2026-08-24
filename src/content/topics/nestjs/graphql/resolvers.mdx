@@ -1,0 +1,95 @@
+---
+title: "Resolvers"
+description: "Resolvers in NestJS"
+importance: "HIGH"
+revisionTime: 11
+category: "NestJS"
+subcategory: "GraphQL"
+order: 1650
+---
+
+*Resolvers provide the instructions for turning a GraphQL operation (a query, mutation, or subscription) into actual data. They are the GraphQL equivalent of REST Controllers.*
+
+## Overview
+In a REST API, you route an HTTP GET request to a specific Controller method. In GraphQL, all requests go to the same endpoint (`/graphql`). The GraphQL engine parses the incoming query and delegates the work of fetching the requested fields to specific functions called **Resolvers**.
+
+In NestJS, Resolvers are simply classes annotated with the `@Resolver()` decorator, containing methods annotated with `@Query()`, `@Mutation()`, or `@ResolveField()`.
+
+## Key Concepts
+- **`@Resolver()`**: Marks a class as a resolver. It typically takes the Object Type it is resolving as an argument (e.g., `@Resolver(() => Author)`).
+- **Root/Parent Object**: When resolving a nested field (like an Author's posts), the resolver receives the "Parent" object (the Author) so it knows whose posts to fetch.
+- **Dependency Injection**: Resolvers participate fully in the NestJS DI container. You inject services and repositories into their constructors exactly like you do with Controllers.
+
+## Code Examples
+
+### 1. A Basic Resolver (Queries)
+This resolver handles requests for the `Author` object type.
+
+```typescript
+import { Resolver, Query, Args } from '@nestjs/graphql';
+import { Author } from './models/author.model';
+import { AuthorsService } from './authors.service';
+
+// 1. Tell NestJS this class resolves fields for the Author type
+@Resolver(() => Author)
+export class AuthorsResolver {
+  
+  // 2. Inject your business logic service
+  constructor(private authorsService: AuthorsService) {}
+
+  // 3. Define a Query endpoint: query { author(id: 1) { name } }
+  @Query(() => Author, { name: 'author', nullable: true })
+  async getAuthor(@Args('id') id: number) {
+    return this.authorsService.findOneById(id);
+  }
+
+  // 4. Define another Query: query { allAuthors { name } }
+  @Query(() => [Author])
+  async allAuthors() {
+    return this.authorsService.findAll();
+  }
+}
+```
+
+### 2. Field Resolvers (Resolving Nested Data)
+This is where GraphQL shines. Imagine a client asks for an Author, AND all of that Author's posts. The `getAuthor` query above only returns the Author's basic data from the `authors` table. 
+
+We need a way to fetch the posts *only if the client asks for them*. We do this using `@ResolveField()`.
+
+```typescript
+import { Resolver, Query, ResolveField, Parent } from '@nestjs/graphql';
+import { Author } from './models/author.model';
+import { Post } from '../posts/models/post.model';
+import { PostsService } from '../posts/posts.service';
+
+@Resolver(() => Author)
+export class AuthorsResolver {
+  constructor(private postsService: PostsService) {}
+
+  // ... (getAuthor query omitted for brevity)
+
+  // This method ONLY executes if the incoming GraphQL query explicitly asks for the 'posts' field!
+  /*
+     query { 
+       author(id: 1) { 
+         name
+         posts { title }  <-- This triggers the method below
+       } 
+     }
+  */
+  @ResolveField('posts', () => [Post])
+  async getPostsForAuthor(
+    // @Parent() injects the Author object that was just returned by the getAuthor query!
+    @Parent() author: Author 
+  ) {
+    const { id } = author;
+    
+    // Fetch posts belonging to this specific author ID
+    return this.postsService.findAllByAuthorId(id);
+  }
+}
+```
+
+## Best Practices
+- **Keep Resolvers Thin**: Exactly like REST Controllers, Resolvers should not contain complex business logic or SQL queries. Their only job is to receive the GraphQL arguments, pass them to a Service class, and return the result.
+- **The N+1 Problem**: The `@ResolveField()` example above is elegant, but dangerous. If a client queries `allAuthors { posts { title } }`, and there are 100 authors, the `getPostsForAuthor` method will execute 100 separate times, resulting in 101 database queries (1 to get authors, 100 to get posts). **You must use Dataloader** (discussed in a later topic) inside your field resolvers to batch these queries and prevent crashing your database.

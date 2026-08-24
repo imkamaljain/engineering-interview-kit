@@ -1,0 +1,99 @@
+---
+title: "Request Logging"
+description: "Request Logging in NestJS"
+importance: "MEDIUM"
+revisionTime: 6
+category: "NestJS"
+subcategory: "Observability"
+order: 2830
+---
+
+*Request Logging involves automatically recording metadata about every incoming HTTP request and outgoing HTTP response. It provides the baseline visibility needed to understand traffic patterns and debug API issues.*
+
+## Overview
+If a user complains that "the API is slow", you cannot debug it without Request Logging. You need to know: Which endpoint? What time? How long did it take? What was their IP?
+
+While you *could* manually put `this.logger.log('Request received')` in every controller, this violates the DRY principle and is easily forgotten. In NestJS, request logging is best handled globally using **Middleware** or **Interceptors**.
+
+## Key Concepts
+- **Middleware**: Executes before the route handler. Great for logging incoming request details (IP, User-Agent). However, standard middleware doesn't easily know when the response *finishes*, making it hard to log response times.
+- **Interceptors**: Wraps the request *and* response. This makes Interceptors perfect for logging the total execution time (latency) of a request.
+- **morgan / pino-http**: Standard Node.js HTTP logging libraries that can be easily integrated into NestJS.
+
+## Code Examples
+
+### 1. The Interceptor Approach (Latency Tracking)
+An interceptor is the most "Nest-native" way to log requests because it ties directly into the RxJS stream, allowing you to easily calculate exactly how long a request took.
+
+```typescript
+import { Injectable, NestInterceptor, ExecutionContext, CallHandler, Logger } from '@nestjs/common';
+import { Observable } from 'rxjs';
+import { tap } from 'rxjs/operators';
+
+@Injectable()
+export class LoggingInterceptor implements NestInterceptor {
+  private readonly logger = new Logger('HTTP');
+
+  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+    const ctx = context.switchToHttp();
+    const request = ctx.getRequest();
+    const method = request.method;
+    const url = request.originalUrl;
+    
+    const now = Date.now();
+
+    // 'next.handle()' executes the actual route controller.
+    // 'tap' lets us do something when the response is sent back.
+    return next.handle().pipe(
+      tap({
+        next: () => {
+          const response = ctx.getResponse();
+          const delay = Date.now() - now;
+          this.logger.log(`${method} ${url} ${response.statusCode} - ${delay}ms`);
+        },
+        error: (error) => {
+          const delay = Date.now() - now;
+          // Note: Exceptions are usually caught by ExceptionFilters later, 
+          // but we can still log the failure latency here.
+          this.logger.error(`${method} ${url} FAILED - ${delay}ms`, error.stack);
+        }
+      }),
+    );
+  }
+}
+```
+
+Apply it globally in `main.ts`:
+```typescript
+app.useGlobalInterceptors(new LoggingInterceptor());
+```
+
+### 2. The Middleware Approach (Using Morgan)
+If you want industry-standard Apache-style logs, you can use the classic Express middleware `morgan`.
+
+```bash
+npm install morgan
+npm install @types/morgan -D
+```
+
+```typescript
+// main.ts
+import * as morgan from 'morgan';
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from './app.module';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+  
+  // Use morgan globally. 
+  // 'tiny' format outputs: :method :url :status :res[content-length] - :response-time ms
+  app.use(morgan('tiny'));
+  
+  await app.listen(3000);
+}
+bootstrap();
+```
+
+## Best Practices
+- **Exclude Health Checks**: If you have a load balancer pinging `/health` every 5 seconds, your logs will be completely flooded with useless `/health 200` messages. Configure your logger to ignore `/health` and `/metrics` endpoints.
+- **Do not log request bodies by default**: Logging the `req.body` of every POST request is dangerous. It will inevitably log passwords, credit cards, or enormous JSON payloads that bloat your log storage. Log method, URL, status code, latency, and user ID. If you must log payloads for debugging, ensure sensitive fields are strictly redacted.

@@ -1,0 +1,102 @@
+---
+title: "Error Response Formatting"
+description: "Error Response Formatting in NestJS"
+importance: "HIGH"
+revisionTime: 14
+category: "NestJS"
+subcategory: "Exception Handling"
+order: 960
+---
+
+*Error Response Formatting ensures that no matter what kind of error occurs in your application, the client always receives a predictable JSON structure.*
+
+## Overview
+A common frustration for frontend developers is APIs that return errors in wildly different formats. Sometimes it's `{ "message": "Failed" }`, other times `{ "error_code": 123, "details": "Failed" }`, and sometimes it's just plain text `"Internal Server Error"`.
+
+In NestJS, you can use a Global Exception Filter to enforce a strict contract for all error responses across your entire architecture.
+
+## Key Concepts
+- **Standard Envelope**: Creating a single TypeScript `interface` that defines your error format.
+- **Catching Everything**: Using a global filter that catches `Error` (the base class for almost everything in Node.js) to guarantee nothing slips through.
+- **Context Injection**: Adding helpful metadata to the error response, like the URL that failed or a timestamp, to aid in debugging.
+
+## Code Examples
+
+### 1. Define the Standard Interface
+First, define exactly what your frontend should expect.
+
+```typescript
+// error-response.interface.ts
+export interface StandardErrorResponse {
+  success: false;
+  statusCode: number;
+  message: string | string[]; // Can be a string or array of strings (for validation errors)
+  error: string; // E.g., 'Bad Request', 'Not Found'
+  timestamp: string;
+  path: string;
+  traceId?: string; // Helpful for distributed tracing (Datadog/NewRelic)
+}
+```
+
+### 2. Implement the Formatter Filter
+This filter acts as the final gatekeeper, translating both standard `HttpException`s and unknown `Error`s into your standard interface.
+
+```typescript
+import { ExceptionFilter, Catch, ArgumentsHost, HttpException, HttpStatus } from '@nestjs/common';
+import { Request, Response } from 'express';
+import { StandardErrorResponse } from './error-response.interface';
+import { v4 as uuidv4 } from 'uuid'; // Generate unique trace IDs
+
+@Catch()
+export class ResponseFormattingFilter implements ExceptionFilter {
+  catch(exception: unknown, host: ArgumentsHost) {
+    const ctx = host.switchToHttp();
+    const response = ctx.getResponse<Response>();
+    const request = ctx.getRequest<Request>();
+
+    // 1. Determine Status Code
+    const status = exception instanceof HttpException
+      ? exception.getStatus()
+      : HttpStatus.INTERNAL_SERVER_ERROR;
+
+    // 2. Extract Message
+    // HttpExceptions often contain detailed objects (e.g., from class-validator)
+    let message = 'Internal server error';
+    let errorType = 'Internal Error';
+
+    if (exception instanceof HttpException) {
+      const responsePayload = exception.getResponse();
+      if (typeof responsePayload === 'string') {
+        message = responsePayload;
+      } else if (typeof responsePayload === 'object' && responsePayload !== null) {
+        // Extract message array from class-validator payloads
+        message = (responsePayload as any).message || message;
+        errorType = (responsePayload as any).error || errorType;
+      }
+    }
+
+    // 3. Construct the Standardized Envelope
+    const errorResponse: StandardErrorResponse = {
+      success: false,
+      statusCode: status,
+      message: message,
+      error: errorType,
+      timestamp: new Date().toISOString(),
+      path: request.url,
+      traceId: uuidv4(), // Generate a unique ID so the user can report it to support
+    };
+
+    // 4. Log it (especially if it's a 500!)
+    if (status >= 500) {
+       console.error(`[TraceID: ${errorResponse.traceId}] CRITICAL ERROR:`, exception);
+    }
+
+    // 5. Send it
+    response.status(status).json(errorResponse);
+  }
+}
+```
+
+## Best Practices
+- **Keep it Simple**: Don't leak stack traces in your error formatting unless the `NODE_ENV` is set to `development`. In production, stack traces expose your infrastructure layout.
+- **Trace IDs**: Adding a `traceId` to your error format is an industry best practice. If a user gets an error, they can screenshot the `traceId` and send it to customer support. The support team can then search your backend logs for that exact string to find the exact stack trace that caused the user's issue.

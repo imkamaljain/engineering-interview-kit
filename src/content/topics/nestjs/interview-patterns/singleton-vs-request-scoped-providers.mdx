@@ -1,0 +1,80 @@
+---
+title: "Singleton vs Request-scoped Providers"
+description: "Singleton vs Request-scoped Providers in NestJS"
+importance: "HIGH"
+revisionTime: 14
+category: "NestJS"
+subcategory: "Interview Patterns"
+order: 2940
+---
+
+*Injection Scopes determine the lifetime of a provider instantiated by the NestJS IoC container. Choosing the wrong scope can lead to catastrophic memory leaks, performance degradation, and cross-request data contamination.*
+
+## Overview
+By default, every provider in NestJS is a **Singleton**. 
+
+This means when the application starts, NestJS calls `new UsersService()` exactly *once*. Every time a controller, guard, or interceptor asks for `UsersService`, NestJS hands them that exact same instance.
+
+However, sometimes you need a brand new instance of a service for every single incoming HTTP request (for example, a `TenantService` that needs to hold the `tenantId` extracted from the current user's request headers). This is called **Request Scope**.
+
+## Key Concepts
+- **`Scope.DEFAULT` (Singleton)**: One instance shared across the entire application. Instantiated at startup. Maximum performance.
+- **`Scope.REQUEST`**: A new instance is created exclusively for each incoming HTTP request, and garbage collected when the request finishes.
+- **`Scope.TRANSIENT`**: A new instance is created every single time it is injected anywhere, regardless of the request.
+
+## The Viral Nature of Request Scope (The Danger)
+Scope bubbles up the dependency tree. If `ControllerA` depends on `ServiceB`, and `ServiceB` depends on `ServiceC`... 
+
+If you make `ServiceC` Request-Scoped, NestJS is forced to make `ServiceB` Request-Scoped (so it can inject the new C), and forced to make `ControllerA` Request-Scoped. 
+
+Suddenly, an entire branch of your application is being instantiated from scratch, thousands of times per second, on every HTTP request. This severely degrades performance and triggers massive Garbage Collection pauses in Node.js.
+
+## Code Examples
+
+### 1. Default (Singleton) Scope
+Notice that state stored in a Singleton is shared among ALL users. This is a common bug!
+
+```typescript
+import { Injectable } from '@nestjs/common';
+
+@Injectable() // Scope is DEFAULT implicitly
+export class CounterService {
+  private count = 0; // DANGER: This is shared globally!
+
+  increment() {
+    this.count++; 
+    return this.count;
+  }
+}
+// If User A calls increment(), it returns 1.
+// If User B calls increment() 1 millisecond later, it returns 2!
+```
+
+### 2. Request Scope
+To safely store user-specific state inside a service, you must use `Scope.REQUEST`.
+
+```typescript
+import { Injectable, Scope, Inject } from '@nestjs/common';
+import { REQUEST } from '@nestjs/core';
+import { Request } from 'express';
+
+@Injectable({ scope: Scope.REQUEST })
+export class TenantService {
+  private tenantId: string;
+
+  // We can inject the raw Express request object because this service 
+  // only exists within the context of a single request!
+  constructor(@Inject(REQUEST) private request: Request) {
+    this.tenantId = request.headers['x-tenant-id'] as string;
+  }
+
+  getTenantId() {
+    return this.tenantId; // Safe: Isolated per HTTP request
+  }
+}
+```
+
+## Best Practices
+- **Avoid Request Scope if Possible**: You should almost never use `Scope.REQUEST`. Instead of storing the `tenantId` in a service property, extract it in the Controller and pass it as an argument to your singleton service's methods (e.g., `service.doWork(tenantId)`). This maintains the massive performance benefits of Singletons.
+- **Passing Data via `req.locals`**: If you need to pass data from a Middleware/Guard down to an Interceptor, do not use a Request-Scoped service. Simply mutate the request object (`req['customData'] = 'foo'`) and read it later.
+- **`cls-hooked` / AsyncLocalStorage**: If you truly need request-isolated state deeply nested in your application without the performance hit of Request Scope, use Node's `AsyncLocalStorage` (often wrapped by the `nestjs-cls` community package). It allows you to store request-scoped data while keeping all your NestJS services as high-performance Singletons.

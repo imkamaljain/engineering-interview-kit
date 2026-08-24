@@ -1,0 +1,94 @@
+---
+title: "Message Patterns"
+description: "Message Patterns in NestJS"
+importance: "MEDIUM"
+revisionTime: 7
+category: "NestJS"
+subcategory: "Microservices"
+order: 1860
+---
+
+*Message Patterns are the routing mechanism used by NestJS microservices for Request-Response communication. They allow a microservice to listen for specific commands, process them, and return a result back to the sender.*
+
+## Overview
+In a REST API, you route requests using HTTP methods and paths (`@Get('/users')`). 
+In a Microservice, HTTP doesn't exist. Instead, you route requests using "Patterns".
+
+A pattern is simply a plain JavaScript object (or a string) that acts as a routing key. When a client sends a message, the NestJS transporter looks at the pattern attached to that message and routes it to the controller method decorated with the exact matching `@MessagePattern()`.
+
+## Key Concepts
+- **`@MessagePattern()`**: The decorator used on a controller method to define which messages it should handle.
+- **Request/Response**: Message patterns inherently imply a two-way conversation. The sender expects a response back.
+- **Pattern Matching**: NestJS compares the incoming pattern with the registered patterns. It supports strings, objects, and even complex nested objects.
+
+## Code Examples
+
+### 1. String Patterns
+The simplest form of routing, often used with transporters like Redis or NATS where strings are the native routing keys.
+
+```typescript
+import { Controller } from '@nestjs/common';
+import { MessagePattern, Payload } from '@nestjs/microservices';
+
+@Controller()
+export class MathController {
+  
+  // Listens for exactly the string 'math.sum'
+  @MessagePattern('math.sum')
+  accumulate(@Payload() data: number[]): number {
+    return (data || []).reduce((a, b) => a + b);
+  }
+}
+```
+*Client call: `client.send('math.sum', [1, 2, 3])`*
+
+### 2. Object Patterns
+Object patterns are standard in NestJS because they allow for hierarchical, structured routing.
+
+```typescript
+import { Controller } from '@nestjs/common';
+import { MessagePattern } from '@nestjs/microservices';
+
+@Controller()
+export class UsersController {
+  
+  // Listens for a specific object structure
+  @MessagePattern({ cmd: 'create_user' })
+  createUser(data: any) {
+    return { id: 1, ...data };
+  }
+
+  // You can create hierarchical routing
+  @MessagePattern({ service: 'users', action: 'delete' })
+  deleteUser(data: { id: number }) {
+    return { deleted: true };
+  }
+}
+```
+*Client call: `client.send({ service: 'users', action: 'delete' }, { id: 5 })`*
+
+### 3. Extracting the Payload and Context
+Usually, the data sent by the client is just passed as the first argument to the method. However, you can explicitly use decorators to extract the payload and transporter-specific context.
+
+```typescript
+import { Controller } from '@nestjs/common';
+import { MessagePattern, Payload, Ctx, RedisContext } from '@nestjs/microservices';
+
+@Controller()
+export class NotificationsController {
+  
+  @MessagePattern({ cmd: 'send_email' })
+  sendEmail(
+    @Payload() data: { to: string, body: string },
+    @Ctx() context: RedisContext // If using Redis!
+  ) {
+    // You can access underlying broker details if needed
+    console.log(`Received message on channel: ${context.getChannel()}`);
+    return 'Sent!';
+  }
+}
+```
+
+## Best Practices
+- **Use Object Patterns for Scalability**: While string patterns (`'users.create'`) are easy, object patterns (`{ service: 'users', cmd: 'create' }`) are much easier to organize in large codebases. You can define these patterns as constants in a shared library to ensure the Client and Server never get out of sync.
+- **Return Observables or Promises**: A `@MessagePattern` handler must return a value (since the sender is waiting for it). You can return synchronous values, Promises, or RxJS Observables. NestJS will automatically serialize the result and send it back over the network to the client.

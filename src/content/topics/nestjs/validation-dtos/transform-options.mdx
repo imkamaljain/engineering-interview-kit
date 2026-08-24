@@ -1,0 +1,83 @@
+---
+title: "Transform Options"
+description: "Transform Options in NestJS"
+importance: "MEDIUM"
+revisionTime: 9
+category: "NestJS"
+subcategory: "Validation & DTOs"
+order: 1070
+---
+
+*Transform Options allow the `ValidationPipe` to automatically cast incoming data into the correct JavaScript types, bridging the gap between raw HTTP strings and strongly-typed objects.*
+
+## Overview
+A major annoyance in web development is dealing with query parameters and URL parameters. In HTTP, every query parameter (e.g., `?limit=10&active=true`) is transmitted as a string.
+
+If your DTO defines `limit: number`, but receives the string `"10"`, `class-validator`'s `@IsNumber()` will fail! You have to manually parse it. The `transform` options in `ValidationPipe` automate this entire process using the `class-transformer` library under the hood.
+
+## Key Concepts
+- **`transform: true`**: The base setting. It ensures the plain JSON object is instantiated as your DTO class.
+- **`enableImplicitConversion: true`**: A sub-option that tells `class-transformer` to look at your TypeScript types (`number`, `boolean`) and try to automatically cast the incoming string to that type.
+
+## Code Examples
+
+### The Problem (Without Transformation)
+```typescript
+class PaginationQueryDto {
+  @IsNumber()
+  limit: number;
+}
+
+// Request: /users?limit=10
+// The plain object is: { "limit": "10" }
+// @IsNumber() fails because typeof "10" === 'string'!
+```
+
+### The Solution: Global Configuration
+Enable implicit conversion in your global pipe setup.
+
+```typescript
+// main.ts
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+
+  app.useGlobalPipes(
+    new ValidationPipe({
+      transform: true, // 1. Enable transformation
+      transformOptions: {
+        enableImplicitConversion: true, // 2. Enable type guessing
+      },
+    }),
+  );
+  await app.listen(3000);
+}
+```
+
+### The Result
+Now, you don't even need `@Type(() => Number)` decorators on your primitives.
+
+```typescript
+// pagination.dto.ts
+import { IsNumber, IsBoolean, IsOptional } from 'class-validator';
+
+export class PaginationQueryDto {
+  @IsOptional()
+  @IsNumber()
+  limit?: number; // "10" becomes 10 automatically!
+
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean; // "true" becomes true automatically!
+}
+
+// controller.ts
+@Get()
+findAll(@Query() query: PaginationQueryDto) {
+  // You can safely do math!
+  const offset = query.limit * 5; 
+}
+```
+
+## Best Practices
+- **Query and Param Routing**: Implicit conversion is incredibly powerful for `@Query()` and `@Param()` decorators. It allows you to use `@Param('id', ParseIntPipe)` less frequently, as you can just bind the param to a DTO with a `number` type.
+- **Performance Consideration**: While `enableImplicitConversion` is wonderfully convenient, it does add a slight performance overhead because the transformer has to reflect on the metadata of every property. For the vast majority of applications, this overhead is completely negligible compared to database latency, but in ultra-high-throughput microservices, you might prefer explicit `@Type(() => Number)` decorators instead.

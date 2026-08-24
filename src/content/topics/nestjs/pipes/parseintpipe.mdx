@@ -1,0 +1,67 @@
+---
+title: "ParseIntPipe"
+description: "ParseIntPipe in NestJS"
+importance: "MEDIUM"
+revisionTime: 11
+category: "NestJS"
+subcategory: "Pipes"
+order: 610
+---
+
+*The `ParseIntPipe` ensures that a parameter can be evaluated as an integer, and transforms the incoming string into a JavaScript number type.*
+
+## Overview
+Because HTTP URL parameters (both route segments and query strings) are fundamentally strings, you must convert them before using them in mathematical operations or database queries that expect integers (like looking up a user by a numeric ID).
+
+`ParseIntPipe` acts as a safeguard: it parses the string, and if the string contains letters or symbols (like `?id=abc`), it immediately throws a 400 Bad Request exception, preventing bad data from reaching your controller.
+
+## Key Concepts
+- **Strict Integer Validation**: It uses base-10 parsing. It will reject floats/decimals (e.g., `"3.14"` will fail). If you need decimals, use `ParseFloatPipe` instead.
+- **Automatic Exception**: Throws a `BadRequestException` if parsing fails.
+- **Radix**: By default, it parses in base-10.
+
+## Code Examples
+
+### Route Parameters (Most Common)
+When defining routes like `/users/:id`, the `:id` is a string. `ParseIntPipe` safely converts it.
+
+```typescript
+import { Controller, Get, Param, ParseIntPipe } from '@nestjs/common';
+import { UsersService } from './users.service';
+
+@Controller('users')
+export class UsersController {
+  constructor(private readonly usersService: UsersService) {}
+
+  @Get(':id')
+  // Automatically blocks requests to /users/abc
+  findOne(@Param('id', ParseIntPipe) id: number) {
+    // 'id' is guaranteed to be a number here
+    return this.usersService.findById(id); 
+  }
+}
+```
+
+### Custom Exception Factories
+Sometimes you want to return a different status code or a custom error payload when a user provides an invalid ID.
+
+```typescript
+import { BadRequestException } from '@nestjs/common';
+
+@Get(':id')
+findOne(
+  @Param('id', new ParseIntPipe({ 
+    exceptionFactory: (error) => {
+      // Return a custom formatted error instead of the default NestJS error
+      return new BadRequestException(`The provided ID must be a numeric integer. Original error: ${error}`);
+    }
+  })) 
+  id: number
+) {
+  return this.usersService.findById(id);
+}
+```
+
+## Best Practices
+- **Essential for ORMs**: If you are using TypeORM, Prisma, or Sequelize with numeric primary keys, you *must* use `ParseIntPipe`. Passing a string to an ORM's `findById` method can cause unexpected behavior or database errors.
+- **Floats vs Ints**: Be mindful of the data you are expecting. If you are accepting a `price` query parameter (e.g., `?price=19.99`), `ParseIntPipe` will throw an error. Use `ParseFloatPipe` for currency or decimals.

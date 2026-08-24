@@ -1,0 +1,67 @@
+---
+title: "Middleware vs Guards vs Interceptors vs Pipes"
+description: "Middleware vs Guards vs Interceptors vs Pipes in NestJS"
+importance: "HIGH"
+revisionTime: 5
+category: "NestJS"
+subcategory: "Interview Patterns"
+order: 2930
+---
+
+*The most common architectural question in NestJS interviews is understanding the exact order of execution and distinct responsibilities of the four major Request Lifecycle components: Middleware, Guards, Interceptors, and Pipes.*
+
+## Overview (The Request Lifecycle)
+When an HTTP request enters a NestJS application, it passes through these layers in this exact order:
+
+1. **Middleware**: Raw HTTP manipulation.
+2. **Guards**: Authentication & Authorization (Yes/No).
+3. **Interceptors (Pre-Controller)**: Transforming the *request* before the handler.
+4. **Pipes**: Data validation and transformation.
+5. **Controller (Handler)**: The actual business logic execution.
+6. **Interceptors (Post-Controller)**: Transforming the *response* after the handler.
+7. **Exception Filters**: Catching any errors thrown during steps 1-6.
+
+## 1. Middleware
+- **What it is**: Express/Fastify functions (`req, res, next`).
+- **Context**: Blind. Does not know what Controller will be executed.
+- **Use Case**: Logging, Helmet (security headers), Body Parsing, raw Rate Limiting.
+- **Rule of Thumb**: If it's a standard npm package built for Express (like `cookie-parser`), use Middleware.
+
+## 2. Guards
+- **What it is**: Context-aware access control. Returns a boolean (`true`/`false`).
+- **Context**: Aware of the Controller and Method metadata via `ExecutionContext`.
+- **Use Case**: Role-Based Access Control (RBAC), verifying JWTs, checking permissions.
+- **Rule of Thumb**: If the logic answers the question "Is the user allowed to do this?", it must be a Guard.
+
+## 3. Interceptors
+- **What it is**: The most powerful layer. Interceptors wrap the Controller method using RxJS Observables. They can run logic *before* the method executes, and *after* the method returns.
+- **Context**: Fully aware of the ExecutionContext and the `CallHandler`.
+- **Use Case**:
+  - *Pre-Controller*: Caching (if data is in Redis, return it and skip the Controller entirely), timing request duration.
+  - *Post-Controller*: Wrapping all responses in a standard JSON format (e.g., `{ data: result }`), stripping out null values.
+- **Rule of Thumb**: If you need to mutate the final HTTP response data, or if you need to measure how long a function took, use an Interceptor.
+
+## 4. Pipes
+- **What it is**: Data transformers and validators.
+- **Context**: Only runs on specific arguments (e.g., `@Body()`, `@Query()`).
+- **Use Case**: 
+  - *Validation*: Using `class-validator` to ensure the DTO is valid. Throwing a 400 Bad Request if it fails.
+  - *Transformation*: Converting a string query parameter (`?id=5`) into a Javascript Integer (`5`), or looking up a User by ID and passing the full User entity into the Controller.
+- **Rule of Thumb**: If you are validating input data, use a Pipe.
+
+## Interview Cheatsheet Comparison
+
+| Feature | Middleware | Guards | Interceptors | Pipes |
+| :--- | :--- | :--- | :--- | :--- |
+| **Execution Order** | 1st | 2nd | 3rd (and 5th) | 4th |
+| **Aware of Controller?**| No | Yes | Yes | Yes (Method Args) |
+| **Can Stop Request?** | Yes (res.send) | Yes (throw 403) | Yes (Return RxJS of()) | Yes (throw 400) |
+| **Can Modify Request?** | Yes | No (Anti-pattern)| Yes | Yes (Modifies Args) |
+| **Can Modify Response?**| Yes | No | Yes (Using RxJS `map`) | No |
+
+## Best Practices
+- **Do not mix responsibilities**: 
+  - Do not do Validation in a Guard.
+  - Do not do Authorization in an Interceptor. 
+  - Do not do Data Formatting in a Middleware.
+  - NestJS is highly opinionated; following the correct layer prevents spaghetti code and makes unit testing significantly easier.

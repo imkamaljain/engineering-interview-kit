@@ -1,0 +1,118 @@
+---
+title: "DataLoader"
+description: "DataLoader in NestJS"
+importance: "MEDIUM"
+revisionTime: 7
+category: "NestJS"
+subcategory: "GraphQL"
+order: 1750
+---
+
+*DataLoader is a utility created by Facebook to solve the notorious "N+1 query problem" that plagues GraphQL applications. It batches and caches database requests within a single HTTP request cycle.*
+
+## Overview
+Because GraphQL resolves fields independently via `@ResolveField()`, it often makes highly inefficient database queries.
+
+Imagine a query: `query { users { id, company { name } } }`. 
+If there are 50 users, GraphQL will fetch the users (1 query), and then call the `resolveCompany` function 50 separate times, resulting in 50 separate `SELECT * FROM company WHERE id = ?` queries. This is the **1 + N Problem** (1 query for the list, N queries for the children).
+
+DataLoader solves this by waiting for a single tick of the Node.js event loop, gathering all 50 requested company IDs, and executing a single batch query: `SELECT * FROM company WHERE id IN (?, ?, ...)`.
+
+## Key Concepts
+- **Batching**: Grouping multiple independent data requests into a single database query.
+- **Per-Request Cache**: DataLoader creates a temporary cache that lives *only* for the duration of the current HTTP request. If 10 users in the list belong to "Company A" (ID: 1), DataLoader will only query the database for ID 1 once.
+- **Context Injection**: Because DataLoaders maintain a per-request cache, they MUST be created brand new for every single incoming HTTP request. They are typically injected via the GraphQL Context.
+
+## Code Examples
+
+### 1. Creating the Batch Function
+First, write a function that takes an array of keys and returns a Promise of an array of results, *in the exact same order*.
+
+```typescript
+// company.service.ts
+import { Injectable } from '@nestjs/common';
+import { In } from 'typeorm';
+
+@Injectable()
+export class CompanyService {
+  constructor(private repo: CompanyRepository) {}
+
+  // The batch function required by DataLoader
+  async getCompaniesByIds(ids: number[]): Promise<Company[]> {
+    const companies = await this.repo.find({ where: { id: In(ids) } });
+    
+    // IMPORTANT: DataLoader requires the returned array to be the exact same length 
+    // and in the exact same order as the input 'ids' array!
+    const companyMap = new Map(companies.map(c => [c.id, c]));
+    return ids.map(id => companyMap.get(id) || null);
+  }
+}
+```
+
+### 2. Setting up the DataLoader Factory
+NestJS doesn't have a built-in DataLoader wrapper, so you must create a factory provider.
+
+```typescript
+// dataloader.service.ts
+import { Injectable } from '@nestjs/common';
+import * as DataLoader from 'dataloader';
+import { CompanyService } from './company.service';
+
+@Injectable()
+export class DataloaderService {
+  constructor(private companyService: CompanyService) {}
+
+  // This factory returns an object containing new DataLoader instances
+  getLoaders() {
+    return {
+      companyLoader: new DataLoader<number, Company>(
+        (ids: number[]) => this.companyService.getCompaniesByIds(ids)
+      )
+    };
+  }
+}
+```
+
+### 3. Injecting via GraphQL Context
+Inject the loader factory into your `GraphQLModule` context so a new instance is created on every request.
+
+```typescript
+// app.module.ts
+GraphQLModule.forRootAsync<ApolloDriverConfig>({
+  driver: ApolloDriver,
+  imports: [DataloaderModule],
+  inject: [DataloaderService],
+  useFactory: (dataloaderService: DataloaderService) => ({
+    autoSchemaFile: true,
+    context: () => ({
+      // Create fresh DataLoaders for every incoming request!
+      loaders: dataloaderService.getLoaders(),
+    }),
+  }),
+})
+```
+
+### 4. Using DataLoader in a Resolver
+Finally, use the loader inside your `@ResolveField()` instead of making a direct database call.
+
+```typescript
+import { Resolver, ResolveField, Parent, Context } from '@nestjs/graphql';
+
+@Resolver(() => User)
+export class UsersResolver {
+  
+  @ResolveField('company', () => Company)
+  getCompany(
+    @Parent() user: User,
+    @Context() ctx: { loaders: { companyLoader: DataLoader<number, Company> } }
+  ) {
+    // Instead of querying the DB, we "load" the ID into the DataLoader.
+    // The DataLoader will wait a tick, batch all requested IDs, and resolve this Promise!
+    return ctx.loaders.companyLoader.load(user.companyId);
+  }
+}
+```
+
+## Best Practices
+- **Order and Length Matter**: The most common DataLoader bug is failing to map the database results back to the requested IDs perfectly. If DataLoader asks for IDs `[3, 1, 2]`, and your database returns `[{id: 1}, {id: 2}, {id: 3}]`, DataLoader will assign company 1 to user 3! You *must* sort the results to match the input keys.
+- **Never use a Global DataLoader**: If you make a DataLoader instance a `@Global()` singleton in NestJS, its cache will persist across multiple users. User A requests their private profile (ID 1). User B requests ID 1, and the global DataLoader returns User A's cached private profile! DataLoaders MUST be instantiated per-request via the Context.

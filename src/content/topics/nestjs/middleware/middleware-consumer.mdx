@@ -1,0 +1,88 @@
+---
+title: "Middleware Consumer"
+description: "Middleware Consumer in NestJS"
+importance: "LOW"
+revisionTime: 6
+category: "NestJS"
+subcategory: "Middleware"
+order: 540
+---
+
+*The `MiddlewareConsumer` is a helper class that provides built-in methods for managing middleware execution, targeting specific routes, and excluding others.*
+
+## Overview
+Unlike Controllers and Providers, you don't register Middleware in the `@Module()` decorator. 
+
+Instead, a module class must implement the `NestModule` interface, which requires a `configure()` method. NestJS passes a `MiddlewareConsumer` instance into this method, allowing you to fluidly chain configuration rules defining exactly where and how your middleware should run.
+
+## Key Concepts
+- **`apply()`**: Takes a single middleware (or a comma-separated list of multiple middlewares) that you want to attach.
+- **`forRoutes()`**: Specifies the targets (controllers, path strings, or route objects) where the middleware should execute.
+- **`exclude()`**: Specifies specific routes that should be ignored by the middleware, even if they match the `forRoutes` criteria.
+
+## Code Examples
+
+### Targeting Controllers
+The cleanest way to apply middleware is to pass the Controller class directly. It will apply to all routes defined inside that controller.
+
+```typescript
+import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
+import { LoggerMiddleware } from './logger.middleware';
+import { UsersController } from './users.controller';
+
+@Module({
+  controllers: [UsersController],
+})
+export class UsersModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer
+      .apply(LoggerMiddleware)
+      // Applies to all routes in UsersController
+      .forRoutes(UsersController); 
+  }
+}
+```
+
+### Targeting Specific Paths and Methods
+You can get granular by passing an object specifying a path pattern and a specific HTTP method.
+
+```typescript
+import { RequestMethod } from '@nestjs/common';
+
+export class UsersModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer
+      .apply(LoggerMiddleware)
+      .forRoutes(
+        // Only applies to GET requests hitting /users
+        { path: 'users', method: RequestMethod.GET },
+        // Also applies to ALL requests hitting /admin
+        { path: 'admin', method: RequestMethod.ALL }
+      );
+  }
+}
+```
+
+### Excluding Routes
+Sometimes it's easier to target a broad area (like a whole Controller) but exclude a few specific endpoints (like a public `login` route).
+
+```typescript
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer
+      .apply(AuthMiddleware)
+      .exclude(
+        // Skip the middleware for these specific routes
+        { path: 'auth/login', method: RequestMethod.POST },
+        { path: 'auth/register', method: RequestMethod.POST },
+        'auth/public/(.*)' // Regex wildcards are supported in exclude!
+      )
+      // Apply to everything else in AuthController
+      .forRoutes(AuthController);
+  }
+}
+```
+
+## Best Practices
+- **Prefer Controller Targeting**: When using `forRoutes()`, passing the `Controller` class (e.g., `forRoutes(UsersController)`) is much safer than passing string paths (e.g., `forRoutes('users')`). If you change the Controller's prefix later, the middleware configuration automatically adapts without breaking.
+- **Keep Module Config Clean**: If you have complex middleware configurations with many `exclude` rules, consider extracting the configuration logic into a separate helper method to keep the `AppModule` readable.

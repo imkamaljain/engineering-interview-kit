@@ -1,0 +1,101 @@
+---
+title: "CacheModule"
+description: "CacheModule in NestJS"
+importance: "HIGH"
+revisionTime: 14
+category: "NestJS"
+subcategory: "Caching"
+order: 2130
+---
+
+*The `CacheModule` is the core mechanism in NestJS for registering and configuring the caching subsystem across your application.*
+
+## Overview
+To use caching in NestJS, you must import the `CacheModule` from `@nestjs/cache-manager` into your application. It acts as a wrapper around the popular `cache-manager` Node.js library.
+
+The module provides both synchronous (`register`) and asynchronous (`registerAsync`) methods to set up your cache store. By default, if you don't specify a store, it uses an in-memory data store.
+
+## Key Concepts
+- **`register()`**: Used when your caching configuration is static (hardcoded).
+- **`registerAsync()`**: Used when your caching configuration depends on external services, like fetching Redis credentials via the `ConfigModule`.
+- **Global Caching**: You can make the `CacheModule` available application-wide using `isGlobal: true`, preventing the need to import it into every single feature module.
+- **Store Abstraction**: The `CacheModule` abstracts away the underlying storage engine. You write the same `.set()` and `.get()` code regardless of whether you are using Memory, Redis, or Memcached.
+
+## Code Examples
+
+### 1. Basic In-Memory Registration
+This registers a simple, in-memory cache global to the application.
+
+```typescript
+import { Module } from '@nestjs/common';
+import { CacheModule } from '@nestjs/cache-manager';
+
+@Module({
+  imports: [
+    CacheModule.register({
+      isGlobal: true, // Available everywhere
+      ttl: 60000,     // Default time-to-live is 60 seconds (in milliseconds for v5)
+      max: 100,       // Maximum number of items in cache (prevents memory leaks)
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+### 2. Asynchronous Configuration
+If you need to load configuration from environment variables (e.g., to connect to Redis), you must use `registerAsync`.
+
+```typescript
+import { Module } from '@nestjs/common';
+import { CacheModule } from '@nestjs/cache-manager';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import * as redisStore from 'cache-manager-redis-store';
+
+@Module({
+  imports: [
+    ConfigModule.forRoot(),
+    CacheModule.registerAsync({
+      isGlobal: true,
+      imports: [ConfigModule], // Inject ConfigModule
+      inject: [ConfigService],
+      useFactory: async (configService: ConfigService) => ({
+        // You can dynamically choose the store based on the environment!
+        store: configService.get('NODE_ENV') === 'production' ? redisStore : 'memory',
+        
+        // Redis specific options
+        host: configService.get('REDIS_HOST'),
+        port: configService.get('REDIS_PORT'),
+        
+        // Global TTL
+        ttl: parseInt(configService.get('CACHE_TTL') || '60000'),
+      }),
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+### 3. Importing into Feature Modules
+If you do *not* set `isGlobal: true`, you must import `CacheModule.register()` into any specific feature module that wants to use the cache.
+
+```typescript
+// users.module.ts
+import { Module } from '@nestjs/common';
+import { CacheModule } from '@nestjs/cache-manager';
+import { UsersService } from './users.service';
+
+@Module({
+  imports: [
+    // We can override global settings just for this module!
+    CacheModule.register({
+      ttl: 300000, // 5 minutes just for Users
+    }),
+  ],
+  providers: [UsersService],
+})
+export class UsersModule {}
+```
+
+## Best Practices
+- **Always set `max` for In-Memory**: The default in-memory cache has no upper limit. If you use dynamic cache keys (like caching by user ID) and have millions of users, your RAM will fill up and crash Node.js. Always set `max` (e.g., `max: 1000`) so the cache evicts the oldest items when it reaches capacity.
+- **Use `isGlobal` for Simplicity**: Unless you have a massive microservice architecture where different domains need vastly different caching backends, setting `isGlobal: true` in your `AppModule` is the cleanest approach.

@@ -1,0 +1,83 @@
+---
+title: "Transient Scope"
+description: "Transient Scope in NestJS"
+importance: "HIGH"
+revisionTime: 6
+category: "NestJS"
+subcategory: "Providers & Services"
+order: 450
+---
+
+*The Transient Scope (`Scope.TRANSIENT`) tells NestJS to create a new, dedicated instance of the provider every time it is injected.*
+
+## Overview
+Transient scope is unique because it doesn't map to the application lifecycle (like Singleton) or the HTTP request lifecycle (like Request). 
+
+Instead, it maps to the *injection point*. If three different services inject a `TransientScopedService`, Nest will instantiate three completely separate copies of `TransientScopedService` and give one to each consumer.
+
+## Key Concepts
+- **`Scope.TRANSIENT`**: The enum value used to define this scope.
+- **No Sharing**: State is absolutely never shared between consumers.
+- **No Bubbling Effect**: Unlike Request Scope, injecting a Transient provider does *not* force the consumer to become Transient. If a Singleton controller injects a Transient service, the controller remains a Singleton (and it holds onto its unique instance of the Transient service forever).
+
+## Code Examples
+
+### Defining a Transient Provider
+
+```typescript
+import { Injectable, Scope } from '@nestjs/common';
+
+@Injectable({ scope: Scope.TRANSIENT })
+export class LoggerService {
+  private context: string;
+
+  setContext(context: string) {
+    this.context = context;
+  }
+
+  log(message: string) {
+    console.log(`[${this.context}] ${message}`);
+  }
+}
+```
+
+### Injecting into Consumers
+Because `LoggerService` is transient, `UsersService` and `OrdersService` each get their own private instance. They can safely call `setContext()` without overwriting each other!
+
+```typescript
+import { Injectable } from '@nestjs/common';
+import { LoggerService } from './logger.service';
+
+@Injectable()
+export class UsersService {
+  constructor(private logger: LoggerService) {
+    // This only affects the UsersService's private copy of LoggerService
+    this.logger.setContext('UsersService');
+  }
+
+  create() {
+    this.logger.log('Creating user...'); // Output: [UsersService] Creating user...
+  }
+}
+```
+
+```typescript
+import { Injectable } from '@nestjs/common';
+import { LoggerService } from './logger.service';
+
+@Injectable()
+export class OrdersService {
+  constructor(private logger: LoggerService) {
+    // This only affects the OrdersService's private copy
+    this.logger.setContext('OrdersService');
+  }
+
+  create() {
+    this.logger.log('Creating order...'); // Output: [OrdersService] Creating order...
+  }
+}
+```
+
+## Best Practices
+- **Perfect for Loggers**: The absolute most common (and arguably best) use case for `Scope.TRANSIENT` is for custom Logger services. It allows every Singleton service in your app to inject the Logger, set its own class name as the "Context", and log messages without interfering with other classes.
+- **Be Careful with Connections**: Do not use Transient scope for classes that establish network connections (like a database repository). You will end up opening hundreds of separate database connections, rapidly exhausting your connection pool.

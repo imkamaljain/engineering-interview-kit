@@ -1,0 +1,104 @@
+---
+title: "API Security"
+description: "API Security in NestJS"
+importance: "LOW"
+revisionTime: 10
+category: "NestJS"
+subcategory: "Security"
+order: 2650
+---
+
+*API Security encompasses the strategies, protocols, and best practices used to protect backend endpoints from unauthorized access, data breaches, and malicious abuse.*
+
+## Overview
+Because APIs are the central nervous system of modern applications, exposing business logic and direct access to databases, they are the primary target for attackers.
+
+Securing a NestJS API requires a defense-in-depth approach. You cannot rely on a single mechanism (like JWT authentication) to protect your system. You must assume attackers will attempt to bypass authentication, flood your endpoints, inject malicious payloads, and sniff network traffic.
+
+## Key Concepts
+- **Defense in Depth**: Layering multiple security controls (e.g., Network Firewalls + Rate Limiting + Authentication + Input Validation). If one layer fails, another catches the attack.
+- **Authentication vs. Authorization**: 
+  - *Authentication (AuthN)*: Proving *who* the user is (e.g., username/password, OAuth).
+  - *Authorization (AuthZ)*: Checking *what* the authenticated user is allowed to do (e.g., RBAC, Claims).
+- **The OWASP API Security Top 10**: The industry-standard list of the most critical security risks to web APIs (e.g., Broken Object Level Authorization, Excessive Data Exposure).
+
+## Code Examples
+
+### 1. Enforcing HTTPS (Local Development / Prod)
+APIs must never serve traffic over unencrypted HTTP. If they do, attackers can easily intercept JWTs and passwords (Man-in-the-Middle attacks). 
+
+In production, HTTPS is usually handled by your Load Balancer (AWS ALB, Cloudflare). But if you need to enforce it at the NestJS level (or for local testing):
+
+```typescript
+// main.ts
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from './app.module';
+import * as fs from 'fs';
+
+async function bootstrap() {
+  const httpsOptions = {
+    key: fs.readFileSync('./secrets/private-key.pem'),
+    cert: fs.readFileSync('./secrets/public-certificate.pem'),
+  };
+
+  // Create an HTTPS listener
+  const app = await NestFactory.create(AppModule, {
+    httpsOptions,
+  });
+
+  await app.listen(3000);
+}
+bootstrap();
+```
+
+### 2. Guarding Globally by Default
+A common mistake is forgetting to add `@UseGuards(JwtAuthGuard)` to a new controller, accidentally exposing it to the public. 
+
+Instead, apply authentication *globally*, and explicitly mark the few endpoints that should be public (like `/login` or `/health`).
+
+```typescript
+// is-public.decorator.ts
+import { SetMetadata } from '@nestjs/common';
+export const IS_PUBLIC_KEY = 'isPublic';
+export const Public = () => SetMetadata(IS_PUBLIC_KEY, true);
+```
+
+```typescript
+// global-auth.guard.ts
+import { Injectable, ExecutionContext } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
+import { AuthGuard } from '@nestjs/passport';
+import { IS_PUBLIC_KEY } from './is-public.decorator';
+
+@Injectable()
+export class GlobalJwtAuthGuard extends AuthGuard('jwt') {
+  constructor(private reflector: Reflector) {
+    super();
+  }
+
+  canActivate(context: ExecutionContext) {
+    // Check if the route has the @Public() decorator
+    const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+    
+    if (isPublic) {
+      return true; // Bypass authentication
+    }
+    
+    // Otherwise, enforce JWT validation
+    return super.canActivate(context);
+  }
+}
+```
+
+```typescript
+// main.ts
+// Secure the entire app by default
+app.useGlobalGuards(new GlobalJwtAuthGuard(app.get(Reflector)));
+```
+
+## Best Practices
+- **Least Privilege Principle**: API endpoints should return exactly the data required by the client, and nothing more. If an endpoint returns a `User` object, manually strip out `password_hash`, `stripe_customer_id`, and `ssn` before sending the JSON response. Do not rely on the frontend UI to hide sensitive fields.
+- **Audit Logging**: Any time an API endpoint modifies data (POST, PUT, DELETE) or accesses highly sensitive data, log the action, the User ID, and the IP address. If a breach occurs, audit logs are the only way to figure out what data was stolen.

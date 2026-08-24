@@ -1,0 +1,82 @@
+---
+title: "Connection Pooling"
+description: "Connection Pooling in NestJS"
+importance: "LOW"
+revisionTime: 5
+category: "NestJS"
+subcategory: "Performance & Scalability"
+order: 2440
+---
+
+*Connection Pooling is a technique used to maintain a cache of active database connections, reusing them for multiple requests instead of expensively opening and closing a new connection for every single database query.*
+
+## Overview
+Establishing a TCP connection to a database (like PostgreSQL or MySQL) is a heavy operation. It involves a TCP handshake, SSL/TLS negotiation, and authentication. This process can easily take 50-100ms.
+
+If your NestJS API receives 1,000 requests per second, and each request opens a new DB connection, runs a 2ms query, and then closes the connection, your API will collapse under the latency of 1,000 handshakes, and your database server will run out of memory trying to handle the connection churn.
+
+A Connection Pool opens a set number of connections (e.g., 20) when the app starts. When a request needs to query the database, it "borrows" a connection from the pool, runs the query, and "returns" the connection to the pool for the next request to use.
+
+## Key Concepts
+- **Pool Size**: The maximum number of simultaneous connections the pool is allowed to maintain.
+- **Connection Timeout**: How long a query is willing to wait in line to borrow a connection if the pool is empty (all connections are currently in use).
+- **Idle Timeout**: How long a connection can sit unused in the pool before it is automatically closed to free up database resources.
+
+## Code Examples
+
+### 1. Configuring the Pool in TypeORM
+When you use TypeORM with NestJS, connection pooling is enabled by default (usually utilizing the underlying driver's pool, like `pg-pool` for PostgreSQL). However, the default pool size is often 10, which might not be enough for high traffic.
+
+```typescript
+// app.module.ts
+import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
+
+@Module({
+  imports: [
+    TypeOrmModule.forRoot({
+      type: 'postgres',
+      host: 'localhost',
+      port: 5432,
+      username: 'user',
+      password: 'password',
+      database: 'mydb',
+      entities: [__dirname + '/**/*.entity{.ts,.js}'],
+      
+      // Connection Pooling Configuration (specific to the underlying driver, like 'pg')
+      extra: {
+        // Max number of connections in the pool
+        max: 50,
+        
+        // Wait up to 5 seconds to get a connection before throwing an error
+        connectionTimeoutMillis: 5000, 
+        
+        // Close connections if they sit idle for 30 seconds (scales down during low traffic)
+        idleTimeoutMillis: 30000, 
+      }
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+### 2. Handling Pool Exhaustion (Timeouts)
+If your pool size is 10, and you have 15 concurrent requests that each take a long time to run (e.g., a slow `JOIN` query), the 11th through 15th requests will be stuck waiting for a connection.
+
+If they wait longer than `connectionTimeoutMillis`, TypeORM will throw a `QueryFailedError`. You must monitor for these errors, as they indicate your database is either too slow, or your pool size is too small.
+
+```typescript
+// Catching exhaustion errors (Conceptual)
+try {
+  await this.usersRepository.find();
+} catch (error) {
+  if (error.message.includes('timeout exceeded when trying to connect')) {
+    this.logger.error('CRITICAL: Database connection pool exhausted!');
+    throw new ServiceUnavailableException('System under heavy load');
+  }
+}
+```
+
+## Best Practices
+- **Sizing the Pool**: Bigger is *not* always better! PostgreSQL, for example, assigns a dedicated OS process and a chunk of RAM (e.g., 10MB) for every open connection. If you set your pool size to 5,000, PostgreSQL will instantly run out of RAM and crash. A standard formula for PostgreSQL pool sizing is `(core_count * 2) + effective_spindle_count`. Often, a pool size of 20-50 per Node.js instance is optimal.
+- **External Poolers (PgBouncer)**: If you run a Serverless architecture (e.g., AWS Lambda) or a highly scaled Kubernetes cluster (e.g., 100 NestJS pods), 100 pods * 20 pool size = 2,000 connections hitting the database! The database will crash. In these scenarios, you must put a dedicated connection pooler like **PgBouncer** or **Amazon RDS Proxy** in front of your database to multiplex thousands of client connections down to a few dozen real database connections.

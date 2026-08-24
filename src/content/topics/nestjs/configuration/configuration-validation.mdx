@@ -1,0 +1,106 @@
+---
+title: "Configuration Validation"
+description: "Configuration Validation in NestJS"
+importance: "HIGH"
+revisionTime: 12
+category: "NestJS"
+subcategory: "Configuration"
+order: 1410
+---
+
+*Configuration Validation ensures that your application fails to start if required environment variables are missing or incorrectly formatted, preventing cryptic runtime errors later on.*
+
+## Overview
+By default, if you forget to include `DATABASE_URL` in your `.env` file, NestJS will happily start the server. However, the moment someone tries to hit an endpoint that queries the database, the app will crash.
+
+A much better approach is "Fail Fast". You should validate your environment variables during the bootstrapping phase of your application. If a variable is missing, the app refuses to start and logs a clear error message.
+
+## Key Concepts
+- **Joi**: A powerful schema description language and data validator for JavaScript. It is the most common tool used with `@nestjs/config` for validation.
+- **`validationSchema`**: The property in `ConfigModule.forRoot()` where you provide your Joi schema.
+- **Custom `validate` function**: An alternative to Joi, where you write a custom function (often using `class-validator`) to validate the config object.
+
+## Code Examples
+
+### 1. Validating with Joi
+First, you must install the Joi library (`npm install joi`).
+
+```typescript
+// app.module.ts
+import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
+import * as Joi from 'joi';
+
+@Module({
+  imports: [
+    ConfigModule.forRoot({
+      // The app will CRASH on startup if these rules aren't met!
+      validationSchema: Joi.object({
+        // NODE_ENV must be one of these strings. Defaults to 'development'.
+        NODE_ENV: Joi.string()
+          .valid('development', 'production', 'test')
+          .default('development'),
+          
+        // PORT must be a number. Defaults to 3000.
+        PORT: Joi.number().default(3000),
+        
+        // DATABASE_URL is absolutely required. No default.
+        DATABASE_URL: Joi.string().required(),
+        
+        // AWS_REGION is optional
+        AWS_REGION: Joi.string().optional(),
+      }),
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+### 2. Validating Custom Configurations with `class-validator`
+If you prefer TypeScript classes and decorators over Joi, you can write a custom validate function.
+
+```typescript
+import { plainToInstance } from 'class-transformer';
+import { IsEnum, IsNumber, IsString, validateSync } from 'class-validator';
+
+enum Environment {
+  Development = 'development',
+  Production = 'production',
+  Test = 'test',
+}
+
+// 1. Define your rules using decorators
+class EnvironmentVariables {
+  @IsEnum(Environment)
+  NODE_ENV: Environment;
+
+  @IsNumber()
+  PORT: number;
+
+  @IsString()
+  DATABASE_URL: string;
+}
+
+// 2. Create the validation function
+export function validate(config: Record<string, unknown>) {
+  const validatedConfig = plainToInstance(
+    EnvironmentVariables,
+    config,
+    { enableImplicitConversion: true },
+  );
+  
+  const errors = validateSync(validatedConfig, { skipMissingProperties: false });
+
+  if (errors.length > 0) {
+    throw new Error(errors.toString());
+  }
+  return validatedConfig;
+}
+
+// 3. Provide it to the ConfigModule
+// @Module({ imports: [ ConfigModule.forRoot({ validate }) ] })
+```
+
+## Best Practices
+- **Use `validationOptions.allowUnknown`**: When using Joi, it's a good idea to set `validationOptions: { allowUnknown: true }` in `ConfigModule.forRoot()`. By default, Joi will throw an error if it finds *any* environment variable that isn't explicitly defined in the schema. Since systems often inject dozens of variables (like `PATH`, `USER`, `NPM_CONFIG_PREFIX`), you need to allow unknown keys.
+- **Fail Fast over Defaults**: While providing defaults (e.g., `PORT: 3000`) is great for local development, you should strongly consider making sensitive configurations (like database passwords or API keys) strictly `.required()`. If they are missing in production, you *want* the app to crash immediately so you can fix the deployment configuration.

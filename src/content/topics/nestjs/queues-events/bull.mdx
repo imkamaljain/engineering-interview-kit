@@ -1,0 +1,137 @@
+---
+title: "Bull"
+description: "Bull in NestJS"
+importance: "MEDIUM"
+revisionTime: 13
+category: "NestJS"
+subcategory: "Queues & Events"
+order: 1940
+---
+
+*Bull is a robust, Redis-based job queue library for Node.js. The `@nestjs/bull` package provides native integration, making it the standard choice for background task processing in NestJS.*
+
+## Overview
+Bull leverages Redis's atomic operations and Lua scripts to provide an incredibly reliable queue system. It guarantees that jobs are processed exactly once (or at least once in failure scenarios) and never lost, even if Node.js or Redis crashes unexpectedly.
+
+*Note: Bull is the older, stable version. BullMQ is the modern, rewritten version (also supported by NestJS via `@nestjs/bullmq`). For new projects, BullMQ is highly recommended over standard Bull.*
+
+## Key Concepts
+- **Redis Requirement**: Bull cannot function without a Redis server. All job data, state, and retry logic is stored in Redis.
+- **Queues**: A named bucket in Redis where jobs wait. You can have an `emails` queue and an `images` queue.
+- **Processors (Consumers)**: Classes annotated with `@Processor()` that tell NestJS to start polling a specific queue for work.
+
+## Code Examples
+
+### 1. Installation and Configuration
+Install the required packages.
+`npm i @nestjs/bull bull`
+
+Register Bull in your `AppModule`. You must provide Redis connection details.
+
+```typescript
+// app.module.ts
+import { Module } from '@nestjs/common';
+import { BullModule } from '@nestjs/bull';
+import { AudioModule } from './audio/audio.module';
+
+@Module({
+  imports: [
+    // 1. Configure the global Redis connection
+    BullModule.forRoot({
+      redis: {
+        host: 'localhost',
+        port: 6379,
+      },
+    }),
+    AudioModule,
+  ],
+})
+export class AppModule {}
+```
+
+### 2. Registering a Specific Queue
+Inside a specific feature module (like `AudioModule`), you register the exact queues you want to use.
+
+```typescript
+// audio.module.ts
+import { Module } from '@nestjs/common';
+import { BullModule } from '@nestjs/bull';
+import { AudioController } from './audio.controller';
+import { AudioProcessor } from './audio.processor';
+
+@Module({
+  imports: [
+    // 2. Register the 'audio_processing' queue
+    BullModule.registerQueue({
+      name: 'audio_processing',
+    }),
+  ],
+  controllers: [AudioController],
+  providers: [AudioProcessor],
+})
+export class AudioModule {}
+```
+
+### 3. Producing Jobs
+Inject the queue into your controller or service using `@InjectQueue()`.
+
+```typescript
+// audio.controller.ts
+import { Controller, Post, Body } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bull';
+import { Queue } from 'bull';
+
+@Controller('audio')
+export class AudioController {
+  constructor(
+    // 3. Inject the queue
+    @InjectQueue('audio_processing') private audioQueue: Queue
+  ) {}
+
+  @Post('transcode')
+  async transcode(@Body() data: { fileId: string }) {
+    // 4. Add a job to the queue. 
+    // The first argument is the job name, the second is the payload data.
+    await this.audioQueue.add('transcode_mp3', {
+      fileId: data.fileId,
+    });
+    
+    return { status: 'Job added to queue!' };
+  }
+}
+```
+
+### 4. Consuming Jobs (The Worker)
+Create a class decorated with `@Processor()` to handle the jobs in the background.
+
+```typescript
+// audio.processor.ts
+import { Processor, Process } from '@nestjs/bull';
+import { Job } from 'bull';
+
+// 5. Tell NestJS this class handles the 'audio_processing' queue
+@Processor('audio_processing')
+export class AudioProcessor {
+  
+  // 6. Handle specifically named jobs within this queue
+  @Process('transcode_mp3')
+  async handleTranscode(job: Job<{ fileId: string }>) {
+    console.log(`Processing file ${job.data.fileId}...`);
+    
+    let progress = 0;
+    for (let i = 0; i < 100; i++) {
+      await doHeavyEncodingWork();
+      progress += 1;
+      // You can update the job's progress in Redis!
+      await job.progress(progress); 
+    }
+    
+    console.log('Transcoding complete');
+    return { success: true };
+  }
+}
+```
+
+## Best Practices
+- **Sandboxed Processors**: By default, NestJS runs `@Processor` logic in the exact same Node.js thread as your HTTP server. If `doHeavyEncodingWork()` is a synchronous, CPU-intensive task, it will block the entire server. To prevent this, use Bull's *Sandboxed Processors* (loading the processor from a separate file path) so Bull runs the heavy lifting in a completely separate Node.js child process!
+- **Clean Up Old Jobs**: By default, Bull leaves completed jobs in Redis indefinitely, which will eventually cause your Redis server to run out of RAM and crash. Always configure `removeOnComplete: true` and `removeOnFail: true` in your queue options, or use a cron job to routinely wipe old job data.

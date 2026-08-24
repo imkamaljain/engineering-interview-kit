@@ -1,0 +1,90 @@
+---
+title: "Database Optimization"
+description: "Database Optimization in NestJS"
+importance: "LOW"
+revisionTime: 11
+category: "NestJS"
+subcategory: "Performance & Scalability"
+order: 2430
+---
+
+*Database Optimization involves structuring your schemas, queries, and ORM usage to minimize disk I/O and memory consumption, ensuring your NestJS application doesn't become bottlenecked by the database.*
+
+## Overview
+No matter how perfectly optimized your NestJS code is, if your database takes 5 seconds to run a `SELECT` query, your API will be slow. In 90% of web applications, the database is the primary bottleneck.
+
+When using ORMs like TypeORM or Prisma in NestJS, it is dangerously easy to write seemingly simple Javascript code that translates into horrifically inefficient SQL queries under the hood.
+
+## Key Concepts
+- **Indexing**: Creating lookup tables for specific columns so the database doesn't have to scan every single row (Sequential Scan) to find a result.
+- **The N+1 Problem**: A classic ORM anti-pattern where loading 1 parent entity and its 100 children results in 101 separate SQL queries instead of 1 `JOIN`.
+- **Pagination**: Limiting the amount of data pulled from the database into Node.js memory.
+
+## Code Examples
+
+### 1. Solving the N+1 Problem
+Imagine an endpoint that lists 10 recent Posts, and you want to include the Author's name for each post.
+
+```typescript
+// BAD: The N+1 Problem
+async getRecentPosts() {
+  // Query 1: Fetch 10 posts
+  const posts = await this.postRepo.find({ take: 10 }); 
+  
+  // Queries 2 through 11: Fetch the author for EACH post one by one!
+  for (const post of posts) {
+    post.author = await this.authorRepo.findOne(post.authorId);
+  }
+  
+  return posts;
+}
+
+// GOOD: Using JOINs in TypeORM
+async getRecentPostsOptimized() {
+  // This executes EXACTLY 1 SQL Query using a LEFT JOIN
+  return this.postRepo.find({
+    take: 10,
+    relations: ['author'], 
+  });
+}
+```
+
+### 2. Selective Fetching (Don't `SELECT *`)
+If your `User` table has 50 columns (including a massive 1MB `bio_html` column), and you just need to return a list of usernames, fetching the whole entity is a disaster for database I/O and Node.js RAM.
+
+```typescript
+// BAD: Pulls 50 columns of data into RAM
+async getUsernames() {
+  const users = await this.userRepo.find(); 
+  return users.map(u => u.username);
+}
+
+// GOOD: Only pull exactly what you need
+async getUsernamesOptimized() {
+  return this.userRepo.find({
+    select: ['username'], // Translates to SELECT username FROM users;
+  });
+}
+```
+
+### 3. Cursor Pagination vs Offset Pagination
+When dealing with millions of records, standard `OFFSET` pagination gets incredibly slow. If you say `OFFSET 100000 LIMIT 10`, the database literally has to count through 100,000 rows just to skip them!
+
+Use **Cursor Pagination** instead, which uses an indexed column (like `id` or `created_at`) to jump directly to the right spot.
+
+```typescript
+// Cursor Pagination Example (TypeORM QueryBuilder)
+async getNextPage(lastSeenId: number) {
+  return this.userRepo.createQueryBuilder('user')
+    // Jump directly to the records AFTER the last one we saw
+    // Assuming 'id' is a Primary Key (which is automatically indexed)
+    .where('user.id > :lastSeenId', { lastSeenId })
+    .orderBy('user.id', 'ASC')
+    .take(20)
+    .getMany();
+}
+```
+
+## Best Practices
+- **Index Heavily Queried Columns**: If you frequently query `users` by their `email` (e.g., during login), ensure there is an Index on the `email` column in your database. Without it, the DB must perform a "Full Table Scan".
+- **Log Slow Queries**: Configure your ORM to log queries that take longer than a certain threshold. In TypeORM, you can set `maxQueryExecutionTime: 1000` in your connection options. Any query taking longer than 1 second will be logged, allowing you to identify missing indexes.

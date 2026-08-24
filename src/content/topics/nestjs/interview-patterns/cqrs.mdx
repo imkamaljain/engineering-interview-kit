@@ -1,0 +1,113 @@
+---
+title: "CQRS"
+description: "CQRS in NestJS"
+importance: "LOW"
+revisionTime: 8
+category: "NestJS"
+subcategory: "Interview Patterns"
+order: 3050
+---
+
+*Command Query Responsibility Segregation (CQRS) is an architectural pattern that strictly separates the operations that read data (Queries) from the operations that update data (Commands).*
+
+## Overview
+In a standard CRUD application, a single `UserService` usually handles both creating users (`createUser()`) and fetching users (`getUser()`). 
+
+In highly complex or highly scaled applications, the rules for creating data (validation, event emission, transaction management) become wildly different from the rules for reading data (caching, complex JOINs, materialized views, Elasticsearch). 
+
+CQRS solves this by separating the read and write models entirely. NestJS provides a dedicated `@nestjs/cqrs` module to implement this pattern using an Event Bus and Command/Query Handlers.
+
+## Key Concepts
+- **Command**: An intent to mutate state (e.g., `CreateUserCommand`). It is handled by exactly *one* Command Handler. It does not return data (except perhaps an ID).
+- **Query**: An intent to read state (e.g., `GetUserByIdQuery`). It is handled by exactly *one* Query Handler. It never mutates state.
+- **Event**: A notification that something *did* happen (e.g., `UserCreatedEvent`). It can be handled by *zero or many* Event Handlers (e.g., sending an email, updating a search index).
+
+## Code Examples
+
+### 1. Defining Commands and Queries
+First, you define simple classes that hold the data required for the operation.
+
+```typescript
+// commands/create-user.command.ts
+export class CreateUserCommand {
+  constructor(
+    public readonly email: string,
+    public readonly name: string,
+  ) {}
+}
+
+// queries/get-users.query.ts
+export class GetUsersQuery {
+  constructor(public readonly isActive: boolean) {}
+}
+```
+
+### 2. Creating Handlers
+Handlers contain the actual business logic. They are decorated so the NestJS CQRS module can discover them.
+
+```typescript
+// handlers/create-user.handler.ts
+import { CommandHandler, ICommandHandler, EventPublisher } from '@nestjs/cqrs';
+import { CreateUserCommand } from '../commands/create-user.command';
+
+@CommandHandler(CreateUserCommand)
+export class CreateUserHandler implements ICommandHandler<CreateUserCommand> {
+  constructor(
+    private readonly repository: UserRepository,
+    private readonly publisher: EventPublisher,
+  ) {}
+
+  async execute(command: CreateUserCommand) {
+    // 1. Mutate the state
+    const user = await this.repository.save({ 
+      email: command.email, 
+      name: command.name 
+    });
+
+    // 2. Publish an event (optional, but common in CQRS)
+    // Other handlers can listen to 'UserCreatedEvent' to send emails asynchronously
+    // this.publisher.mergeObjectContext(user).commit();
+    
+    return user.id; // Return minimal data
+  }
+}
+```
+
+### 3. Using the Bus in a Controller
+The Controller no longer injects a massive `UserService`. It only injects the `CommandBus` and `QueryBus`.
+
+```typescript
+import { Controller, Post, Get, Body, Query } from '@nestjs/common';
+import { CommandBus, QueryBus } from '@nestjs/cqrs';
+import { CreateUserCommand } from './commands/create-user.command';
+import { GetUsersQuery } from './queries/get-users.query';
+
+@Controller('users')
+export class UsersController {
+  constructor(
+    private readonly commandBus: CommandBus,
+    private readonly queryBus: QueryBus,
+  ) {}
+
+  @Post()
+  async createUser(@Body() dto: CreateUserDto) {
+    // Dispatch the command to the CommandBus. 
+    // NestJS automatically routes it to the CreateUserHandler.
+    return this.commandBus.execute(
+      new CreateUserCommand(dto.email, dto.name)
+    );
+  }
+
+  @Get()
+  async getUsers(@Query('active') isActive: boolean) {
+    // Dispatch the query to the QueryBus.
+    return this.queryBus.execute(
+      new GetUsersQuery(isActive)
+    );
+  }
+}
+```
+
+## Best Practices
+- **When NOT to use CQRS**: CQRS introduces massive amounts of boilerplate. For a simple CRUD application, CQRS is a severe anti-pattern. Only use CQRS if your domain logic is extremely complex (Domain-Driven Design), or if you need to scale reads and writes independently (e.g., writing to PostgreSQL, but reading from a denormalized Redis cache).
+- **Eventual Consistency**: In advanced CQRS systems, the Command writes to a database, and an Event Handler updates a separate read-replica database. This means the Query might return stale data for a few milliseconds (Eventual Consistency). You must design your UI to handle this.

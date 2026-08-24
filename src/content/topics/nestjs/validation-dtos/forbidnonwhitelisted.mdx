@@ -1,0 +1,78 @@
+---
+title: "ForbidNonWhitelisted"
+description: "ForbidNonWhitelisted in NestJS"
+importance: "LOW"
+revisionTime: 12
+category: "NestJS"
+subcategory: "Validation & DTOs"
+order: 1060
+---
+
+*The `forbidNonWhitelisted` option takes whitelisting a step further: instead of silently removing unknown properties, it throws a `400 Bad Request` error, rejecting the entire request.*
+
+## Overview
+While `whitelist: true` is excellent for security (preventing Mass Assignment), it can create a frustrating developer experience for API consumers. 
+
+If a client sends `{ "first_name": "John" }` but your DTO expects `{ "firstName": "John" }`, a standard whitelister will silently strip `first_name` because it doesn't recognize it. The API might return a 200 OK, but the name wasn't updated! The client developer will be incredibly confused.
+
+By enabling `forbidNonWhitelisted`, the API explicitly informs the client they are sending garbage data.
+
+## Key Concepts
+- **Strict Contracts**: Forces API consumers to adhere 100% to your defined DTO structure.
+- **Dependency**: `forbidNonWhitelisted` *only works* if `whitelist: true` is also enabled.
+- **Error Feedback**: Generates clear error messages indicating exactly which properties were rejected.
+
+## Code Examples
+
+### Enabling the Feature
+You configure this in your global `ValidationPipe`.
+
+```typescript
+// main.ts
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true, // Must be true!
+      forbidNonWhitelisted: true, // Enable strict mode
+    }),
+  );
+
+  await app.listen(3000);
+}
+```
+
+### The API Response
+Given this DTO:
+```typescript
+export class CreatePostDto {
+  @IsString()
+  title: string;
+}
+```
+
+If the client sends this payload:
+```json
+{
+  "title": "My first post",
+  "authorId": 99,
+  "draft": true
+}
+```
+
+Because `authorId` and `draft` do not exist on the DTO, the request is blocked, and the client receives:
+```json
+{
+  "statusCode": 400,
+  "message": [
+    "property authorId should not exist",
+    "property draft should not exist"
+  ],
+  "error": "Bad Request"
+}
+```
+
+## Best Practices
+- **Use in Public APIs**: If you are building a public-facing API (where other companies or external developers consume your endpoints), `forbidNonWhitelisted: true` is highly recommended. It prevents them from spending hours debugging why their fields aren't saving.
+- **Handling Webhooks**: Be careful using this on endpoints that receive Webhooks from third-party services (like Stripe or GitHub). Third-party services often add new properties to their webhook payloads over time. If they add a new property, and you have `forbidNonWhitelisted: true`, your API will suddenly start rejecting valid webhooks with a 400 error! For webhook endpoints, stick to just `whitelist: true`.

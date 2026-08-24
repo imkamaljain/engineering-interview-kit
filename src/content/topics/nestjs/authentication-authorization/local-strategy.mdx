@@ -1,0 +1,112 @@
+---
+title: "Local Strategy"
+description: "Local Strategy in NestJS"
+importance: "MEDIUM"
+revisionTime: 6
+category: "NestJS"
+subcategory: "Authentication & Authorization"
+order: 1130
+---
+
+*The Local Strategy (`passport-local`) handles the very first step of the authentication flow: verifying a user's raw credentials (usually username/email and password) against the database.*
+
+## Overview
+When a user clicks "Log In", they send a POST request with their email and password. You *could* write the verification logic directly in the Controller, but extracting it into a Local Strategy is cleaner and standardizes the flow using Passport.
+
+If the credentials are valid, the strategy returns the User object. The controller then takes that User object and generates a JWT to send back to the client for future requests.
+
+## Key Concepts
+- **The Initial Check**: Used almost exclusively for the `/auth/login` endpoint.
+- **Fields**: By default, `passport-local` looks for `username` and `password` in the request body. If you use `email`, you must configure the strategy to map it correctly.
+- **Password Hashing**: This is where you use `bcrypt` (or similar) to compare the plain-text password from the request against the hashed password in your database.
+
+## Code Examples
+
+### Implementing the Local Strategy
+This strategy handles the database lookup and the `bcrypt` comparison.
+
+```typescript
+// local.strategy.ts
+import { Strategy } from 'passport-local';
+import { PassportStrategy } from '@nestjs/passport';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { AuthService } from './auth.service';
+
+@Injectable()
+export class LocalStrategy extends PassportStrategy(Strategy) {
+  constructor(private authService: AuthService) {
+    // By default, passport looks for 'username' in the JSON body.
+    // If your API uses 'email' instead, you MUST remap it here.
+    super({ usernameField: 'email' });
+  }
+
+  // Passport extracts 'email' and 'password' from the @Body automatically
+  // and passes them to this validate method.
+  async validate(email: string, password: string): Promise<any> {
+    // Delegate the heavy lifting to the AuthService
+    const user = await this.authService.validateUser(email, password);
+    
+    if (!user) {
+      // Throwing this automatically generates a 401 response
+      throw new UnauthorizedException('Invalid email or password');
+    }
+    
+    // Return the user object (WITHOUT the password hash). 
+    // It will be attached to request.user
+    return user;
+  }
+}
+```
+
+### The Validation Logic (AuthService)
+The actual database query and hashing comparison belongs in the Service, not the Strategy.
+
+```typescript
+// auth.service.ts
+import * as bcrypt from 'bcrypt';
+
+@Injectable()
+export class AuthService {
+  constructor(private usersService: UsersService) {}
+
+  async validateUser(email: string, pass: string): Promise<any> {
+    // 1. Find the user by email
+    const user = await this.usersService.findOneByEmail(email);
+    
+    // 2. If user exists, compare the plain password to the stored hash
+    if (user && await bcrypt.compare(pass, user.passwordHash)) {
+      // 3. Strip the password hash before returning the user!
+      const { passwordHash, ...result } = user;
+      return result;
+    }
+    return null;
+  }
+}
+```
+
+### Using the Strategy in the Login Route
+The Local Guard runs *before* the controller method. By the time `login()` executes, we know the credentials were correct.
+
+```typescript
+// auth.controller.ts
+import { Controller, Post, UseGuards, Req } from '@nestjs/common';
+import { AuthGuard } from '@nestjs/passport';
+
+@Controller('auth')
+export class AuthController {
+  
+  // Use the Local Strategy to protect the login route
+  @UseGuards(AuthGuard('local'))
+  @Post('login')
+  async login(@Req() req) {
+    // If we reach this line, the LocalStrategy validate() method returned successfully!
+    // req.user now contains the user object we returned.
+    
+    // NOW we can generate a JWT and send it to the client.
+    return this.authService.login(req.user);
+  }
+}
+```
+
+## Best Practices
+- **Never Return Passwords**: The most common mistake in a Local Strategy is returning the full user entity from the database, including the `passwordHash`. Always destructure and omit the password before returning the user object from `validate()`, otherwise, it might accidentally be leaked to the client.

@@ -1,0 +1,113 @@
+---
+title: "Health Checks"
+description: "Health Checks in NestJS"
+importance: "MEDIUM"
+revisionTime: 6
+category: "NestJS"
+subcategory: "Observability"
+order: 2850
+---
+
+*Health Checks are endpoints exposed by an application that indicate its current status and the status of its critical dependencies. They are essential for orchestration systems (like Kubernetes) and load balancers to determine if traffic should be routed to the instance.*
+
+## Overview
+A web server might be running and returning HTTP 200s, but if it has lost connection to the database or Redis, it cannot serve users properly. It is "unhealthy."
+
+A Health Check endpoint (typically `/health`) tests the core application *and* its dependencies. If everything is okay, it returns `200 OK`. If a dependency is down, it returns `503 Service Unavailable`. 
+
+NestJS provides the `@nestjs/terminus` package, which seamlessly integrates with the framework to construct robust health check endpoints.
+
+## Key Concepts
+- **Liveness Probe**: Tells the orchestrator if the application is running. If it fails, the orchestrator (like Kubernetes) restarts the container.
+- **Readiness Probe**: Tells the orchestrator if the application is ready to accept traffic. If it fails, the orchestrator stops sending HTTP requests to the container, but does *not* restart it (e.g., it might be busy doing a heavy background task).
+- **Health Indicators**: Individual checks that make up the overall health (e.g., `TypeOrmHealthIndicator`, `HttpHealthIndicator`, `MemoryHealthIndicator`).
+
+## Code Examples
+
+### 1. Installation
+Install Terminus and its required HTTP module.
+
+```bash
+npm install @nestjs/terminus @nestjs/axios axios
+```
+
+### 2. Creating a Health Check Controller
+Import `TerminusModule` in your `AppModule`, then create a dedicated controller.
+
+```typescript
+import { Controller, Get } from '@nestjs/common';
+import { HealthCheck, HealthCheckService, TypeOrmHealthIndicator, MemoryHealthIndicator } from '@nestjs/terminus';
+
+@Controller('health')
+export class HealthController {
+  constructor(
+    private health: HealthCheckService,
+    private db: TypeOrmHealthIndicator,
+    private memory: MemoryHealthIndicator,
+  ) {}
+
+  @Get()
+  @HealthCheck() // Crucial decorator!
+  check() {
+    return this.health.check([
+      // 1. Check if the database connection is active
+      () => this.db.pingCheck('database'),
+      
+      // 2. Check if the process is using more than 150MB of RAM
+      () => this.memory.checkHeap('memory_heap', 150 * 1024 * 1024),
+    ]);
+  }
+}
+```
+
+### 3. Custom Health Indicators
+You aren't limited to the built-in indicators. You can write custom logic to check anything (e.g., checking if a specific file exists, or if a Stripe API is reachable).
+
+```typescript
+import { Injectable } from '@nestjs/common';
+import { HealthIndicator, HealthIndicatorResult, HealthCheckError } from '@nestjs/terminus';
+import { StripeService } from './stripe.service';
+
+@Injectable()
+export class StripeHealthIndicator extends HealthIndicator {
+  constructor(private stripeService: StripeService) {
+    super();
+  }
+
+  async isHealthy(key: string): Promise<HealthIndicatorResult> {
+    try {
+      // Custom business logic to verify Stripe
+      const isConnected = await this.stripeService.ping();
+      
+      if (isConnected) {
+        // Return success
+        return this.getStatus(key, true, { message: 'Stripe is connected' });
+      } else {
+        // Return failure but don't throw yet
+        throw new Error('Stripe ping failed');
+      }
+    } catch (error) {
+      // Wrap it in a HealthCheckError so Terminus handles it properly (Returns 503)
+      throw new HealthCheckError(
+        'Stripe Health Check failed',
+        this.getStatus(key, false, { error: error.message }),
+      );
+    }
+  }
+}
+```
+
+Then add it to your controller:
+```typescript
+  @Get()
+  @HealthCheck()
+  check() {
+    return this.health.check([
+      () => this.stripeIndicator.isHealthy('stripe_payment_gateway'),
+    ]);
+  }
+```
+
+## Best Practices
+- **Don't Overload Health Checks**: Load balancers ping the `/health` endpoint every 5-10 seconds. If your health check runs a massive SQL `COUNT(*)` query, you will accidentally DDoS your own database! Keep health checks extremely lightweight (e.g., `SELECT 1` or a simple ping).
+- **Public vs Private**: While some basic health information can be public, detailed error messages (like `Redis connection refused on 10.0.0.5`) should not be exposed to the public internet for security reasons. Secure your detailed health endpoints or restrict access via network policies.

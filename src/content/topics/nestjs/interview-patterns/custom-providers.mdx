@@ -1,0 +1,100 @@
+---
+title: "Custom Providers"
+description: "Custom Providers in NestJS"
+importance: "MEDIUM"
+revisionTime: 10
+category: "NestJS"
+subcategory: "Interview Patterns"
+order: 2960
+---
+
+*Custom Providers allow you to define exactly how the NestJS Inversion of Control (IoC) container instantiates a dependency. This is essential for mocking, injecting third-party libraries, or creating dynamic configurations.*
+
+## Overview
+Normally, you register a provider simply by passing the class: `providers: [UsersService]`. 
+
+This is actually syntactic sugar. Under the hood, NestJS translates it to:
+`providers: [{ provide: UsersService, useClass: UsersService }]`
+
+Sometimes, you don't want NestJS to just call `new UsersService()`. You might want to provide a mock object (`useValue`), a different class entirely (`useClass`), or use a complex function to determine how to build the object (`useFactory`).
+
+## Key Concepts
+- **Injection Token**: The `provide` property. It acts as the "key" in the IoC dictionary. It can be a class (e.g., `UsersService`), a string (e.g., `'DATABASE_CONNECTION'`), or a Symbol.
+- **`useValue`**: Injects a constant value or a pre-instantiated object. Used heavily in unit testing to inject mocks.
+- **`useClass`**: Injects a different class instance while keeping the original token. Useful for swapping implementations (e.g., swapping `MockEmailService` for `SendGridEmailService`).
+- **`useFactory`**: A function that runs dynamically to create the provider. It can `inject` other providers to help build the object.
+
+## Code Examples
+
+### 1. `useValue` (Injecting a Constant)
+If you need to inject a simple string, configuration object, or mock. Because a string is not a class, you must use a string injection token (like `'CONFIG_OPTIONS'`) and the `@Inject()` decorator in your constructor.
+
+```typescript
+// app.module.ts
+const configObject = { apiKey: '12345', retries: 3 };
+
+@Module({
+  providers: [
+    {
+      provide: 'CONFIG_OPTIONS',
+      useValue: configObject,
+    },
+  ],
+})
+export class AppModule {}
+
+// app.service.ts
+import { Injectable, Inject } from '@nestjs/common';
+
+@Injectable()
+export class AppService {
+  constructor(@Inject('CONFIG_OPTIONS') private options: any) {
+    console.log(this.options.apiKey); // "12345"
+  }
+}
+```
+
+### 2. `useClass` (Swapping Implementations)
+Imagine you have an abstract class or interface `PaymentService`. In development, you want to use `StripeService`. In tests, you want to use `FakePaymentService`.
+
+```typescript
+@Module({
+  providers: [
+    {
+      provide: PaymentService, // The token requested by constructors
+      useClass: process.env.NODE_ENV === 'test' 
+                  ? FakePaymentService 
+                  : StripePaymentService, // The actual class instantiated
+    },
+  ],
+})
+export class PaymentModule {}
+```
+
+### 3. `useFactory` (Dynamic Creation with Dependencies)
+Sometimes creating a provider is complex. For example, creating a database connection pool requires reading the configuration first.
+
+```typescript
+@Module({
+  imports: [ConfigModule],
+  providers: [
+    {
+      provide: 'DATABASE_CONNECTION',
+      // The factory function
+      useFactory: async (configService: ConfigService) => {
+        // We can do async work here!
+        const host = configService.get('DB_HOST');
+        const connection = await createDatabaseConnection(host);
+        return connection;
+      },
+      // Inject other providers into the factory function
+      inject: [ConfigService], 
+    },
+  ],
+})
+export class DatabaseModule {}
+```
+
+## Best Practices
+- **Prefer Class Tokens**: When possible, use classes as injection tokens instead of strings. String tokens (like `'DATABASE_CONNECTION'`) are prone to typos and naming collisions. If you must use strings, export them as constants (e.g., `export const DB_CONNECTION_TOKEN = 'DB_CONNECTION'`).
+- **Keep Factories Clean**: `useFactory` functions should primarily be used for configuration and bootstrapping third-party libraries (like a raw Redis client or a Knex connection). Do not put complex business logic inside the module's factory function.

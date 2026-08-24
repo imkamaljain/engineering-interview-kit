@@ -1,0 +1,128 @@
+---
+title: "Authentication vs Authorization"
+description: "Authentication vs Authorization in NestJS"
+importance: "LOW"
+revisionTime: 12
+category: "NestJS"
+subcategory: "Interview Patterns"
+order: 2980
+---
+
+*A common interview question asks candidates to distinguish between Authentication (AuthN) and Authorization (AuthZ), and how they are implemented within the NestJS lifecycle.*
+
+## Overview
+While often used interchangeably by beginners, Authentication and Authorization are two distinct security phases. 
+
+- **Authentication (AuthN)**: Proving *who* you are. (e.g., Logging in with a username/password, or presenting a valid JWT).
+- **Authorization (AuthZ)**: Checking *what* you are allowed to do. (e.g., Can this authenticated user delete a post? Are they an Admin?)
+
+In NestJS, both of these concepts are implemented using **Guards**, but they serve different purposes and must run in a specific order.
+
+## Key Concepts
+- **401 vs 403**: 
+  - `401 Unauthorized`: Means "You are not authenticated." (You didn't provide a token, or it's invalid/expired).
+  - `403 Forbidden`: Means "You are authenticated, I know who you are, but you don't have permission to do this."
+- **The Pipeline**: Authentication must *always* happen before Authorization. You cannot authorize a user if you don't know who they are.
+
+## Code Examples
+
+### 1. The Authentication Guard
+The AuthN Guard extracts the token, verifies it, and attaches the `user` object to the `Request`. It does *not* care what route the user is trying to access.
+
+```typescript
+// jwt-auth.guard.ts (Authentication)
+import { Injectable, CanActivate, ExecutionContext, UnauthorizedException } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
+
+@Injectable()
+export class JwtAuthGuard implements CanActivate {
+  constructor(private jwtService: JwtService) {}
+
+  canActivate(context: ExecutionContext): boolean {
+    const request = context.switchToHttp().getRequest();
+    const token = this.extractTokenFromHeader(request);
+    
+    if (!token) {
+      throw new UnauthorizedException('Please log in'); // 401
+    }
+    
+    try {
+      // Verify the token and attach the payload to the request
+      const payload = this.jwtService.verify(token);
+      request.user = payload; // e.g., { userId: 1, role: 'USER' }
+    } catch {
+      throw new UnauthorizedException('Invalid token'); // 401
+    }
+    
+    return true; // The user is authenticated!
+  }
+  
+  private extractTokenFromHeader(request: any): string | undefined {
+    const [type, token] = request.headers.authorization?.split(' ') ?? [];
+    return type === 'Bearer' ? token : undefined;
+  }
+}
+```
+
+### 2. The Authorization Guard
+The AuthZ Guard assumes the user is already authenticated. It reads the `request.user` object and compares it against the required roles for the specific route.
+
+```typescript
+// roles.guard.ts (Authorization)
+import { Injectable, CanActivate, ExecutionContext, ForbiddenException } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
+
+@Injectable()
+export class RolesGuard implements CanActivate {
+  constructor(private reflector: Reflector) {}
+
+  canActivate(context: ExecutionContext): boolean {
+    // Look up what roles are required for this route (e.g., ['ADMIN'])
+    const requiredRoles = this.reflector.get<string[]>('roles', context.getHandler());
+    
+    if (!requiredRoles) {
+      return true; // No specific roles required, allow access
+    }
+
+    // The user object was attached by the JwtAuthGuard!
+    const request = context.switchToHttp().getRequest();
+    const user = request.user; 
+
+    if (!user) {
+      // Edge case: Someone forgot to apply the AuthGuard before the RolesGuard
+      throw new ForbiddenException('User is not authenticated'); 
+    }
+
+    // Check if the user has the required role
+    const hasRole = requiredRoles.includes(user.role);
+    
+    if (!hasRole) {
+       // We know who they are, but they are not an ADMIN. 
+      throw new ForbiddenException('You do not have permission (Requires Admin)'); // 403
+    }
+    
+    return true;
+  }
+}
+```
+
+### 3. Applying them in order
+NestJS executes Guards in the order they are bound.
+
+```typescript
+@Controller('users')
+// 1st: Authenticate. 2nd: Authorize.
+@UseGuards(JwtAuthGuard, RolesGuard) 
+export class UsersController {
+  
+  @Get()
+  @SetMetadata('roles', ['ADMIN'])
+  getAllUsers() {
+    return [];
+  }
+}
+```
+
+## Best Practices
+- **Global Authentication**: It is generally best practice to apply the Authentication guard globally (`app.useGlobalGuards(new JwtAuthGuard())`) so you don't accidentally leave routes unprotected. You then apply the Authorization guard only to specific controllers or routes that require specific privileges.
+- **Passport.js**: While the example above shows a manual JWT guard for educational purposes, in a real NestJS app, you should use `@nestjs/passport` which handles the authentication extraction and `request.user` assignment automatically.

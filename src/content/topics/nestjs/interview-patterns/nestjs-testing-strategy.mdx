@@ -1,0 +1,106 @@
+---
+title: "NestJS Testing Strategy"
+description: "NestJS Testing Strategy in NestJS"
+importance: "HIGH"
+revisionTime: 14
+category: "NestJS"
+subcategory: "Interview Patterns"
+order: 3070
+---
+
+*A solid NestJS Testing Strategy involves understanding the Testing Pyramid (Unit, Integration, E2E) and how to leverage NestJS's `TestingModule` and dependency injection to achieve isolation.*
+
+## Overview
+Because NestJS relies heavily on Dependency Injection, writing testable code is enforced by default. If a class has too many dependencies, it becomes painfully obvious during testing, naturally encouraging developers to adhere to the Single Responsibility Principle.
+
+A complete strategy involves three layers:
+1. **Unit Tests (70%)**: Fast, isolated tests mocking all dependencies.
+2. **Integration Tests (20%)**: Testing the boundary between a Service and a real Database/External API.
+3. **E2E Tests (10%)**: Bootstrapping the entire application and testing HTTP routes via Supertest.
+
+## Key Concepts
+- **`TestingModule`**: The built-in testing container that mimics the NestJS runtime, allowing you to selectively load providers and easily swap them with mocks using `useValue` or `overrideProvider`.
+- **Test Doubles (Mocks, Stubs, Spies)**: Using `jest.fn()` to replace real dependencies in Unit Tests to prevent network calls or database writes.
+
+## Code Examples
+
+### 1. Unit Testing Strategy (Isolating Services)
+When testing a Service, you *never* connect to a database. You mock the Repository.
+
+```typescript
+import { Test } from '@nestjs/testing';
+import { getRepositoryToken } from '@nestjs/typeorm';
+import { UsersService } from './users.service';
+import { User } from './user.entity';
+
+describe('UsersService', () => {
+  let service: UsersService;
+
+  // Create a mock object with jest functions
+  const mockUserRepository = {
+    findOne: jest.fn(),
+  };
+
+  beforeEach(async () => {
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        UsersService, // The class being tested
+        {
+          // Replace the real repository with the mock
+          provide: getRepositoryToken(User),
+          useValue: mockUserRepository, 
+        },
+      ],
+    }).compile();
+
+    service = moduleRef.get(UsersService);
+  });
+
+  it('should throw an error if user is not found', async () => {
+    // Arrange: Tell the mock what to return
+    mockUserRepository.findOne.mockResolvedValue(null);
+
+    // Act & Assert
+    await expect(service.getUser(1)).rejects.toThrow('User not found');
+  });
+});
+```
+
+### 2. E2E Testing Strategy (Bootstrapping the App)
+E2E tests verify the HTTP layer (Controllers, Guards, Pipes). They bootstrap the real `AppModule` but usually hit a separate testing database.
+
+```typescript
+import { Test, TestingModule } from '@nestjs/testing';
+import { INestApplication } from '@nestjs/common';
+import * as request from 'supertest';
+import { AppModule } from './../src/app.module';
+
+describe('AppController (e2e)', () => {
+  let app: INestApplication;
+
+  beforeAll(async () => {
+    // Bootstrap the ENTIRE application
+    const moduleFixture: TestingModule = await Test.createTestingModule({
+      imports: [AppModule], 
+    }).compile();
+
+    app = moduleFixture.createNestApplication();
+    await app.init();
+  });
+
+  afterAll(async () => {
+    await app.close(); // Clean up DB connections
+  });
+
+  it('/users (GET) requires authentication', () => {
+    return request(app.getHttpServer())
+      .get('/users')
+      .expect(401); // Asserts that the JwtAuthGuard works!
+  });
+});
+```
+
+## Best Practices
+- **Don't Mock the System Under Test**: A common mistake is mocking methods *inside* the class you are currently testing. If you are testing `UsersService.create()`, you should only mock the injected dependencies (like the Repository or MailerService). You should not mock private methods inside `UsersService`.
+- **Use `@golevelup/ts-jest`**: Manually creating mock objects with dozens of `jest.fn()` properties is tedious. The `@golevelup/ts-jest` package provides a `createMock<T>()` function that automatically generates a deeply-nested mock of any class or interface, saving massive amounts of boilerplate.
+- **E2E Database Management**: The hardest part of E2E testing is managing database state. Ensure E2E tests run against a dedicated `test` database (never production or development!). Use tools like Testcontainers to spin up ephemeral Postgres instances, or use transactional rollbacks to ensure each test starts with a clean slate.

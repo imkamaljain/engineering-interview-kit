@@ -1,0 +1,91 @@
+---
+title: "WebSockets"
+description: "WebSockets in NestJS"
+importance: "HIGH"
+revisionTime: 11
+category: "NestJS"
+subcategory: "WebSockets"
+order: 2040
+---
+
+*WebSockets provide full-duplex, bidirectional communication over a single, long-lived TCP connection, allowing real-time data exchange between a client and a NestJS server.*
+
+## Overview
+Unlike standard HTTP where a client must initiate a Request to receive a Response, WebSockets keep the connection open. This allows the server to proactively push data to the client at any time without the client asking for it.
+
+NestJS provides a powerful abstraction over WebSockets through "Gateways". A Gateway is structurally identical to a Controller, but instead of responding to HTTP methods (GET, POST), it responds to real-time events.
+
+## Key Concepts
+- **Full-Duplex**: Both the client and the server can send and receive messages simultaneously.
+- **Low Latency**: Because the TCP handshake only happens once at the beginning, sending subsequent messages incurs virtually zero HTTP overhead (no headers, no cookies attached to every frame).
+- **Transport Agnostic**: The `@nestjs/websockets` package doesn't enforce a specific underlying library. By default, it supports `socket.io` and native `ws`, but you can build a custom adapter for any WebSocket library.
+
+## Code Examples
+
+### 1. Installation
+Install the core websockets package and an adapter (Socket.IO is the most common).
+
+```bash
+npm i @nestjs/websockets @nestjs/platform-socket.io
+```
+
+### 2. Creating a Basic Gateway
+A Gateway in NestJS is essentially a class decorated with `@WebSocketGateway()`. It acts as the entry point for WebSocket connections, just as a `@Controller()` acts as an entry point for HTTP requests.
+
+```typescript
+// chat.gateway.ts
+import { 
+  WebSocketGateway, 
+  SubscribeMessage, 
+  MessageBody, 
+  ConnectedSocket,
+  OnGatewayConnection,
+  OnGatewayDisconnect
+} from '@nestjs/websockets';
+import { Socket } from 'socket.io';
+
+// Opens a WebSocket server on the default HTTP port
+@WebSocketGateway({ cors: true })
+export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
+  
+  // Lifecycle hook: Fires when a client connects
+  handleConnection(client: Socket) {
+    console.log(`Client connected: ${client.id}`);
+  }
+
+  // Lifecycle hook: Fires when a client disconnects
+  handleDisconnect(client: Socket) {
+    console.log(`Client disconnected: ${client.id}`);
+  }
+
+  // Listens for a specific event named 'send_message' from the client
+  @SubscribeMessage('send_message')
+  handleMessage(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: { text: string }
+  ) {
+    console.log(`Received message from ${client.id}: ${payload.text}`);
+    
+    // We can return a response directly back to the sender!
+    return { status: 'Message received', text: payload.text };
+  }
+}
+```
+
+### 3. Registering the Gateway
+Just like Controllers, Gateways must be registered as Providers in a Module.
+
+```typescript
+// chat.module.ts
+import { Module } from '@nestjs/common';
+import { ChatGateway } from './chat.gateway';
+
+@Module({
+  providers: [ChatGateway], // Gateways go in the providers array!
+})
+export class ChatModule {}
+```
+
+## Best Practices
+- **Use Gateways alongside Controllers**: You can easily run an HTTP API and a WebSocket server on the same port in NestJS. Use HTTP for standard CRUD operations (fetching user profiles, logging in) and use WebSockets strictly for real-time features (chat, live notifications, collaborative editing).
+- **Security**: WebSockets do not have CORS protections in the same way HTTP does. You must explicitly configure CORS on your `@WebSocketGateway()` if you are communicating across domains. Furthermore, authenticate users *during the initial handshake*, not on every message.

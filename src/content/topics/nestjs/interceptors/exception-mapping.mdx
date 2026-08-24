@@ -1,0 +1,83 @@
+---
+title: "Exception Mapping"
+description: "Exception Mapping in NestJS"
+importance: "MEDIUM"
+revisionTime: 6
+category: "NestJS"
+subcategory: "Interceptors"
+order: 860
+---
+
+*Interceptors can catch exceptions thrown by the Controller or Service layers and transform them into different exceptions before they reach the built-in Exception Filters.*
+
+## Overview
+Often, your Service layer might throw generic errors, or errors specific to a database driver (e.g., a TypeORM `QueryFailedError` when a unique constraint is violated). 
+
+You do not want these raw database errors leaking to the client, nor do you want your Controllers cluttered with `try/catch` blocks. You can use an Interceptor to catch specific errors and map them to standard NestJS HTTP exceptions (like `ConflictException`).
+
+## Key Concepts
+- **RxJS `catchError()`**: Instead of the `map()` operator (which transforms successful data), we use the `catchError()` operator to intercept failures in the Observable stream.
+- **`throwError()`**: Inside `catchError()`, we use the RxJS `throwError` factory to emit a new, transformed error back into the stream.
+- **Separation of Concerns**: Exception mapping in interceptors keeps your controllers clean and focused strictly on HTTP routing.
+
+## Code Examples
+
+### Mapping a Database Error to an HTTP Exception
+Imagine your Service layer throws a custom `EntityNotFoundError`. We want to translate this into a standard 404.
+
+```typescript
+import { Injectable, NestInterceptor, ExecutionContext, CallHandler, NotFoundException } from '@nestjs/common';
+import { Observable, throwError } from 'rxjs';
+import { catchError } from 'rxjs/operators';
+
+// Assume this is a custom error thrown by your DB layer
+class EntityNotFoundError extends Error {}
+
+@Injectable()
+export class ErrorsInterceptor implements NestInterceptor {
+  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+    return next
+      .handle()
+      .pipe(
+        catchError(err => {
+          // If it's our specific database error...
+          if (err instanceof EntityNotFoundError) {
+            // ...transform it into a standard NestJS HTTP 404 error
+            return throwError(() => new NotFoundException('The requested resource was not found in the database.'));
+          }
+          
+          // If it's some other error, just re-throw it untouched
+          return throwError(() => err);
+        }),
+      );
+  }
+}
+```
+
+### Handling Unique Constraint Violations
+A very common use case is handling database "duplicate key" errors during user registration.
+
+```typescript
+import { Injectable, NestInterceptor, ExecutionContext, CallHandler, ConflictException } from '@nestjs/common';
+import { Observable, throwError } from 'rxjs';
+import { catchError } from 'rxjs/operators';
+
+@Injectable()
+export class UniqueConstraintInterceptor implements NestInterceptor {
+  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+    return next.handle().pipe(
+      catchError(error => {
+        // Example checking a Postgres error code for unique violation
+        if (error.code === '23505') { 
+          return throwError(() => new ConflictException('A record with this value already exists.'));
+        }
+        return throwError(() => error);
+      }),
+    );
+  }
+}
+```
+
+## Best Practices
+- **Exception Filters vs. Interceptors**: Interceptors are great for mapping *specific* domain errors to HTTP errors on a per-controller basis. However, if you want to catch *all* `QueryFailedError`s globally across your entire app and format them, a global **Exception Filter** is usually a better and cleaner architectural choice.
+- **Don't Swallow Errors**: Ensure you always return `throwError(() => err)` at the end of your `catchError` block. If you forget this, the error is swallowed, the request hangs, and you will have a very difficult bug to trace.

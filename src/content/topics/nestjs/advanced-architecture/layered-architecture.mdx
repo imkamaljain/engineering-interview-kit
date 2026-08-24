@@ -1,0 +1,111 @@
+---
+title: "Layered Architecture"
+description: "Layered Architecture in NestJS"
+importance: "HIGH"
+revisionTime: 10
+category: "NestJS"
+subcategory: "Advanced Architecture"
+order: 2680
+---
+
+*Layered Architecture (N-Tier) is the most common and traditional architectural pattern in software development. It organizes an application into horizontal logical layers, where each layer has a specific responsibility.*
+
+## Overview
+Unlike Clean Architecture or Hexagonal Architecture which are built around a central Domain, Layered Architecture is built vertically. A request flows from the top layer down to the bottom layer, and the response flows back up.
+
+NestJS naturally encourages a 3-Tier Layered Architecture out-of-the-box through its CLI generators (`nest g controller`, `nest g service`). 
+
+## Key Concepts (The Layers)
+1. **Presentation Layer (Controllers/Resolvers)**: The topmost layer. Responsible for handling incoming HTTP requests, parsing parameters, validating DTOs, and returning HTTP responses.
+2. **Business Logic Layer (Services)**: The middle layer. Contains the core application logic, algorithms, and rules. It receives data from the Presentation layer, processes it, and requests data from the Data Access layer.
+3. **Data Access Layer (Repositories/DAOs)**: The bottom layer. Responsible for communicating with the database, executing SQL queries, or calling external 3rd-party APIs.
+
+## The Rule of Layered Architecture
+*A layer should only communicate with the layer directly beneath it.* 
+A Controller should never inject a Repository directly and execute SQL. It must go through the Service layer.
+
+## Code Examples
+
+### 1. The Data Access Layer
+This layer is purely responsible for database interactions.
+
+```typescript
+// users.repository.ts
+import { Injectable } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { UserEntity } from './user.entity';
+
+@Injectable()
+export class UsersRepository {
+  constructor(
+    @InjectRepository(UserEntity)
+    private readonly orm: Repository<UserEntity>,
+  ) {}
+
+  async findByEmail(email: string): Promise<UserEntity | null> {
+    // Pure DB logic
+    return this.orm.findOne({ where: { email } });
+  }
+
+  async save(user: Partial<UserEntity>): Promise<UserEntity> {
+    return this.orm.save(user);
+  }
+}
+```
+
+### 2. The Business Logic Layer
+This layer implements the rules. It uses the Repository layer to get data.
+
+```typescript
+// users.service.ts
+import { Injectable, ConflictException } from '@nestjs/common';
+import { UsersRepository } from './users.repository';
+
+@Injectable()
+export class UsersService {
+  // Depends on the layer below it
+  constructor(private readonly usersRepository: UsersRepository) {}
+
+  async registerUser(email: string, passwordHash: string) {
+    // Business rule: Emails must be unique
+    const existing = await this.usersRepository.findByEmail(email);
+    if (existing) {
+      throw new ConflictException('Email already in use');
+    }
+
+    // Call the data access layer to save
+    return this.usersRepository.save({ email, passwordHash });
+  }
+}
+```
+
+### 3. The Presentation Layer
+This layer handles the HTTP specifics and uses the Service layer.
+
+```typescript
+// users.controller.ts
+import { Controller, Post, Body } from '@nestjs/common';
+import { UsersService } from './users.service';
+import { RegisterDto } from './dto/register.dto';
+
+@Controller('users')
+export class UsersController {
+  // Depends on the layer below it
+  constructor(private readonly usersService: UsersService) {}
+
+  @Post('register')
+  async register(@Body() dto: RegisterDto) {
+    // Validation is handled by Pipes, so 'dto' is safe here.
+    // We just pass it to the business logic layer.
+    const user = await this.usersService.registerUser(dto.email, dto.password);
+    
+    // Format the response for the web
+    return { status: 'success', data: { id: user.id } };
+  }
+}
+```
+
+## Best Practices
+- **Strict Layering**: Enforce strict layering. If a Controller needs a simple list of users, it is tempting to inject the `UsersRepository` directly into the `UsersController` to save time. This violates the architecture. Always route through the `UsersService`, even if the service method just returns the repository result directly. This ensures that if business logic *is* added later, the controller doesn't need to be rewritten.
+- **The "Fat Service" Problem**: The biggest downside to Layered Architecture is that the `UsersService` tends to become a massive 2000-line file that handles registration, password resets, profile updates, and billing. To mitigate this, break your services down into smaller, single-responsibility services (e.g., `UserRegistrationService`, `UserPasswordService`).

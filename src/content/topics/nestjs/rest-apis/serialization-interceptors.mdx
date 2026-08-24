@@ -1,0 +1,109 @@
+---
+title: "Serialization Interceptors"
+description: "Serialization Interceptors in NestJS"
+importance: "MEDIUM"
+revisionTime: 13
+category: "NestJS"
+subcategory: "REST APIs"
+order: 1480
+---
+
+*Serialization Interceptors (specifically `ClassSerializerInterceptor`) act as the final gatekeeper before your data leaves the server, ensuring that only the data you explicitly want to share is converted to JSON.*
+
+## Overview
+While we discussed response serialization generally, it is important to understand *how* the interceptor achieves it. 
+
+The `ClassSerializerInterceptor` wraps the RxJS observable returned by your controller. When your controller finishes its work and returns an object (or array of objects), the interceptor catches it, passes it through the `class-transformer` library's `instanceToPlain()` function, and then hands the sanitized plain JavaScript object to the underlying HTTP framework (Express or Fastify) to be sent as a JSON string.
+
+## Key Concepts
+- **`instanceToPlain()`**: The core function from `class-transformer` that does the actual work of reading `@Exclude()` and `@Expose()` decorators.
+- **Serialization Groups**: A powerful feature that allows you to expose or exclude properties dynamically based on the current context (e.g., exposing an `email` field only if the user requesting it is an 'admin').
+
+## Code Examples
+
+### 1. Advanced Serialization with Groups
+Imagine a `User` entity. If a normal user views the profile, they should only see the `username`. If an admin views it, they should also see the `email`.
+
+```typescript
+import { Exclude, Expose } from 'class-transformer';
+
+export class UserEntity {
+  id: number;
+  
+  @Expose()
+  username: string;
+
+  // This will ONLY be serialized if the 'admin' group is active
+  @Expose({ groups: ['admin'] })
+  email: string;
+
+  // This is never serialized
+  @Exclude()
+  passwordHash: string;
+
+  constructor(partial: Partial<UserEntity>) {
+    Object.assign(this, partial);
+  }
+}
+```
+
+### 2. Passing Groups to the Interceptor
+You tell the interceptor which groups are active by using the `@SerializeOptions()` decorator on your controller method.
+
+```typescript
+import { Controller, Get, UseInterceptors, ClassSerializerInterceptor, SerializeOptions } from '@nestjs/common';
+
+@Controller('users')
+@UseInterceptors(ClassSerializerInterceptor)
+export class UsersController {
+  
+  @Get('public-profile')
+  // No groups provided. The 'email' field will be hidden.
+  getPublic() {
+    return new UserEntity({ id: 1, username: 'john', email: 'john@test.com' });
+  }
+
+  @Get('admin-profile')
+  // We activate the 'admin' group. The 'email' field WILL be included!
+  @SerializeOptions({
+    groups: ['admin'],
+  })
+  getAdmin() {
+    return new UserEntity({ id: 1, username: 'john', email: 'john@test.com' });
+  }
+}
+```
+
+### 3. Writing a Custom Serializer Interceptor
+Sometimes the built-in interceptor isn't enough. For example, you might want to wrap *every* response in a `{ data: ... }` object. You can write your own interceptor to do this alongside serialization.
+
+```typescript
+import { Injectable, NestInterceptor, ExecutionContext, CallHandler } from '@nestjs/common';
+import { Observable } from 'rxjs';
+import { map } from 'rxjs/operators';
+import { instanceToPlain } from 'class-transformer';
+
+@Injectable()
+export class TransformInterceptor<T> implements NestInterceptor<T, any> {
+  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+    
+    // next.handle() executes the controller method
+    return next.handle().pipe(
+      map(data => {
+        // 1. Manually serialize the data (honoring @Exclude rules)
+        const serializedData = instanceToPlain(data);
+        
+        // 2. Wrap the result in a custom JSON envelope
+        return {
+          statusCode: context.switchToHttp().getResponse().statusCode,
+          data: serializedData,
+        };
+      }),
+    );
+  }
+}
+```
+
+## Best Practices
+- **`enableImplicitConversion` Caveat**: If you use `enableImplicitConversion: true` in your global `ValidationPipe` (which uses `class-transformer` for inbound data), it can sometimes conflict with outbound serialization logic if you aren't careful about where you place your decorators. Keep your inbound DTOs (Data Transfer Objects) and outbound Entity/Response models completely separate.
+- **Performance**: Reflection and serialization add a slight performance overhead. For 99% of applications, this is negligible. However, if you are returning lists containing tens of thousands of deeply nested objects, the `ClassSerializerInterceptor` might become a CPU bottleneck. In extreme performance cases, manual mapping functions are faster.

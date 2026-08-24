@@ -1,0 +1,117 @@
+---
+title: "Subscriptions"
+description: "Subscriptions in NestJS"
+importance: "LOW"
+revisionTime: 6
+category: "NestJS"
+subcategory: "GraphQL"
+order: 1680
+---
+
+*GraphQL Subscriptions allow clients to maintain an active connection to the server (usually via WebSockets) to receive real-time updates when specific events occur (e.g., a new message is posted in a chat room).*
+
+## Overview
+While Queries (Read) and Mutations (Write) operate over standard HTTP, Subscriptions require a persistent connection. 
+
+In NestJS, subscriptions are powered by the `graphql-ws` or `subscriptions-transport-ws` packages. You use the `PubSub` (Publish/Subscribe) pattern. When a mutation occurs (e.g., `addComment`), the server "publishes" an event. Any clients who have "subscribed" to that event receive the new comment data instantly.
+
+## Key Concepts
+- **WebSockets**: The underlying protocol used for subscriptions.
+- **`PubSub`**: An event emitter used to publish and listen for events. (Note: The default in-memory `PubSub` is for development only. Production requires Redis).
+- **`@Subscription()`**: The decorator used to expose a subscription endpoint.
+- **`filter`**: A function to determine if a specific client should receive a specific published event (e.g., only send the comment if it belongs to the post the client is viewing).
+
+## Code Examples
+
+### 1. Enabling Subscriptions
+You must explicitly enable subscriptions in your `GraphQLModule` configuration.
+
+```typescript
+// app.module.ts
+import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo';
+import { Module } from '@nestjs/common';
+import { GraphQLModule } from '@nestjs/graphql';
+
+@Module({
+  imports: [
+    GraphQLModule.forRoot<ApolloDriverConfig>({
+      driver: ApolloDriver,
+      autoSchemaFile: 'schema.gql',
+      // Enable WebSocket subscriptions
+      subscriptions: {
+        'graphql-ws': true // Modern standard
+      },
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+### 2. Creating the PubSub Instance
+For this example, we use the basic `graphql-subscriptions` package. In a real app, this should be provided as a global singleton via a custom module.
+
+```typescript
+// pubsub.module.ts
+import { Global, Module } from '@nestjs/common';
+import { PubSub } from 'graphql-subscriptions';
+
+@Global()
+@Module({
+  providers: [
+    {
+      provide: 'PUB_SUB',
+      useValue: new PubSub(),
+    },
+  ],
+  exports: ['PUB_SUB'],
+})
+export class PubSubModule {}
+```
+
+### 3. Publishing and Subscribing in the Resolver
+When a mutation happens, we publish. When a client subscribes, we return an `AsyncIterator`.
+
+```typescript
+import { Resolver, Mutation, Subscription, Args, Int } from '@nestjs/graphql';
+import { Inject } from '@nestjs/common';
+import { PubSub } from 'graphql-subscriptions';
+import { Comment } from './comment.model';
+
+const COMMENT_ADDED_EVENT = 'commentAdded';
+
+@Resolver(() => Comment)
+export class CommentsResolver {
+  // Inject the global PubSub instance
+  constructor(@Inject('PUB_SUB') private pubSub: PubSub) {}
+
+  // 1. The Mutation publishes the event
+  @Mutation(() => Comment)
+  async addComment(
+    @Args('postId', { type: () => Int }) postId: number,
+    @Args('text') text: string,
+  ) {
+    const newComment = { id: Date.now(), postId, text };
+    
+    // PUBLISH! The payload object MUST have a key matching the event name.
+    this.pubSub.publish(COMMENT_ADDED_EVENT, { commentAdded: newComment });
+    
+    return newComment;
+  }
+
+  // 2. The Subscription listens for the event
+  @Subscription(() => Comment, {
+    // 3. Filter: Only notify the client if the comment belongs to the post they are watching!
+    filter: (payload, variables) => {
+      return payload.commentAdded.postId === variables.postId;
+    },
+  })
+  commentAdded(@Args('postId', { type: () => Int }) postId: number) {
+    // Returns an AsyncIterator that pushes data to the client's WebSocket
+    return this.pubSub.asyncIterator(COMMENT_ADDED_EVENT);
+  }
+}
+```
+
+## Best Practices
+- **Do not use in-memory PubSub in Production**: The `new PubSub()` provided by `graphql-subscriptions` lives only in the memory of the current Node process. If you deploy your app across multiple servers (or Kubernetes pods), a mutation on Server A will not trigger subscriptions connected to Server B. You **must** use a Redis-backed PubSub (like `@nestjs/microservices` Redis client or `graphql-redis-subscriptions`) in production.
+- **Authentication**: WebSocket authentication is entirely different from HTTP authentication. You cannot rely on standard HTTP Headers (like Bearer tokens) because WebSockets don't send them after the initial handshake. You must configure the `connectionParams` in the GraphQLModule to extract tokens during the WebSocket connection phase.

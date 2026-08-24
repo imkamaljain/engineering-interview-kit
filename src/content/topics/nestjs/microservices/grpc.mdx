@@ -1,0 +1,156 @@
+---
+title: "gRPC"
+description: "gRPC in NestJS"
+importance: "LOW"
+revisionTime: 11
+category: "NestJS"
+subcategory: "Microservices"
+order: 1850
+---
+
+*gRPC (gRPC Remote Procedure Calls) is a high-performance, open-source framework developed by Google. It uses HTTP/2 for transport and Protocol Buffers (Protobuf) as its interface description language, offering strictly typed, ultra-fast microservice communication.*
+
+## Overview
+Unlike TCP or Redis where you send JSON payloads, gRPC sends binary data. Because binary is smaller and faster to parse than JSON, and HTTP/2 allows multiplexing multiple requests over a single connection, gRPC is arguably the fastest microservice transporter available in NestJS.
+
+The tradeoff is complexity: you cannot just send arbitrary JavaScript objects. You must define a strict contract using a `.proto` file. Both the client and the server must have a copy of this file to know how to serialize and deserialize the binary data.
+
+## Key Concepts
+- **Protocol Buffers (.proto)**: A language-neutral mechanism for serializing structured data. It acts as the absolute source of truth for your API contract.
+- **Strict Typing**: If a `.proto` file says a field is an `int32`, and you try to send a string, it will immediately fail.
+- **Code Generation**: You typically use tools to generate TypeScript interfaces directly from the `.proto` files to ensure your NestJS code perfectly matches the gRPC contract.
+
+## Code Examples
+
+### 1. The Protocol Buffer File
+First, you define the service and the message shapes in a `hero.proto` file.
+
+```protobuf
+// hero.proto
+syntax = "proto3";
+
+package hero; // The package name
+
+// Define the Service (like a Controller)
+service HeroService {
+  // Define a method (like a Route)
+  rpc FindOne (HeroById) returns (Hero) {}
+}
+
+// Define the input shape
+message HeroById {
+  int32 id = 1;
+}
+
+// Define the output shape
+message Hero {
+  int32 id = 1;
+  string name = 2;
+}
+```
+
+### 2. The gRPC Server (Microservice)
+Configure the NestJS app to read the `.proto` file on startup.
+
+```typescript
+// server/main.ts
+import { NestFactory } from '@nestjs/core';
+import { MicroserviceOptions, Transport } from '@nestjs/microservices';
+import { join } from 'path';
+import { AppModule } from './app.module';
+
+async function bootstrap() {
+  const app = await NestFactory.createMicroservice<MicroserviceOptions>(AppModule, {
+    transport: Transport.GRPC,
+    options: {
+      package: 'hero', // Matches the package name in hero.proto
+      protoPath: join(__dirname, 'hero/hero.proto'), // Path to the proto file
+      url: 'localhost:50051', // Standard gRPC port
+    },
+  });
+  await app.listen();
+}
+```
+
+```typescript
+// server/hero.controller.ts
+import { Controller } from '@nestjs/common';
+import { GrpcMethod } from '@nestjs/microservices';
+
+@Controller()
+export class HeroController {
+  
+  // Use @GrpcMethod instead of @MessagePattern
+  // The first argument is the Service name from the proto file.
+  // The second argument is the RPC method name.
+  @GrpcMethod('HeroService', 'FindOne')
+  findOne(data: { id: number }): { id: number; name: string } {
+    const heroes = [
+      { id: 1, name: 'Batman' },
+      { id: 2, name: 'Superman' },
+    ];
+    return heroes.find(({ id }) => id === data.id);
+  }
+}
+```
+
+### 3. The gRPC Client
+The client also needs the `.proto` file to know how to encode the request.
+
+```typescript
+// client/app.module.ts
+import { Module } from '@nestjs/common';
+import { ClientsModule, Transport } from '@nestjs/microservices';
+import { join } from 'path';
+
+@Module({
+  imports: [
+    ClientsModule.register([
+      {
+        name: 'HERO_PACKAGE',
+        transport: Transport.GRPC,
+        options: {
+          package: 'hero',
+          protoPath: join(__dirname, 'hero/hero.proto'),
+          url: 'localhost:50051',
+        },
+      },
+    ]),
+  ],
+})
+export class AppModule {}
+```
+
+```typescript
+// client/app.controller.ts
+import { Controller, Get, Inject, OnModuleInit, Param } from '@nestjs/common';
+import { ClientGrpc } from '@nestjs/microservices';
+import { Observable } from 'rxjs';
+
+// Define TS interfaces that match the proto file!
+interface HeroService {
+  findOne(data: { id: number }): Observable<{ id: number; name: string }>;
+}
+
+@Controller('hero')
+export class AppController implements OnModuleInit {
+  private heroService: HeroService;
+
+  constructor(@Inject('HERO_PACKAGE') private client: ClientGrpc) {}
+
+  onModuleInit() {
+    // Dynamically wire up the TS interface to the gRPC service
+    this.heroService = this.client.getService<HeroService>('HeroService');
+  }
+
+  @Get(':id')
+  getHero(@Param('id') id: string) {
+    // Call it exactly like a local function!
+    return this.heroService.findOne({ id: +id });
+  }
+}
+```
+
+## Best Practices
+- **Shared Proto Repository**: The biggest challenge with gRPC is ensuring the Client and Server have the exact same `.proto` file. Never copy/paste them. Either use a Git Submodule containing your `.proto` files, a Monorepo shared folder, or publish your `.proto` files to a private NPM registry.
+- **Use `ts-proto`**: Manually writing TypeScript interfaces that match your `.proto` files (as seen in the client example above) is error-prone. Use libraries like `ts-proto` to automatically compile your `.proto` files into strictly-typed TypeScript classes during your build step.

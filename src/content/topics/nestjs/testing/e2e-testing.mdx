@@ -1,0 +1,98 @@
+---
+title: "E2E Testing"
+description: "E2E Testing in NestJS"
+importance: "MEDIUM"
+revisionTime: 9
+category: "NestJS"
+subcategory: "Testing"
+order: 2290
+---
+
+*End-to-End (E2E) Testing in NestJS validates the entire application lifecycle, from the incoming HTTP request, through the middleware, guards, controllers, and database, down to the final HTTP response.*
+
+## Overview
+Unit tests ensure individual classes work in isolation. However, unit tests will pass even if you forgot to add `@UseGuards(AuthGuard)` to your controller, or if your database schema doesn't match your TypeORM entity. 
+
+E2E tests guarantee that all the pieces of your NestJS architecture are wired together correctly. Because E2E tests interact with a real (or dedicated test) database and network stack, they are slower than unit tests, but provide the highest level of confidence.
+
+## Key Concepts
+- **The Application Context**: Bootstrapping the entire NestJS application inside the test environment using `Test.createTestingModule()`.
+- **Supertest**: An HTTP assertion library used to send real HTTP requests to your bootstrapped NestJS application without needing to bind it to a physical network port.
+- **Database Teardown**: The most challenging aspect of E2E testing. You must ensure the database is wiped clean between every test so that data from Test A doesn't cause Test B to fail.
+
+## Code Examples
+
+### 1. Basic E2E Test Setup
+By default, NestJS provides an `e2e` directory with a sample test. It uses Jest and Supertest.
+
+```typescript
+// app.e2e-spec.ts
+import { Test, TestingModule } from '@nestjs/testing';
+import { INestApplication } from '@nestjs/common';
+import * as request from 'supertest';
+import { AppModule } from './../src/app.module';
+
+describe('AppController (e2e)', () => {
+  let app: INestApplication;
+
+  // 1. Setup runs before all tests in this file
+  beforeAll(async () => {
+    // Bootstrap the entire AppModule (including database connections)
+    const moduleFixture: TestingModule = await Test.createTestingModule({
+      imports: [AppModule],
+    }).compile();
+
+    app = moduleFixture.createNestApplication();
+    await app.init();
+  });
+
+  // 2. The Test
+  it('/ (GET)', () => {
+    // Send an HTTP GET request to the root endpoint
+    return request(app.getHttpServer())
+      .get('/')
+      .expect(200) // Assert the HTTP status code
+      .expect('Hello World!'); // Assert the response body
+  });
+
+  // 3. Teardown
+  afterAll(async () => {
+    // Gracefully shut down the app and close database connections
+    await app.close();
+  });
+});
+```
+
+### 2. Testing with Authentication and Databases
+When testing a real endpoint, you often need to set up database state (e.g., creating a user) and pass authentication headers.
+
+```typescript
+it('/users/profile (GET) - Success', async () => {
+  // 1. Setup: Create a user in the test database (using Prisma or TypeORM directly)
+  const user = await prisma.user.create({ data: { email: 'test@test.com' } });
+  
+  // 2. Setup: Generate a valid JWT for that user
+  const token = jwtService.sign({ sub: user.id });
+
+  // 3. Act & Assert: Hit the endpoint WITH the token
+  const response = await request(app.getHttpServer())
+    .get('/users/profile')
+    .set('Authorization', `Bearer ${token}`)
+    .expect(200);
+
+  // Assert the returned data matches the database
+  expect(response.body.email).toEqual('test@test.com');
+});
+
+it('/users/profile (GET) - Unauthorized', () => {
+  // Act & Assert: Hit the endpoint WITHOUT the token
+  return request(app.getHttpServer())
+    .get('/users/profile')
+    .expect(401);
+});
+```
+
+## Best Practices
+- **Use a Dedicated Test Database**: Never run E2E tests against your development or production database. Your `jest-e2e.json` should set an environment variable (like `DATABASE_URL=postgres://localhost:5432/my_app_test`) to ensure tests run in an isolated environment.
+- **Global Teardown Strategy**: Instead of manually deleting records after every test (`await prisma.user.deleteMany()`), it is highly recommended to use a global setup/teardown script that truncates all tables, or runs all tests inside a database transaction that rolls back at the end of the test.
+- **Don't Mock (Usually)**: The purpose of an E2E test is to verify the real system. Avoid using `overrideProvider()` to mock internal services unless absolutely necessary (e.g., mocking a third-party payment gateway like Stripe, because you cannot make real credit card charges during a test).

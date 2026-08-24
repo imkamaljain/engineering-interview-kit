@@ -1,0 +1,105 @@
+---
+title: "Background Jobs"
+description: "Background Jobs in NestJS"
+importance: "LOW"
+revisionTime: 7
+category: "NestJS"
+subcategory: "Performance & Scalability"
+order: 2460
+---
+
+*Background Jobs (or Task Queues) allow you to offload slow, non-critical work from the main HTTP request/response cycle, dramatically improving API response times and ensuring reliable execution through retries.*
+
+## Overview
+When a user clicks "Generate Monthly PDF Report", the report generation might take 30 seconds. If you run this synchronously, the user's browser will sit there spinning for 30 seconds. Even worse, if their Wi-Fi drops at second 29, the HTTP connection is severed, and the report is lost.
+
+Instead, the API should instantly respond with `202 Accepted` and say "Your report is generating. We will email it to you." The actual generation is pushed to a Background Job queue.
+
+In NestJS, this is typically handled by **BullMQ** backed by Redis.
+
+## Key Concepts
+- **Producer**: The service (usually an HTTP Controller) that adds a job to the queue.
+- **Consumer / Worker**: A separate service (or entirely separate server) that listens to the queue and executes the jobs one by one.
+- **Queue Backing**: Queues must be persistent (e.g., in Redis, RabbitMQ, or AWS SQS). If the server crashes, the jobs must not be lost.
+
+## Code Examples
+
+### 1. Setup BullMQ
+Install the packages and connect to Redis in `AppModule`.
+
+```bash
+npm install @nestjs/bullmq bullmq
+```
+
+```typescript
+import { Module } from '@nestjs/common';
+import { BullModule } from '@nestjs/bullmq';
+
+@Module({
+  imports: [
+    BullModule.forRoot({
+      connection: { host: 'localhost', port: 6379 },
+    }),
+    BullModule.registerQueue({
+      name: 'video-processing',
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+### 2. The Producer (Fast HTTP Response)
+The controller takes the user's request, pushes it to the queue, and responds immediately.
+
+```typescript
+import { Controller, Post, Body } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
+
+@Controller('videos')
+export class VideoController {
+  constructor(@InjectQueue('video-processing') private videoQueue: Queue) {}
+
+  @Post('upload')
+  async uploadVideo(@Body() videoData: any) {
+    // 1. Add the heavy task to the background queue
+    await this.videoQueue.add('transcode', {
+      videoId: videoData.id,
+      format: 'mp4',
+    });
+
+    // 2. Respond to the user in 10ms! 
+    return { status: 'Processing started. Check back later.' };
+  }
+}
+```
+
+### 3. The Consumer (Heavy Processing)
+The Consumer listens to the queue in the background. It is completely decoupled from the HTTP request cycle.
+
+```typescript
+import { Processor, WorkerHost } from '@nestjs/bullmq';
+import { Job } from 'bullmq';
+
+@Processor('video-processing')
+export class VideoProcessor extends WorkerHost {
+  
+  async process(job: Job<any, any, string>): Promise<any> {
+    switch (job.name) {
+      case 'transcode':
+        console.log(`Transcoding video ${job.data.videoId}...`);
+        
+        // Heavy CPU/Network work here! Takes 5 minutes.
+        // It does NOT block the HTTP server from accepting new requests.
+        await this.runTranscodingAlgorithm(job.data);
+        
+        console.log(`Video ${job.data.videoId} complete!`);
+        break;
+    }
+  }
+}
+```
+
+## Best Practices
+- **Retry Logic**: Network calls fail. If your background job sends an email and the SendGrid API is down, configure BullMQ to retry automatically with exponential backoff.
+- **Separate Worker Microservices**: Running the `@Processor` in the same NestJS application as your HTTP API is fine for small apps. But for high scale, CPU-intensive background jobs will steal CPU cycles from your web server, slowing down HTTP requests. You should extract the `@Processor` classes into a completely separate NestJS application (a "Worker Server") that scales independently of your "Web Servers".

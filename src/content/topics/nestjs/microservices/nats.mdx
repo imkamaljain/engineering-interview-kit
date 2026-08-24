@@ -1,0 +1,124 @@
+---
+title: "NATS"
+description: "NATS in NestJS"
+importance: "HIGH"
+revisionTime: 13
+category: "NestJS"
+subcategory: "Microservices"
+order: 1840
+---
+
+*NATS is a simple, highly performant, lightweight messaging system designed for modern distributed systems. It acts as a nervous system for microservices, offering incredible throughput and very low latency.*
+
+## Overview
+In the NestJS ecosystem, NATS occupies a sweet spot between Redis (fast but purely ephemeral) and Kafka/RabbitMQ (durable but heavy/complex). 
+
+Standard NATS operates on a purely "at-most-once" delivery model (like Redis Pub/Sub), meaning if a subscriber is offline, it misses the message. However, the NATS ecosystem includes **JetStream**, which adds persistence, message streaming, and guaranteed "at-least-once" delivery.
+
+## Key Concepts
+- **Subject-Based Routing**: Instead of strictly named "queues" or "topics", NATS uses hierarchical subjects (e.g., `time.us.east`, `time.us.west`). You can subscribe using wildcards (e.g., `time.*`).
+- **Always Available**: NATS is designed to never block a publisher. It can handle millions of messages a second.
+- **Request/Reply**: NATS has native support for request/reply patterns, making it an excellent choice for RPC (Remote Procedure Call) communication where you need a response back from a microservice.
+
+## Code Examples
+
+### 1. Installation
+Install the NATS Node.js client.
+`npm i nats`
+
+### 2. The NATS Server (Microservice)
+Configure the microservice to connect to a NATS server (usually running via Docker).
+
+```typescript
+// server/main.ts
+import { NestFactory } from '@nestjs/core';
+import { MicroserviceOptions, Transport } from '@nestjs/microservices';
+import { AppModule } from './app.module';
+
+async function bootstrap() {
+  const app = await NestFactory.createMicroservice<MicroserviceOptions>(
+    AppModule,
+    {
+      transport: Transport.NATS,
+      options: {
+        servers: ['nats://localhost:4222'], // Connect to the NATS cluster
+        // Standard NATS allows queuing. If multiple instances of this service
+        // connect using the same queue name, NATS load-balances messages among them!
+        queue: 'math_workers', 
+      },
+    },
+  );
+  await app.listen();
+}
+```
+
+```typescript
+// server/app.controller.ts
+import { Controller } from '@nestjs/common';
+import { MessagePattern, Payload } from '@nestjs/microservices';
+
+@Controller()
+export class AppController {
+  
+  // Using a NATS subject string as the pattern
+  @MessagePattern('math.multiply')
+  multiply(@Payload() data: number[]): number {
+    return (data || []).reduce((a, b) => a * b);
+  }
+}
+```
+
+### 3. The NATS Client
+The client connects to NATS and sends a message to the `math.multiply` subject. Because NATS has native Request/Reply, this feels exactly like a synchronous HTTP request.
+
+```typescript
+// client/app.module.ts
+import { Module } from '@nestjs/common';
+import { ClientsModule, Transport } from '@nestjs/microservices';
+import { AppController } from './app.controller';
+
+@Module({
+  imports: [
+    ClientsModule.register([
+      {
+        name: 'NATS_SERVICE',
+        transport: Transport.NATS,
+        options: {
+          servers: ['nats://localhost:4222'],
+        },
+      },
+    ]),
+  ],
+  controllers: [AppController],
+})
+export class AppModule {}
+```
+
+```typescript
+// client/app.controller.ts
+import { Controller, Get, Inject } from '@nestjs/common';
+import { ClientProxy } from '@nestjs/microservices';
+import { firstValueFrom } from 'rxjs';
+
+@Controller()
+export class AppController {
+  constructor(
+    @Inject('NATS_SERVICE') private client: ClientProxy,
+  ) {}
+
+  @Get('calc')
+  async getResult() {
+    // Send a message to the 'math.multiply' subject and await the response.
+    // NATS handles all the complicated correlation IDs under the hood!
+    const result = await firstValueFrom(
+      this.client.send<number>('math.multiply', [5, 10])
+    );
+    
+    return `The result is ${result}`; // Returns "The result is 50"
+  }
+}
+```
+
+## Best Practices
+- **Use Wildcards**: Take advantage of NATS hierarchical routing. You can have a logging microservice subscribe to `audit.*` (catching `audit.users`, `audit.orders`, etc.), while a specific user service only subscribes to `audit.users`. NestJS `@EventPattern('audit.*')` supports this seamlessly.
+- **Understand Delivery Guarantees**: If you are processing financial transactions, standard NATS is risky because if the `math_workers` queue is completely offline, the message is dropped. If you need guaranteed delivery, you must configure a NATS JetStream server (though configuring NestJS to use JetStream requires a custom transporter implementation or third-party packages, as the built-in NATS transporter uses standard core NATS).

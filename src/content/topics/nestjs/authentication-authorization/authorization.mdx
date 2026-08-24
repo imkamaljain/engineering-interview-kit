@@ -1,0 +1,96 @@
+---
+title: "Authorization"
+description: "Authorization in NestJS"
+importance: "HIGH"
+revisionTime: 13
+category: "NestJS"
+subcategory: "Authentication & Authorization"
+order: 1090
+---
+
+*Authorization is the process of verifying what an authenticated user is allowed to do. It determines their permissions and access rights.*
+
+## Overview
+While Authentication answers "Who are you?", Authorization answers "Are you allowed to be here?". 
+
+In NestJS, Authorization always occurs *after* Authentication. Once an Authentication Guard has successfully identified the user and attached their details to the `request.user` object, an Authorization Guard examines that user object to determine if they have the necessary roles, claims, or permissions to execute the target route.
+
+## Key Concepts
+- **Role-Based Access Control (RBAC)**: The simplest and most common form of authorization (e.g., checking if the user's role is `ADMIN` or `USER`).
+- **Claim/Permission-Based Access Control**: More granular control, checking specific permissions (e.g., `can:delete:users` vs just being an `ADMIN`).
+- **Metadata**: Using the `@nestjs/core` `Reflector` to read metadata attached to controllers (e.g., `@Roles('ADMIN')`) to make dynamic authorization decisions.
+
+## Code Examples
+
+### A Simple Role-Based Authorization Guard
+This guard assumes an Authentication Guard has already run and populated `request.user`.
+
+```typescript
+import { Injectable, CanActivate, ExecutionContext, ForbiddenException } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
+import { Request } from 'express';
+
+@Injectable()
+export class RolesGuard implements CanActivate {
+  // Inject the Reflector to read custom decorators
+  constructor(private reflector: Reflector) {}
+
+  canActivate(context: ExecutionContext): boolean {
+    // 1. Get the required roles for this specific route
+    const requiredRoles = this.reflector.getAllAndOverride<string[]>('roles', [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+
+    // 2. If the route has no specific roles required, allow access
+    if (!requiredRoles) {
+      return true;
+    }
+
+    // 3. Get the user object (attached by the Authentication Guard)
+    const request = context.switchToHttp().getRequest<Request>();
+    const user = request['user'];
+
+    // 4. If there's no user, they aren't authenticated (should theoretically be caught earlier)
+    if (!user) {
+      return false; 
+    }
+
+    // 5. Check if the user's role matches one of the required roles
+    // We assume the user object looks like { id: 1, role: 'user' }
+    const hasRole = requiredRoles.includes(user.role);
+
+    // If they don't have the role, NestJS automatically converts a `false` return 
+    // into a 403 Forbidden response.
+    return hasRole;
+  }
+}
+```
+
+### Applying Authentication and Authorization Together
+The order of guards in `@UseGuards()` is strictly executed from left to right.
+
+```typescript
+import { Controller, Get, UseGuards, SetMetadata } from '@nestjs/common';
+import { JwtAuthGuard } from './jwt-auth.guard';
+import { RolesGuard } from './roles.guard';
+
+@Controller('admin')
+// 1. First prove who you are (JwtAuthGuard)
+// 2. Then prove you have the right role (RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
+export class AdminController {
+  
+  @Get('dashboard')
+  // We use SetMetadata to attach the 'roles' metadata that RolesGuard reads!
+  @SetMetadata('roles', ['admin', 'super-admin']) 
+  getDashboard() {
+    return 'Super Secret Admin Dashboard';
+  }
+}
+```
+
+## Best Practices
+- **Never authorize without authenticating**: An Authorization Guard should always be preceded by an Authentication Guard. An Authorization Guard expects `request.user` to exist and be trustworthy.
+- **Custom Decorators**: Using `@SetMetadata('roles', ['admin'])` is verbose and prone to typos. It is highly recommended to wrap it in a custom decorator like `@Roles('admin')`.
+- **403 Forbidden**: If an Authorization Guard returns `false` or throws an error, it should always be a `ForbiddenException` (403), never an `UnauthorizedException` (401). 403 means "I know exactly who you are, but you are not allowed to do this."

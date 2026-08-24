@@ -1,0 +1,101 @@
+---
+title: "Object Types"
+description: "Object Types in NestJS"
+importance: "MEDIUM"
+revisionTime: 11
+category: "NestJS"
+subcategory: "GraphQL"
+order: 1690
+---
+
+*Object Types are the most fundamental component of a GraphQL schema. They represent the shape of the data that you can fetch from your API, defining fields and their corresponding data types.*
+
+## Overview
+In a Code-First NestJS architecture, you define GraphQL Object Types by decorating standard TypeScript classes with the `@ObjectType()` decorator. You then decorate individual class properties with the `@Field()` decorator to expose them to the GraphQL API.
+
+These classes act as the "Response Models" (similar to Response DTOs in a REST API). When a user runs a Query, they ask for specific fields defined within these Object Types.
+
+## Key Concepts
+- **`@ObjectType()`**: Decorates a class to tell NestJS it represents a GraphQL `type`.
+- **`@Field()`**: Exposes a property to the GraphQL schema.
+- **Nullability**: By default, NestJS assumes all fields are required (non-nullable). You must explicitly mark a field as nullable if it can return `null` or `undefined`.
+- **Field Resolvers**: Object Types can have complex properties (like a `Post` having an `Author`) that require separate database queries to resolve.
+
+## Code Examples
+
+### 1. Basic Object Type
+This translates directly into a `type Recipe { id: ID!, title: String!, description: String }` in the GraphQL schema.
+
+```typescript
+import { Field, ID, ObjectType } from '@nestjs/graphql';
+
+@ObjectType({ description: 'A culinary recipe' }) // Description shows up in GraphQL documentation!
+export class Recipe {
+  
+  // You must explicitly define the type if it's not a simple String or Boolean
+  @Field(type => ID)
+  id: string;
+
+  // NestJS infers that 'title' is a GraphQL String because of the TS type
+  @Field()
+  title: string;
+
+  // Mark optional fields using { nullable: true }
+  @Field({ nullable: true })
+  description?: string;
+  
+  // We can hide properties from GraphQL simply by NOT using the @Field decorator
+  internalRating: number; 
+}
+```
+
+### 2. Nested Object Types
+Object Types can reference other Object Types, creating the graph structure GraphQL is famous for.
+
+```typescript
+import { Field, ObjectType } from '@nestjs/graphql';
+import { Recipe } from './recipe.model';
+
+@ObjectType()
+export class Author {
+  @Field()
+  id: string;
+
+  @Field()
+  name: string;
+
+  // An Author has an array of Recipes.
+  // Note the syntax: [Recipe]. This means "An array of non-null Recipes"
+  @Field(type => [Recipe])
+  recipes: Recipe[];
+}
+```
+
+### 3. Sharing Decorators with TypeORM (The "One Class" Pattern)
+A massive advantage of Code-First NestJS is that you can apply both TypeORM (`@Entity`) and GraphQL (`@ObjectType`) decorators to the exact same class, eliminating the need to map database entities to GraphQL models manually.
+
+```typescript
+import { ObjectType, Field, ID } from '@nestjs/graphql';
+import { Entity, PrimaryGeneratedColumn, Column } from 'typeorm';
+
+@Entity() // TypeORM: "Create a database table"
+@ObjectType() // GraphQL: "Create a schema type"
+export class User {
+  @PrimaryGeneratedColumn('uuid') // TypeORM
+  @Field(() => ID) // GraphQL
+  id: string;
+
+  @Column() // TypeORM
+  @Field() // GraphQL
+  username: string;
+
+  @Column() // TypeORM
+  // Notice NO @Field() here. 
+  // We save it to the DB, but NEVER expose it to the GraphQL API.
+  passwordHash: string; 
+}
+```
+
+## Best Practices
+- **Explicit Type Arrow Functions**: When defining types inside `@Field(type => [Recipe])`, always use the arrow function syntax `() => [Recipe]` rather than just passing the class `[Recipe]`. This prevents Circular Dependency issues when two classes reference each other (e.g., an Author has Recipes, and a Recipe has an Author).
+- **Beware the "One Class" Pattern**: While combining `@Entity()` and `@ObjectType()` is great for simple CRUD apps, it tightly couples your database schema to your public API schema. If you rename a column in the database, your API contract breaks. For enterprise applications, it is often safer to keep TypeORM Entities and GraphQL ObjectTypes as separate classes and map between them.

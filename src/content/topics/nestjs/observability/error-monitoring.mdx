@@ -1,0 +1,106 @@
+---
+title: "Error Monitoring"
+description: "Error Monitoring in NestJS"
+importance: "MEDIUM"
+revisionTime: 8
+category: "NestJS"
+subcategory: "Observability"
+order: 2890
+---
+
+*Error Monitoring involves actively tracking, grouping, and alerting on unhandled exceptions and application crashes in production environments using dedicated platforms like Sentry or Bugsnag.*
+
+## Overview
+Logging errors to `stdout` or a text file is not enough. If an obscure bug triggers a `NullPointerException` 10,000 times in one hour, looking at a raw text file with 10,000 identical stack traces is useless. 
+
+Error monitoring tools automatically group those 10,000 errors into a single "Issue", attach the exact line of code, the user's browser details, the request payload, and send a Slack alert to the on-call engineer.
+
+In NestJS, Error Monitoring is almost exclusively implemented using **Global Exception Filters**.
+
+## Key Concepts
+- **Exception Filters**: The NestJS layer responsible for catching all unhandled exceptions before they crash the application or return a generic 500 error to the user.
+- **Sentry / Bugsnag / DataDog**: Hosted platforms that ingest error events and provide dashboards for debugging.
+- **Source Maps**: To make stack traces readable in production (where code is often compiled or minified), you must upload Source Maps to your monitoring tool during the CI/CD build process.
+
+## Code Examples
+
+### 1. Integrating Sentry via an Exception Filter
+The most robust way to monitor errors in NestJS is to catch them at the very edge of the application using a global Exception Filter.
+
+```bash
+npm install @sentry/node
+```
+
+```typescript
+// sentry.filter.ts
+import { Catch, ArgumentsHost, HttpException, HttpStatus } from '@nestjs/common';
+import { BaseExceptionFilter } from '@nestjs/core';
+import * as Sentry from '@sentry/node';
+
+@Catch()
+export class SentryExceptionFilter extends BaseExceptionFilter {
+  
+  catch(exception: unknown, host: ArgumentsHost) {
+    const ctx = host.switchToHttp();
+    const request = ctx.getRequest();
+
+    // 1. We don't want to alert Sentry for routine client errors (e.g., 400 Bad Request, 401 Unauthorized)
+    // We only care about 500 Internal Server Errors (unhandled bugs)
+    const status = exception instanceof HttpException 
+      ? exception.getStatus() 
+      : HttpStatus.INTERNAL_SERVER_ERROR;
+
+    if (status >= 500) {
+      // 2. Capture the error in Sentry
+      Sentry.withScope((scope) => {
+        // Attach useful context so you can reproduce the bug!
+        scope.setExtra('path', request.url);
+        scope.setExtra('method', request.method);
+        
+        // If you have authentication middleware, attach the user!
+        if (request.user) {
+          scope.setUser({ id: request.user.id, email: request.user.email });
+        }
+
+        Sentry.captureException(exception);
+      });
+    }
+
+    // 3. Let NestJS handle returning the HTTP response normally
+    super.catch(exception, host);
+  }
+}
+```
+
+### 2. Bootstrapping Sentry
+Initialize Sentry as early as possible in your application lifecycle.
+
+```typescript
+// main.ts
+import { NestFactory, HttpAdapterHost } from '@nestjs/core';
+import { AppModule } from './app.module';
+import { SentryExceptionFilter } from './sentry.filter';
+import * as Sentry from '@sentry/node';
+
+async function bootstrap() {
+  // Initialize Sentry BEFORE creating the Nest app
+  Sentry.init({
+    dsn: process.env.SENTRY_DSN,
+    environment: process.env.NODE_ENV,
+    tracesSampleRate: 1.0, // Used for performance tracing
+  });
+
+  const app = await NestFactory.create(AppModule);
+
+  // Register the global filter
+  const { httpAdapter } = app.get(HttpAdapterHost);
+  app.useGlobalFilters(new SentryExceptionFilter(httpAdapter));
+
+  await app.listen(3000);
+}
+bootstrap();
+```
+
+## Best Practices
+- **Ignore Expected Exceptions**: Do not send `404 Not Found` or `400 Bad Request` (ValidationPipe) errors to your error monitor. These are expected client behaviors, not server bugs. If you do, you will exhaust your Sentry quota in a day and suffer from "Alert Fatigue", ignoring real bugs because you get too many notifications.
+- **Sanitize Data**: Ensure your exception filter does not accidentally attach passwords, API keys, or credit card numbers to the Sentry scope. Most monitoring tools allow you to configure a list of keys (like `password`, `secret`) that they will automatically scrub before saving the data.

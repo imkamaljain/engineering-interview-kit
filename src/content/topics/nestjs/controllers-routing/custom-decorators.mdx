@@ -1,0 +1,100 @@
+---
+title: "Custom Decorators"
+description: "Custom Decorators in NestJS"
+importance: "MEDIUM"
+revisionTime: 8
+category: "NestJS"
+subcategory: "Controllers & Routing"
+order: 390
+---
+
+*Custom decorators allow you to extract complex, repetitive logic from your controller methods into clean, reusable annotations.*
+
+## Overview
+NestJS relies heavily on decorators. While the built-in decorators (`@Body()`, `@Param()`, `@Query()`, `@Req()`) are powerful, you'll often find yourself writing the exact same code across multiple controllers to extract specific data from the request object (like the currently authenticated user).
+
+Instead of injecting the raw `@Req()` object and extracting data manually, you can create a Custom Parameter Decorator.
+
+## Key Concepts
+- **`createParamDecorator`**: A factory function provided by `@nestjs/common` used to create custom parameter decorators.
+- **`ExecutionContext`**: Passed into the factory function, this provides access to the underlying request object, just like it does in Guards and Interceptors.
+- **Data Argument**: You can pass data to your custom decorator (e.g., `@User('email')`) to modify what it extracts.
+
+## Code Examples
+
+### The Problem
+Without a custom decorator, extracting the current user looks like this:
+
+```typescript
+@Get('profile')
+getProfile(@Req() req: Request) {
+  // 1. Tying ourselves to the Express Request object
+  // 2. We have to cast it or deal with TypeScript errors
+  const user = (req as any).user;
+  return `Hello, ${user.firstName}`;
+}
+```
+
+### The Solution: Creating `@User()`
+Let's create a custom decorator that handles this extraction elegantly.
+
+```typescript
+// user.decorator.ts
+import { createParamDecorator, ExecutionContext } from '@nestjs/common';
+
+export const User = createParamDecorator(
+  (data: unknown, ctx: ExecutionContext) => {
+    // 1. Get the request object
+    const request = ctx.switchToHttp().getRequest();
+    // 2. Return the user attached by the AuthGuard
+    return request.user;
+  },
+);
+```
+
+### Using the Custom Decorator
+
+```typescript
+// users.controller.ts
+import { Controller, Get } from '@nestjs/common';
+import { User } from './user.decorator';
+
+@Controller('profile')
+export class ProfileController {
+  
+  @Get()
+  getProfile(@User() user: UserEntity) {
+    // Beautiful, typed, and clean!
+    return `Hello, ${user.firstName}`;
+  }
+}
+```
+
+### Passing Data to the Decorator
+We can enhance our decorator to accept a string, allowing us to extract a *specific* property from the user object.
+
+```typescript
+export const User = createParamDecorator(
+  (data: string, ctx: ExecutionContext) => {
+    const request = ctx.switchToHttp().getRequest();
+    const user = request.user;
+
+    // If a property name was passed, return only that property
+    return data ? user?.[data] : user;
+  },
+);
+```
+
+**Usage:**
+```typescript
+@Get()
+// Extracts ONLY the email string
+getProfile(@User('email') email: string) {
+  return `Your email is ${email}`;
+}
+```
+
+## Best Practices
+- **Use Custom Decorators for Context Extraction**: The most common and best use case for custom decorators is extracting data from the `Request` object (User, Tenant ID, API Key, Client IP) that was placed there by a Middleware or Guard.
+- **Combine with Pipes**: Just like built-in decorators, custom decorators can be used with Pipes. E.g., `@User('id', ParseIntPipe) id: number`.
+- **Keep it Simple**: Custom parameter decorators should *only* extract and return data. They should not contain complex business logic or database calls. Leave that to Interceptors or Services.

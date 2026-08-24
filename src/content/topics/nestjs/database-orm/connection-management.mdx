@@ -1,0 +1,101 @@
+---
+title: "Connection Management"
+description: "Connection Management in NestJS"
+importance: "HIGH"
+revisionTime: 8
+category: "NestJS"
+subcategory: "Database & ORM"
+order: 1320
+---
+
+*Connection Management involves configuring how your application talks to the database, particularly focusing on Connection Pooling to ensure high performance and prevent database crashes under heavy load.*
+
+## Overview
+When a NestJS application starts, it doesn't just create one connection to the database. It creates a **Connection Pool**—a set of active, reusable connections (e.g., 10 connections).
+
+When a user requests data, the ORM borrows a connection from the pool, executes the query, and immediately returns the connection to the pool for the next user. This is vastly faster than opening and closing a brand new TCP connection for every single HTTP request.
+
+## Key Concepts
+- **Connection Pool**: A cache of database connections maintained so that connections can be reused.
+- **Pool Size**: The maximum number of concurrent connections your app is allowed to open.
+- **Multiple Databases**: NestJS allows you to connect to multiple different databases simultaneously by giving each connection a unique name.
+
+## Code Examples
+
+### 1. Configuring Connection Pools (TypeORM)
+You can configure the pool size directly in the `forRoot` method. The underlying driver (e.g., `pg` for Postgres, `mysql2` for MySQL) handles the actual pooling.
+
+```typescript
+import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
+
+@Module({
+  imports: [
+    TypeOrmModule.forRoot({
+      type: 'postgres',
+      host: 'localhost',
+      // ... standard credentials
+      
+      // PostgreSQL specific pooling options (passed to the 'pg' driver)
+      extra: {
+        max: 20, // Maximum number of connections in the pool (default is usually 10)
+        connectionTimeoutMillis: 5000, // How long to wait for an available connection
+        idleTimeoutMillis: 30000, // How long a connection can sit idle before being closed
+      },
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+### 2. Connecting to Multiple Databases
+Sometimes an app needs to read legacy data from a MySQL database while saving new data to a PostgreSQL database.
+
+```typescript
+// app.module.ts
+@Module({
+  imports: [
+    // Database 1 (The Default)
+    TypeOrmModule.forRoot({
+      type: 'postgres',
+      url: 'postgres://localhost/new_db',
+      entities: [User],
+    }),
+    
+    // Database 2 (Must be named!)
+    TypeOrmModule.forRoot({
+      name: 'legacy_connection', // Give it a unique name
+      type: 'mysql',
+      url: 'mysql://localhost/old_db',
+      entities: [LegacyUser],
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+When connecting to the second database, you must explicitly tell NestJS which connection to use when injecting repositories.
+
+```typescript
+// legacy.module.ts
+@Module({
+  // Specify the connection name here!
+  imports: [TypeOrmModule.forFeature([LegacyUser], 'legacy_connection')],
+  providers: [LegacyService]
+})
+export class LegacyModule {}
+
+// legacy.service.ts
+@Injectable()
+export class LegacyService {
+  constructor(
+    // And specify the connection name here!
+    @InjectRepository(LegacyUser, 'legacy_connection')
+    private legacyRepo: Repository<LegacyUser>,
+  ) {}
+}
+```
+
+## Best Practices
+- **Serverless Environments**: If you deploy NestJS to AWS Lambda (or any Serverless environment), Connection Pooling becomes a massive problem. Every concurrent Lambda invocation creates a *new* connection pool. 100 concurrent users = 1,000 database connections. This will instantly crash most databases. In Serverless, you MUST use an external connection proxy like PgBouncer, Amazon RDS Proxy, or Prisma Accelerate.
+- **Don't Max Out the Pool**: Don't set `max: 500` thinking it will make your app faster. Databases have hard limits on connections. A small pool (10-20) is usually highly optimal for a Node.js single-threaded event loop.

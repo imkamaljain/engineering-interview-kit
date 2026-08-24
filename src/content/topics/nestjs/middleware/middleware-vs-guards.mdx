@@ -1,0 +1,90 @@
+---
+title: "Middleware vs Guards"
+description: "Middleware vs Guards in NestJS"
+importance: "LOW"
+revisionTime: 5
+category: "NestJS"
+subcategory: "Middleware"
+order: 570
+---
+
+*While both Middleware and Guards intercept incoming requests, they serve distinct purposes and have vastly different levels of access to the NestJS Execution Context.*
+
+## Overview
+In traditional Express applications, authentication and authorization are handled by Middleware. You write a function that checks for a token, and if it fails, you return a 401.
+
+In NestJS, this approach is considered a **bad practice**. Instead, NestJS introduces **Guards** specifically for authorization. Understanding the difference between these two concepts is crucial for building robust Nest applications.
+
+## Key Concepts
+
+### Middleware (The "Dumb" Interceptor)
+- **Execution**: Runs very early, before Guards, Interceptors, Pipes, and Controllers.
+- **Context**: It only knows about the raw HTTP `Request` and `Response` objects.
+- **Limitation**: It has absolutely no idea *which* controller method is going to be executed. It only sees the string URL path (e.g., `/users/123`).
+
+### Guards (The "Smart" Interceptor)
+- **Execution**: Runs after Middleware, but before Interceptors and Pipes.
+- **Context**: It has access to the `ExecutionContext`.
+- **Advantage**: It knows *exactly* which class and which method is about to be invoked. This allows you to use Reflection to read custom metadata (e.g., `@Roles('admin')`) attached to the controller method!
+
+## Code Examples
+
+### Why Middleware Fails for Authorization
+Imagine you have a middleware that checks if a user is an admin.
+
+```typescript
+// ❌ BAD: Using middleware for Authorization
+export class AdminMiddleware implements NestMiddleware {
+  use(req: Request, res: Response, next: NextFunction) {
+    if (req.user.role !== 'admin') {
+      return res.status(403).send('Forbidden');
+    }
+    next();
+  }
+}
+
+// In the module:
+consumer.apply(AdminMiddleware).forRoutes('users/delete');
+```
+*Problem: You have to hardcode the URL paths ('users/delete') in the module configuration. If the controller route changes, the security rule breaks silently!*
+
+### Why Guards are Superior
+Guards have access to the `ExecutionContext`. We can apply the guard directly to the method, and the guard can read metadata to dynamically determine the required roles.
+
+```typescript
+// ✅ GOOD: Using Guards for Authorization
+@Injectable()
+export class RolesGuard implements CanActivate {
+  constructor(private reflector: Reflector) {}
+
+  canActivate(context: ExecutionContext): boolean {
+    // 1. We can dynamically read metadata attached to the specific method!
+    const requiredRoles = this.reflector.get<string[]>('roles', context.getHandler());
+    if (!requiredRoles) return true;
+
+    // 2. We can still access the request object
+    const request = context.switchToHttp().getRequest();
+    const user = request.user;
+
+    return requiredRoles.includes(user.role);
+  }
+}
+```
+
+```typescript
+// Controller usage: The security rule is tied directly to the code!
+@Controller('users')
+export class UsersController {
+  
+  @Delete(':id')
+  @UseGuards(RolesGuard)
+  @SetMetadata('roles', ['admin']) // The guard reads this metadata!
+  deleteUser() {
+    return 'Deleted';
+  }
+}
+```
+
+## Best Practices
+- **Rule of Thumb**: Use **Middleware** for things that affect the *HTTP Protocol* (CORS, Helmet, Body Parsing, Logging). Use **Guards** for anything involving *Business Logic or Security* (Authentication, Roles, Permissions).
+- **Authentication**: While you *can* parse JWTs in middleware, it is highly recommended to use NestJS `AuthGuard` (via `@nestjs/passport`) to handle authentication, ensuring tight integration with the Nest ecosystem.

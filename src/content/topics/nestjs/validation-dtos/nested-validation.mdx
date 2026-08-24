@@ -1,0 +1,81 @@
+---
+title: "Nested Validation"
+description: "Nested Validation in NestJS"
+importance: "LOW"
+revisionTime: 8
+category: "NestJS"
+subcategory: "Validation & DTOs"
+order: 1020
+---
+
+*Nested Validation allows you to validate complex JSON payloads where objects contain other objects or arrays of objects.*
+
+## Overview
+Often, API requests aren't flat. You might receive a payload like `{ "name": "John", "address": { "street": "Main", "zip": "12345" } }`. 
+
+If you just type the `address` property as `AddressDto` in TypeScript, `class-validator` will **not** automatically dig into that nested object and validate its properties. You must explicitly instruct the validator to traverse down into the nested structure.
+
+## Key Concepts
+- **`@ValidateNested()`**: The `class-validator` decorator that tells the engine to run validation rules on the nested object.
+- **`@Type()`**: The `class-transformer` decorator that tells the engine *how* to instantiate the raw JSON object before validating it.
+- **Both are Required**: You almost always need to use both decorators together for nested validation to work correctly.
+
+## Code Examples
+
+### Validating a Single Nested Object
+Here, a User DTO contains a single Address DTO.
+
+```typescript
+import { IsString, IsNotEmpty, ValidateNested } from 'class-validator';
+import { Type } from 'class-transformer';
+
+class AddressDto {
+  @IsString()
+  @IsNotEmpty()
+  street: string;
+
+  @IsString()
+  @IsNotEmpty()
+  zipCode: string;
+}
+
+export class CreateUserDto {
+  @IsString()
+  username: string;
+
+  // 1. Tell class-validator to validate the properties inside the object
+  @ValidateNested()
+  // 2. Tell class-transformer to instantiate it as an AddressDto
+  @Type(() => AddressDto)
+  address: AddressDto;
+}
+```
+
+### Validating an Array of Nested Objects
+This is very common for "Bulk Create" endpoints, or adding multiple items to an order. The syntax is identical, but TypeScript types it as an array.
+
+```typescript
+class OrderItemDto {
+  @IsString()
+  productId: string;
+
+  @IsInt()
+  @Min(1)
+  quantity: number;
+}
+
+export class CreateOrderDto {
+  @IsString()
+  customerId: string;
+
+  // ValidateNested automatically understands it's an array based on the Type
+  // and will validate every single item in the array!
+  @ValidateNested({ each: true }) // Note: { each: true } is sometimes required for arrays of objects depending on the version, but usually Type handles it. It is best practice to include it.
+  @Type(() => OrderItemDto)
+  items: OrderItemDto[];
+}
+```
+
+## Best Practices
+- **Don't Forget `@Type`**: The single most common bug with nested validation in NestJS is forgetting the `@Type(() => ClassName)` decorator. If you forget it, the nested object remains a plain JavaScript object, and `@ValidateNested()` will just ignore it, allowing invalid data through.
+- **Limit Nesting Depth**: While you can nest DTOs infinitely, deeply nested JSON payloads usually point to bad API design. Try to keep your API payloads flat or minimally nested (1-2 levels) to reduce complexity and performance overhead during validation.

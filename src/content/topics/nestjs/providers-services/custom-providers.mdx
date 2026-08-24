@@ -1,0 +1,101 @@
+---
+title: "Custom Providers"
+description: "Custom Providers in NestJS"
+importance: "MEDIUM"
+revisionTime: 6
+category: "NestJS"
+subcategory: "Providers & Services"
+order: 460
+---
+
+*Custom Providers allow you to define exactly how a dependency is instantiated, overriding Nest's default class instantiation behavior.*
+
+## Overview
+Standard provider registration (`providers: [CatsService]`) tells Nest: "When someone asks for `CatsService`, instantiate a new `CatsService` class (if one doesn't exist) and return it."
+
+However, sometimes you need more control:
+- You want to provide a plain object or primitive value (a configuration string).
+- You want to instantiate a class dynamically using a factory function.
+- You want to swap out an implementation (e.g., use a `MockCatsService` during testing, but `CatsService` in production).
+
+Custom Providers solve these problems using the full object syntax: `{ provide: Token, useX: Implementation }`.
+
+## Key Concepts
+There are four types of custom providers in NestJS:
+- **`useValue`**: Provide a constant value (string, number, array, plain object).
+- **`useClass`**: Tell Nest to use a specific class to fulfill the token. Useful for swapping implementations.
+- **`useFactory`**: Provide a function that dynamically creates the provider. It can also inject other providers to do its work.
+- **`useExisting`**: Creates an alias to an existing provider, allowing two different tokens to resolve to the exact same singleton instance.
+
+## Code Examples
+
+### 1. `useValue` (Value Providers)
+Useful for passing configuration values.
+```typescript
+const connectionString = 'postgresql://user:pass@localhost/db';
+
+@Module({
+  providers: [
+    {
+      provide: 'CONNECTION_STRING', // Custom Token
+      useValue: connectionString,   // The Value
+    },
+  ],
+})
+export class DatabaseModule {}
+```
+
+### 2. `useClass` (Class Providers)
+Useful for swapping implementations (Polymorphism).
+```typescript
+const isDevelopment = process.env.NODE_ENV !== 'production';
+
+@Module({
+  providers: [
+    {
+      // When a class asks for 'EmailService'
+      provide: EmailService,
+      // Give them MockEmailService in dev, and RealEmailService in prod
+      useClass: isDevelopment ? MockEmailService : RealEmailService,
+    },
+  ],
+})
+export class EmailModule {}
+```
+
+### 3. `useFactory` (Factory Providers)
+Useful when the provider needs to be calculated dynamically, or needs other dependencies to be created.
+```typescript
+@Module({
+  providers: [
+    {
+      provide: 'DATABASE_CONNECTION',
+      // The factory function
+      useFactory: async (configService: ConfigService) => {
+        const url = configService.getDatabaseUrl();
+        const connection = await createDatabaseConnection(url);
+        return connection;
+      },
+      // Dependencies to inject into the factory function
+      inject: [ConfigService], 
+    },
+  ],
+})
+```
+
+### 4. `useExisting` (Aliasing)
+```typescript
+@Module({
+  providers: [
+    LoggerService,
+    {
+      provide: 'ALIasedLogger',
+      useExisting: LoggerService, // Both tokens resolve to the SAME singleton instance
+    },
+  ],
+})
+```
+
+## Best Practices
+- **Use `useClass` for Testing**: The `useClass` syntax is the cornerstone of unit testing in NestJS. When you set up a `TestingModule`, you can easily override real services with mock implementations using `.overrideProvider(RealService).useClass(MockService)`.
+- **Async Factories**: `useFactory` can return a Promise. Nest will automatically await the promise before instantiating any other providers that depend on it. This is perfect for establishing database connections before the app starts.

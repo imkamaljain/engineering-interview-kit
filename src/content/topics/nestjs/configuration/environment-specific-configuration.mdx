@@ -1,0 +1,86 @@
+---
+title: "Environment-specific Configuration"
+description: "Environment-specific Configuration in NestJS"
+importance: "HIGH"
+revisionTime: 11
+category: "NestJS"
+subcategory: "Configuration"
+order: 1400
+---
+
+*Environment Specific Configuration handles the challenge of loading different settings depending on whether your app is running locally, in a staging environment, or in production.*
+
+## Overview
+A common pattern in Node.js development is to have multiple `.env` files (e.g., `.env.development`, `.env.staging`, `.env.production`). 
+
+NestJS's `ConfigModule` makes it easy to dynamically load the correct file based on the current `NODE_ENV` system variable. 
+
+## Key Concepts
+- **`NODE_ENV`**: The standard Node.js environment variable. It usually dictates which configuration file to load.
+- **`envFilePath` Array**: The `ConfigModule` can accept an array of file paths. It will attempt to load them in order, with the *first* file taking precedence.
+- **Fallback Configurations**: You can provide a base `.env` file and override specific values with a `.env.production` file.
+
+## Code Examples
+
+### 1. Dynamic File Loading
+This is the standard pattern for dynamically loading the correct `.env` file based on the environment.
+
+```typescript
+// app.module.ts
+import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
+
+@Module({
+  imports: [
+    ConfigModule.forRoot({
+      // If NODE_ENV is 'production', it loads '.env.production'.
+      // If NODE_ENV is undefined, it defaults to '.env.development'.
+      envFilePath: `.env.${process.env.NODE_ENV || 'development'}`,
+      
+      isGlobal: true,
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+### 2. Cascading / Override Configurations
+Sometimes you want a base configuration file, but you want to override a few specific keys for local development.
+
+```text
+// .env (Base)
+DATABASE_USER=admin
+DATABASE_PASS=secret
+FEATURE_FLAG_NEW_UI=false
+
+// .env.local (Overrides)
+FEATURE_FLAG_NEW_UI=true
+```
+
+You can pass an array to `envFilePath`. NestJS uses the first value it finds.
+
+```typescript
+// app.module.ts
+ConfigModule.forRoot({
+  // NestJS checks '.env.local' FIRST. 
+  // If the key isn't there, it falls back to '.env'.
+  envFilePath: ['.env.local', '.env'],
+})
+```
+
+### 3. Ignoring Files in Production
+In modern cloud deployments (like AWS ECS, Kubernetes, Heroku), you usually do not deploy `.env.production` files. Instead, you set the environment variables directly in the cloud provider's dashboard or orchestration scripts.
+
+To prevent NestJS from looking for a file that doesn't exist, use `ignoreEnvFile`.
+
+```typescript
+ConfigModule.forRoot({
+  // Don't even bother looking for a .env file if we are in production
+  ignoreEnvFile: process.env.NODE_ENV === 'production',
+})
+```
+
+## Best Practices
+- **Do not commit environment-specific files**: While it's okay to commit a `.env.example` file, you should generally add `*.env*` to your `.gitignore` to prevent accidentally committing `.env.production` files containing real production passwords.
+- **Use `NODE_ENV` strictly**: Reserve the values of `NODE_ENV` to standard strings like `development`, `staging`, `production`, and `test`. Do not use it for feature flagging (e.g., `NODE_ENV=production_new_ui`).
+- **Use `.env.test` for Jest**: When running unit or e2e tests, ensure you load a `.env.test` file that connects to a separate testing database. You do not want your unit tests accidentally dropping tables in your development database!

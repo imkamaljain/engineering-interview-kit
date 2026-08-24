@@ -1,0 +1,91 @@
+---
+title: "Testing Interceptors"
+description: "Testing Interceptors in NestJS"
+importance: "HIGH"
+revisionTime: 6
+category: "NestJS"
+subcategory: "Testing"
+order: 2380
+---
+
+*Testing Interceptors involves verifying that the interceptor correctly modifies incoming requests or outgoing responses, often by tapping into the RxJS Observable stream returned by the route handler.*
+
+## Overview
+Interceptors implement the `intercept(context, next)` method. The `next.handle()` call returns an RxJS `Observable` representing the asynchronous response from the Controller.
+
+Testing an interceptor requires mocking the `ExecutionContext` (to simulate the incoming request) and the `CallHandler` (to simulate the Controller returning data via an Observable), and then subscribing to the resulting Observable to assert the mutations.
+
+## Key Concepts
+- **CallHandler Mocking**: You must mock the `CallHandler` interface so that `handle()` returns an RxJS `of(mockData)` observable.
+- **RxJS Testing**: Because Interceptors heavily utilize RxJS operators (like `map`, `tap`, `catchError`), you evaluate the test by subscribing to the result or converting it to a Promise using `lastValueFrom()`.
+
+## Code Examples
+
+### 1. Testing a Response Transformation Interceptor
+Imagine an interceptor that wraps all controller responses in a `{ data: ... }` object.
+
+```typescript
+// wrap-response.interceptor.spec.ts
+import { WrapResponseInterceptor } from './wrap-response.interceptor';
+import { ExecutionContext, CallHandler } from '@nestjs/common';
+import { of, lastValueFrom } from 'rxjs';
+
+describe('WrapResponseInterceptor', () => {
+  let interceptor: WrapResponseInterceptor;
+
+  beforeEach(() => {
+    interceptor = new WrapResponseInterceptor();
+  });
+
+  it('should wrap the response data in a "data" property', async () => {
+    // 1. Mock the ExecutionContext
+    const mockContext = {
+      switchToHttp: jest.fn().mockReturnValue({
+        getRequest: jest.fn().mockReturnValue({}),
+        getResponse: jest.fn().mockReturnValue({}),
+      }),
+    } as unknown as ExecutionContext;
+
+    // 2. Mock the CallHandler. 
+    // Simulate the Controller returning the string "Hello World"
+    const mockCallHandler: CallHandler = {
+      handle: () => of('Hello World'), 
+    };
+
+    // 3. Act: Call the interceptor
+    const observableResult = interceptor.intercept(mockContext, mockCallHandler);
+
+    // 4. Assert: Convert the observable to a Promise and read the final value
+    const finalResult = await lastValueFrom(observableResult);
+
+    // The interceptor should have mutated "Hello World" into { data: "Hello World" }
+    expect(finalResult).toEqual({ data: 'Hello World' });
+  });
+});
+```
+
+### 2. Testing an Error Handling Interceptor
+Imagine an interceptor that catches specific database errors and translates them into generic `BadGatewayExceptions`.
+
+```typescript
+import { BadGatewayException } from '@nestjs/common';
+import { throwError } from 'rxjs';
+
+it('should translate a TimeoutError into a BadGatewayException', async () => {
+  const mockContext = {} as ExecutionContext; // Simplified context
+
+  const mockCallHandler: CallHandler = {
+    // Simulate the Controller throwing an error
+    handle: () => throwError(() => new Error('TimeoutError')), 
+  };
+
+  const observableResult = interceptor.intercept(mockContext, mockCallHandler);
+
+  // We expect the observable to emit an error, specifically a BadGatewayException
+  await expect(lastValueFrom(observableResult)).rejects.toThrow(BadGatewayException);
+});
+```
+
+## Best Practices
+- **RxJS `lastValueFrom` vs `.subscribe()`**: In modern RxJS testing within Jest, using `lastValueFrom(observable)` combined with `async/await` is much cleaner and less prone to unhandled promise rejections than manually using `.subscribe()` and Jest's `done()` callback.
+- **E2E Testing is Preferred for Complex RxJS**: If your interceptor does complex RxJS mapping, caching, or timing (e.g., a Timeout Interceptor that cancels requests after 5 seconds), writing unit tests with fake RxJS Schedulers can be incredibly painful. It is often much faster and more reliable to test complex interceptors using E2E Supertest calls.

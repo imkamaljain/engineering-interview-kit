@@ -1,0 +1,106 @@
+---
+title: "API Versioning"
+description: "API Versioning in NestJS"
+importance: "LOW"
+revisionTime: 11
+category: "NestJS"
+subcategory: "REST APIs"
+order: 1460
+---
+
+*API Versioning allows you to introduce breaking changes to your application (like removing a field or changing a response structure) while maintaining a legacy route for older clients (like older mobile app versions) so they don't crash.*
+
+## Overview
+Once an API is in production and being consumed by external clients (mobile apps, third-party developers), you cannot easily change the shape of your responses or the required payload of your requests.
+
+NestJS provides a built-in Versioning feature that allows you to easily route requests to different controller methods based on the requested version.
+
+## Key Concepts
+- **URI Versioning (Default)**: The version is embedded in the URL (e.g., `https://api.example.com/v1/users`).
+- **Header Versioning**: A custom HTTP header specifies the version (e.g., `X-API-Version: 1`).
+- **Media Type Versioning**: The version is embedded in the `Accept` header.
+- **Neutral Versioning**: A route that matches *any* version requested.
+
+## Code Examples
+
+### 1. Enabling Versioning in `main.ts`
+You must explicitly enable versioning during application bootstrap. URI versioning is the most common approach.
+
+```typescript
+// main.ts
+import { NestFactory } from '@nestjs/core';
+import { VersioningType } from '@nestjs/common';
+import { AppModule } from './app.module';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+
+  // Enable URI-based versioning globally
+  app.enableVersioning({
+    type: VersioningType.URI,
+    // You can optionally set a default version for routes that don't specify one
+    // defaultVersion: '1', 
+  });
+
+  await app.listen(3000);
+}
+bootstrap();
+```
+
+### 2. Versioning a Controller
+You can apply a version to an entire controller, or to specific methods.
+
+```typescript
+import { Controller, Get, Version, VERSION_NEUTRAL } from '@nestjs/common';
+
+// All routes in this controller are automatically prefixed with /v1
+// Example: GET /v1/users
+@Controller({
+  version: '1',
+  path: 'users',
+})
+export class UsersControllerV1 {
+  @Get()
+  findAll() {
+    return 'Returns V1 users (Legacy format)';
+  }
+}
+```
+
+### 3. Versioning Specific Methods
+Often, you don't need a whole new controller. You just need to version a single endpoint that had a breaking change.
+
+```typescript
+@Controller('users')
+export class UsersController {
+  
+  // This route handles requests to GET /v1/users
+  @Version('1')
+  @Get()
+  findAllV1() {
+    return [{ id: 1, name: 'John Doe' }]; // Legacy flat structure
+  }
+
+  // This route handles requests to GET /v2/users
+  @Version('2')
+  @Get()
+  findAllV2() {
+    return { data: [{ id: 1, name: 'John Doe' }], total: 1 }; // New paginated structure
+  }
+
+  // This route handles any version requested!
+  // Example: GET /v1/users/profile or GET /v3/users/profile
+  @Version(VERSION_NEUTRAL)
+  @Get('profile')
+  getProfile() {
+    return 'Profile data (unchanged across versions)';
+  }
+}
+```
+
+## Best Practices
+- **URI vs Headers**: 
+  - **URI Versioning** (`/v1/users`) is the most visible, easiest to debug in a browser, and generally preferred by developers for its simplicity.
+  - **Header Versioning** is theoretically more "RESTful" (because the URL should identify the resource, not the schema version), but it is much harder to test via simple browser requests or cURL commands.
+- **Don't version immediately**: Don't start your project with `/v1/` on day one if you don't have to. Enable versioning only when you actually have a breaking change that forces you to support two different payloads simultaneously.
+- **Sunset Legacy Versions**: Versioning creates technical debt. You now have to maintain two sets of logic. Implement strong monitoring to see when traffic to `V1` drops to near-zero, and officially deprecate and remove it to keep your codebase clean.

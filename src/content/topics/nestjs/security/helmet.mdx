@@ -1,0 +1,95 @@
+---
+title: "Helmet"
+description: "Helmet in NestJS"
+importance: "LOW"
+revisionTime: 14
+category: "NestJS"
+subcategory: "Security"
+order: 2540
+---
+
+*Helmet is a collection of middleware functions that automatically set secure HTTP response headers, protecting your Node.js application from well-known web vulnerabilities like Clickjacking and MIME-type sniffing.*
+
+## Overview
+When a browser interacts with an API or a web page, it looks at the HTTP Response Headers to know how to behave. 
+
+If the server doesn't explicitly tell the browser to restrict certain dangerous behaviors (like allowing the site to be embedded in an iframe on a malicious domain), the browser will default to permissive, insecure behavior.
+
+Helmet is a single library that configures 15+ obscure security headers automatically, hardening your NestJS application with just two lines of code.
+
+## Key Concepts
+- **X-Powered-By**: A default header sent by Express indicating that the server runs on Express. Attackers use this to identify the technology stack and search for known Express vulnerabilities. Helmet removes it.
+- **Content Security Policy (CSP)**: The most powerful header Helmet sets. It dictates exactly which domains the browser is allowed to load scripts, images, and styles from, neutralizing Cross-Site Scripting (XSS) attacks.
+- **X-Frame-Options**: Prevents your application from being rendered inside an `<iframe>`, preventing Clickjacking.
+
+## Code Examples
+
+### 1. Basic Helmet Integration
+Integrating Helmet is the easiest security win in NestJS. It should be applied in almost every application.
+
+```bash
+npm install helmet
+```
+
+```typescript
+// main.ts
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from './app.module';
+import helmet from 'helmet';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+
+  // Enable all default secure headers
+  app.use(helmet());
+
+  await app.listen(3000);
+}
+bootstrap();
+```
+
+### 2. Customizing Helmet (Content Security Policy)
+The default Helmet configuration enables a very strict Content Security Policy (CSP). If your NestJS app serves a frontend (e.g., using `@nestjs/serve-static` or a template engine like Handlebars), the strict CSP might break your site by blocking inline scripts or external fonts.
+
+You can customize the CSP to allow specific resources.
+
+```typescript
+// main.ts
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from './app.module';
+import helmet from 'helmet';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+
+  app.use(
+    helmet({
+      contentSecurityPolicy: {
+        directives: {
+          // Allow default Helmet settings
+          ...helmet.contentSecurityPolicy.getDefaultDirectives(),
+          
+          // Allow scripts to be loaded from Google Analytics
+          'script-src': ["'self'", "https://www.google-analytics.com"],
+          
+          // Allow fonts from Google Fonts
+          'font-src': ["'self'", "https://fonts.gstatic.com"],
+          
+          // Allow inline images (Base64)
+          'img-src': ["'self'", "data:", "https://images.unsplash.com"],
+        },
+      },
+      // If you run behind a reverse proxy (like Nginx) that already sets HSTS, 
+      // you can disable it here to avoid duplication.
+      hsts: false, 
+    }),
+  );
+
+  await app.listen(3000);
+}
+bootstrap();
+```
+
+## Best Practices
+- **Pure APIs vs Full-Stack**: If your NestJS application is a *pure JSON API* (no HTML/UI served), Content Security Policy (CSP) headers are largely unnecessary, because browsers don't execute scripts found in raw JSON responses. However, Helmet provides other protections (like `X-Content-Type-Options: nosniff`) that are still critical for APIs. It is best practice to leave Helmet enabled for all NestJS apps.
+- **GraphQL Users Beware**: If you use `@nestjs/graphql`, the Apollo GraphQL Playground relies on inline scripts and styles to render the testing UI in the browser. Helmet's default CSP will completely break the GraphQL Playground. You must explicitly configure Helmet's CSP to allow `'unsafe-inline'` scripts in development mode if you want to use the Playground.

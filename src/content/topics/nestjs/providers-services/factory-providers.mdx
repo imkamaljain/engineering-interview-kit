@@ -1,0 +1,88 @@
+---
+title: "Factory Providers"
+description: "Factory Providers in NestJS"
+importance: "HIGH"
+revisionTime: 14
+category: "NestJS"
+subcategory: "Providers & Services"
+order: 480
+---
+
+*Factory providers allow for the dynamic creation of providers using a factory function, which can execute logic, inject other dependencies, and handle asynchronous tasks before returning the provider.*
+
+## Overview
+Sometimes, simply instantiating a class isn't enough. You might need to dynamically calculate a value, read from the file system, or establish a database connection *before* the provider is ready to be used.
+
+The `useFactory` syntax allows you to pass a function to the NestJS IoC container. The container will execute this function and use whatever it returns as the provider's value.
+
+## Key Concepts
+- **`useFactory` Property**: A function that returns the provider's value.
+- **`inject` Property**: An array of tokens. Nest will resolve these tokens and pass them as arguments to the `useFactory` function in the exact order they are listed.
+- **Async Factories**: The factory function can return a Promise. Nest will pause the application bootstrap process until the promise resolves.
+
+## Code Examples
+
+### A Simple Factory
+Dynamically calculating a configuration value.
+
+```typescript
+@Module({
+  providers: [
+    {
+      provide: 'CORS_DOMAINS',
+      useFactory: () => {
+        const isProd = process.env.NODE_ENV === 'production';
+        return isProd ? ['https://myapp.com'] : ['http://localhost:3000'];
+      },
+    },
+  ],
+})
+export class ConfigModule {}
+```
+
+### Factory with Dependencies (`inject`)
+If your factory needs another service to do its job, you must inject it.
+
+```typescript
+@Module({
+  providers: [
+    OptionsService,
+    {
+      provide: 'DATABASE_CONNECTION',
+      // The arguments must match the order of the 'inject' array
+      useFactory: (options: OptionsService) => {
+        const connectionString = options.getDbString();
+        return new DatabaseConnection(connectionString);
+      },
+      // Tell Nest to pass OptionsService into the factory
+      inject: [OptionsService],
+    },
+  ],
+})
+export class DatabaseModule {}
+```
+
+### Async Factory Providers
+This is commonly used for establishing connections before the app starts accepting traffic.
+
+```typescript
+@Module({
+  providers: [
+    {
+      provide: 'ASYNC_CONNECTION',
+      useFactory: async (config: ConfigService) => {
+        // App startup is paused until this promise resolves!
+        const client = new SomeDatabaseClient();
+        await client.connect(config.getUrl());
+        return client;
+      },
+      // Note: ConfigService must be imported/provided in this module!
+      inject: [ConfigService],
+    },
+  ],
+})
+```
+
+## Best Practices
+- **Keep Factories Clean**: Factory functions shouldn't contain massive amounts of business logic. If a factory is getting too complex, consider extracting the logic into a dedicated builder class or service.
+- **Use Async Factories for Infrastructure**: Always use async `useFactory` providers to establish connections to databases, message queues (like RabbitMQ), or caching layers (like Redis) during bootstrap. This ensures your app crashes *immediately* on startup if the database is down, rather than failing on the first user request.

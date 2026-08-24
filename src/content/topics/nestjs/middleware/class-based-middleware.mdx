@@ -1,0 +1,77 @@
+---
+title: "Class-based Middleware"
+description: "Class-based Middleware in NestJS"
+importance: "HIGH"
+revisionTime: 8
+category: "NestJS"
+subcategory: "Middleware"
+order: 530
+---
+
+*Class-based middleware allows you to use Dependency Injection, giving your middleware access to other services and providers in your application.*
+
+## Overview
+There are two ways to write middleware in NestJS: Class-based and Functional. 
+
+Class-based middleware is defined by creating a class with the `@Injectable()` decorator and implementing the `NestMiddleware` interface. The primary advantage of this approach is that the middleware participates fully in Nest's IoC container, meaning you can inject dependencies via the constructor.
+
+## Key Concepts
+- **`@Injectable()`**: Required for Nest to instantiate and manage the middleware class.
+- **`NestMiddleware` Interface**: Enforces that your class has a `use(req, res, next)` method.
+- **Dependency Injection**: Because it's a class, you can inject standard singleton services, configurations, or repositories.
+
+## Code Examples
+
+### Injecting a Service into Middleware
+In this example, we inject a `ConfigService` to determine if logging should be enabled before we actually log the request.
+
+```typescript
+import { Injectable, NestMiddleware } from '@nestjs/common';
+import { Request, Response, NextFunction } from 'express';
+import { ConfigService } from './config.service';
+import { LoggerService } from './logger.service';
+
+@Injectable()
+export class AuditMiddleware implements NestMiddleware {
+  // We can inject dependencies just like a Controller or Service!
+  constructor(
+    private configService: ConfigService,
+    private loggerService: LoggerService,
+  ) {}
+
+  use(req: Request, res: Response, next: NextFunction) {
+    const isAuditEnabled = this.configService.get('ENABLE_AUDIT');
+    
+    if (isAuditEnabled) {
+      this.loggerService.log(`[AUDIT] User accessed ${req.url}`);
+    }
+    
+    next();
+  }
+}
+```
+
+### Applying Class-based Middleware
+Unlike Controllers and Providers, you don't list middleware in the `@Module()` decorator's array. Instead, you apply them by having the module class implement `NestModule`.
+
+```typescript
+import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
+import { AuditMiddleware } from './audit.middleware';
+import { UsersController } from './users.controller';
+
+@Module({
+  controllers: [UsersController],
+})
+export class UsersModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    // Apply the class-based middleware
+    consumer
+      .apply(AuditMiddleware)
+      .forRoutes(UsersController);
+  }
+}
+```
+
+## Best Practices
+- **Use Class-based when dependencies are needed**: If your middleware needs to interact with a database, read configuration variables, or log via a custom service, you *must* use Class-based middleware. 
+- **Use Functional for pure functions**: If your middleware is completely stateless and doesn't need to inject anything (like a simple header transformation), prefer Functional middleware as it is slightly lighter and faster.

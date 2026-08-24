@@ -1,0 +1,121 @@
+---
+title: "TCP Transport"
+description: "TCP Transport in NestJS"
+importance: "MEDIUM"
+revisionTime: 5
+category: "NestJS"
+subcategory: "Microservices"
+order: 1800
+---
+
+*TCP (Transmission Control Protocol) is the default, built-in transporter for NestJS microservices. It provides direct, point-to-point communication between services without requiring a third-party message broker.*
+
+## Overview
+When you create a microservice using `Transport.TCP`, NestJS uses the native Node.js `net` module to spin up a raw TCP server. 
+
+Because it operates at the transport layer (Layer 4) rather than the application layer (Layer 7, like HTTP), it strips away the overhead of HTTP headers. This makes it incredibly fast and lightweight for internal service-to-service communication.
+
+## Key Concepts
+- **Point-to-Point**: TCP requires the client to know the exact IP address and Port of the server it wants to communicate with.
+- **Default Transporter**: If you do not specify a `transport` property in `createMicroservice`, NestJS defaults to TCP.
+- **Internal Only**: TCP is strictly for backend-to-backend communication. You cannot connect a web browser directly to a NestJS TCP microservice.
+
+## Code Examples
+
+### 1. The TCP Server (Microservice)
+This is the service that listens for incoming messages.
+
+```typescript
+// server/main.ts
+import { NestFactory } from '@nestjs/core';
+import { MicroserviceOptions, Transport } from '@nestjs/microservices';
+import { AppModule } from './app.module';
+
+async function bootstrap() {
+  const app = await NestFactory.createMicroservice<MicroserviceOptions>(
+    AppModule,
+    {
+      transport: Transport.TCP,
+      options: {
+        // Listen on all network interfaces
+        host: '0.0.0.1', 
+        // The specific port for this microservice
+        port: 8877, 
+      },
+    },
+  );
+  await app.listen();
+}
+```
+
+```typescript
+// server/app.controller.ts
+import { Controller } from '@nestjs/common';
+import { MessagePattern } from '@nestjs/microservices';
+
+@Controller()
+export class AppController {
+  
+  // Listen for TCP messages matching the pattern { cmd: 'sum' }
+  @MessagePattern({ cmd: 'sum' })
+  accumulate(data: number[]): number {
+    return (data || []).reduce((a, b) => a + b);
+  }
+}
+```
+
+### 2. The TCP Client (API Gateway)
+This is a standard HTTP app (like a REST API) that acts as a client, sending messages to the TCP microservice.
+
+```typescript
+// client/app.module.ts
+import { Module } from '@nestjs/common';
+import { ClientsModule, Transport } from '@nestjs/microservices';
+import { AppController } from './app.controller';
+
+@Module({
+  imports: [
+    // Register the client so it can be injected into controllers
+    ClientsModule.register([
+      {
+        name: 'MATH_SERVICE', // The injection token
+        transport: Transport.TCP,
+        options: {
+          host: '127.0.0.1', // The IP of the Microservice
+          port: 8877,        // The Port of the Microservice
+        },
+      },
+    ]),
+  ],
+  controllers: [AppController],
+})
+export class AppModule {}
+```
+
+```typescript
+// client/app.controller.ts
+import { Controller, Get, Inject } from '@nestjs/common';
+import { ClientProxy } from '@nestjs/microservices';
+
+@Controller()
+export class AppController {
+  constructor(
+    // Inject the ClientProxy using the name defined in the module
+    @Inject('MATH_SERVICE') private client: ClientProxy,
+  ) {}
+
+  @Get('calculate')
+  getSum() {
+    const payload = [1, 2, 3, 4, 5];
+    
+    // Send the TCP message. 
+    // send() expects the pattern object and the data payload.
+    // It returns an Observable, which NestJS automatically resolves for the HTTP response.
+    return this.client.send({ cmd: 'sum' }, payload);
+  }
+}
+```
+
+## Best Practices
+- **Use for Simple Architectures**: TCP is perfect for architectures with just a few microservices deployed on a private internal network (like a Kubernetes cluster) where IP addresses can be resolved via internal DNS (e.g., `host: 'math-service.default.svc.cluster.local'`).
+- **Load Balancing**: Because TCP is point-to-point, load balancing is harder. If you have 3 instances of the Math Service, the NestJS TCP client will only connect to one of them unless you place a Layer 4 Load Balancer (like HAProxy or an AWS Network Load Balancer) in front of the Math Services, and configure the NestJS client to connect to the Load Balancer's IP. If you need automatic round-robin load balancing out of the box, use a message broker like RabbitMQ instead.

@@ -1,0 +1,105 @@
+---
+title: "API Documentation"
+description: "API Documentation in NestJS"
+importance: "HIGH"
+revisionTime: 13
+category: "NestJS"
+subcategory: "REST APIs"
+order: 1540
+---
+
+*API Documentation (specifically Swagger/OpenAPI) acts as a living contract between the backend and the frontend, providing an interactive UI to explore and test the available REST endpoints.*
+
+## Overview
+Manually writing API documentation in a Wiki or Markdown file is a recipe for disaster; it will become outdated the moment you change a DTO.
+
+NestJS provides a dedicated `@nestjs/swagger` module that reads your controllers, decorators, and DTOs to automatically generate a fully compliant OpenAPI specification. It then hosts a Swagger UI dashboard where developers can see exactly what endpoints exist and even execute requests directly from their browser.
+
+## Key Concepts
+- **OpenAPI Specification**: A standard JSON/YAML format for describing REST APIs.
+- **Swagger UI**: The interactive HTML dashboard that renders the OpenAPI spec.
+- **Swagger CLI Plugin**: A NestJS compiler plugin that automatically infers types from your TypeScript code, saving you from writing dozens of `@ApiProperty()` decorators.
+
+## Code Examples
+
+### 1. Bootstrapping Swagger
+You initialize the Swagger module in your `main.ts` file.
+
+```typescript
+// main.ts
+import { NestFactory } from '@nestjs/core';
+import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
+import { AppModule } from './app.module';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+
+  // 1. Build the base configuration
+  const config = new DocumentBuilder()
+    .setTitle('My Awesome API')
+    .setDescription('The My Awesome API description')
+    .setVersion('1.0')
+    .addBearerAuth() // Adds the "Authorize" button to the UI for JWTs
+    .build();
+
+  // 2. Generate the OpenAPI document
+  const document = SwaggerModule.createDocument(app, config);
+  
+  // 3. Setup the Swagger UI at the '/api' route
+  SwaggerModule.setup('api', app, document);
+
+  await app.listen(3000);
+}
+bootstrap();
+```
+*If you run this app and navigate to `http://localhost:3000/api`, you will see the interactive Swagger UI.*
+
+### 2. Decorating Controllers and DTOs
+To make the documentation useful, you need to describe your endpoints and data models.
+
+```typescript
+// create-cat.dto.ts
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsString, IsInt, IsOptional } from 'class-validator';
+
+export class CreateCatDto {
+  // @ApiProperty tells Swagger this field exists and describes it
+  @ApiProperty({ description: 'The name of the cat', example: 'Mittens' })
+  @IsString()
+  name: string;
+
+  @ApiProperty({ minimum: 0, default: 1 })
+  @IsInt()
+  age: number;
+
+  @ApiPropertyOptional({ description: 'The breed of the cat' })
+  @IsOptional()
+  @IsString()
+  breed?: string;
+}
+```
+
+```typescript
+// cats.controller.ts
+import { Controller, Post, Body } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
+
+// Groups these endpoints under "cats" in the UI
+@ApiTags('cats') 
+@Controller('cats')
+export class CatsController {
+  
+  @Post()
+  @ApiBearerAuth() // Indicates this endpoint requires the JWT configured in main.ts
+  @ApiOperation({ summary: 'Create a new cat' })
+  @ApiResponse({ status: 201, description: 'The cat has been successfully created.' })
+  @ApiResponse({ status: 403, description: 'Forbidden.' })
+  create(@Body() createCatDto: CreateCatDto) {
+    return 'Cat created';
+  }
+}
+```
+
+## Best Practices
+- **Use the CLI Plugin**: Decorating every single DTO property with `@ApiProperty()` is incredibly tedious. NestJS provides a Swagger CLI plugin in `nest-cli.json` that reads your TypeScript types and automatically generates the Swagger metadata for you. **You should almost always enable this plugin.**
+- **Hide in Production**: You usually do not want to expose your entire API schema to the public internet. Ensure you conditionally initialize `SwaggerModule.setup()` only if `process.env.NODE_ENV !== 'production'`, or put the route behind a basic authentication guard.

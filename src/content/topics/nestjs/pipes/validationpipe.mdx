@@ -1,0 +1,89 @@
+---
+title: "ValidationPipe"
+description: "ValidationPipe in NestJS"
+importance: "MEDIUM"
+revisionTime: 9
+category: "NestJS"
+subcategory: "Pipes"
+order: 600
+---
+
+*The `ValidationPipe` is NestJS's built-in, immensely powerful pipe designed specifically to work seamlessly with the `class-validator` and `class-transformer` libraries.*
+
+## Overview
+While you can write custom validation pipes for every route, it's incredibly tedious. The `ValidationPipe` provides a declarative approach. 
+
+By applying this pipe globally, you can simply decorate your Data Transfer Object (DTO) classes with validation rules (like `@IsString()`, `@IsEmail()`). When a request comes in, the `ValidationPipe` intercepts the body, checks the DTO class definition, runs the validation rules, and either passes the data to your controller or automatically throws a 400 Bad Request if the data is invalid.
+
+## Key Concepts
+- **Integration**: It bridges the gap between NestJS and the `class-validator` ecosystem.
+- **DTOs**: Data Transfer Objects are the core of this system. They are simple TypeScript classes defining the expected shape of the data.
+- **Auto-error formatting**: It automatically aggregates all validation errors and formats them into a clean, readable JSON array for the client.
+
+## Code Examples
+
+### Setting up the Global Validation Pipe
+The most common way to use `ValidationPipe` is to apply it globally in your `main.ts` file.
+
+```typescript
+import { NestFactory } from '@nestjs/core';
+import { ValidationPipe } from '@nestjs/common';
+import { AppModule } from './app.module';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+
+  // Apply it globally!
+  app.useGlobalPipes(new ValidationPipe({
+    // Highly recommended options:
+    whitelist: true, // Strips away any properties that don't have decorators
+    forbidNonWhitelisted: true, // Throws an error if the user sends unknown properties
+    transform: true, // Automatically transforms plain JSON objects into instances of your DTO class
+  }));
+
+  await app.listen(3000);
+}
+bootstrap();
+```
+
+### The DTO and Controller
+Once the pipe is set up globally, you just define your DTO and use it in your controller.
+
+```typescript
+// create-user.dto.ts
+import { IsString, IsEmail, MinLength } from 'class-validator';
+
+export class CreateUserDto {
+  @IsString()
+  @MinLength(3)
+  username: string;
+
+  @IsEmail()
+  email: string;
+}
+```
+
+```typescript
+// users.controller.ts
+import { Controller, Post, Body } from '@nestjs/common';
+import { CreateUserDto } from './create-user.dto';
+
+@Controller('users')
+export class UsersController {
+  
+  @Post()
+  create(@Body() createUserDto: CreateUserDto) {
+    // 1. The ValidationPipe sees that @Body() is typed as CreateUserDto.
+    // 2. It intercepts the incoming JSON request body.
+    // 3. It checks the body against the decorators in CreateUserDto.
+    // 4. If it fails, it throws a 400 error.
+    // 5. If it passes, execution reaches here!
+    
+    return 'User created successfully';
+  }
+}
+```
+
+## Best Practices
+- **Always use `whitelist: true`**: This is a critical security feature. If your `UserDto` only defines `name` and `email`, but a malicious user sends `{ "name": "A", "email": "B", "isAdmin": true }`, `whitelist: true` will silently strip out `isAdmin` before it reaches your controller, preventing mass-assignment vulnerabilities.
+- **Always use `transform: true`**: This ensures that numeric strings in query parameters (like `?page=5`) are automatically converted to actual numbers if your DTO defines `page: number`.

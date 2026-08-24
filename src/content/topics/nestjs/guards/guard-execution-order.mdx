@@ -1,0 +1,72 @@
+---
+title: "Guard Execution Order"
+description: "Guard Execution Order in NestJS"
+importance: "HIGH"
+revisionTime: 9
+category: "NestJS"
+subcategory: "Guards"
+order: 770
+---
+
+*Understanding the execution order of Guards is crucial, especially when you are chaining Authentication (who is the user) and Authorization (what can they do).*
+
+## Overview
+When a request enters the NestJS lifecycle, it passes through Middleware first. Immediately after Middleware completes, execution hands over to the Guards.
+
+If multiple guards are applied to a single request, they are executed sequentially in a very specific order based on how they were bound (Global -> Controller -> Method). If *any* guard in the chain returns `false` (or throws an exception), the chain is immediately broken, and a 403 Forbidden (or the custom exception) is returned to the client.
+
+## Key Concepts
+Guards execute in the following strict order:
+1.  **Global Guards**: Guards registered via `app.useGlobalGuards()` or via `APP_GUARD` in a module provider.
+2.  **Controller Guards**: Guards applied via `@UseGuards()` at the top of the Controller class.
+3.  **Method Guards**: Guards applied via `@UseGuards()` directly on the route handler method.
+
+*Note: Within a single `@UseGuards()` array (e.g., `@UseGuards(GuardA, GuardB)`), they execute sequentially from left to right.*
+
+## Code Examples
+
+### Demonstrating Scope Order
+In this example, the execution order will be: 
+1. `GlobalGuard`
+2. `ControllerGuard`
+3. `MethodGuard`
+
+```typescript
+// In main.ts
+app.useGlobalGuards(new GlobalGuard());
+
+// In users.controller.ts
+@Controller('users')
+@UseGuards(ControllerGuard)
+export class UsersController {
+  
+  @Get()
+  @UseGuards(MethodGuard)
+  findAll() {
+    return 'Will only execute if all 3 guards return true';
+  }
+}
+```
+
+### The Critical Importance of Order
+A very common mistake is putting the `RolesGuard` before the `AuthGuard`.
+
+```typescript
+// ❌ INCORRECT ORDER
+@UseGuards(RolesGuard, JwtAuthGuard)
+@Get()
+getProfile() { ... }
+```
+*Why this fails:* `RolesGuard` needs to inspect `req.user.role`. But `req.user` hasn't been populated yet because `JwtAuthGuard` hasn't run! The `RolesGuard` will throw a "cannot read property 'role' of undefined" error.
+
+```typescript
+// ✅ CORRECT ORDER
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Get()
+getProfile() { ... }
+```
+*Why this works:* `JwtAuthGuard` runs first, verifies the token, and attaches the user object to `req.user`. Then `RolesGuard` runs, safely accesses `req.user`, and verifies the role.
+
+## Best Practices
+- **Global Auth, Local Authz**: A highly effective pattern is to apply your `JwtAuthGuard` **Globally** using `APP_GUARD`. Then, apply your `RolesGuard` at the **Controller** or **Method** level. Because Global guards run first, you are guaranteed that `req.user` will be populated by the time your local `RolesGuard` executes.
+- **Fail Fast**: Put the most computationally inexpensive guards first. If an IP-blocking guard rejects the request instantly, you save the database query that the `ArticleOwnerGuard` would have made if it had run first.

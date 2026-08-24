@@ -1,0 +1,118 @@
+---
+title: "Custom Providers"
+description: "Custom Providers in NestJS"
+importance: "MEDIUM"
+revisionTime: 14
+category: "NestJS"
+subcategory: "Advanced Architecture"
+order: 2780
+---
+
+*Custom Providers give you absolute control over the NestJS Dependency Injection (DI) system. They allow you to define exactly how a class, value, or factory function should be instantiated and injected into your application.*
+
+## Overview
+When you generate a service in NestJS, it automatically adds it to the `providers` array in your module like this: `providers: [UsersService]`. 
+
+This is actually syntactic sugar for the "Standard Provider" syntax: `providers: [{ provide: UsersService, useClass: UsersService }]`.
+
+Understanding this verbose syntax is the key to mastering Custom Providers. Sometimes you don't want to instantiate a class directly. You might want to inject a static value, dynamically choose which class to inject based on the environment, or run an async function to generate the provider.
+
+## Key Concepts
+- **Injection Token**: The `provide` property. This is the "Key" the DI container uses to look up the dependency. It can be a Class, a String, or a Symbol.
+- **`useValue`**: Injects a constant value (an object, a string, a boolean).
+- **`useClass`**: Injects a specific class. Useful for swapping out implementations without changing the consumers.
+- **`useFactory`**: Runs a function to create the provider dynamically. Can inject other providers into the factory.
+
+## Code Examples
+
+### 1. Value Providers (`useValue`)
+Useful for injecting configuration objects, mock data for testing, or external library instances.
+
+```typescript
+// app.module.ts
+const connectionConfig = { host: 'localhost', port: 5432 };
+
+@Module({
+  providers: [
+    {
+      provide: 'CONNECTION_CONFIG', // We use a String as the Injection Token
+      useValue: connectionConfig,   // Provide this exact object
+    },
+  ],
+})
+export class AppModule {}
+```
+Because the token is a string, you must use `@Inject()` to receive it:
+```typescript
+@Injectable()
+export class DatabaseService {
+  constructor(@Inject('CONNECTION_CONFIG') private config: any) {
+    console.log(this.config.port); // 5432
+  }
+}
+```
+
+### 2. Class Providers (`useClass`)
+Useful for implementing the Strategy Pattern or swapping dependencies without touching the consuming code.
+
+```typescript
+// Let's say you have an abstract class or interface
+export abstract class PaymentService {
+  abstract charge(amount: number): void;
+}
+
+// And two different implementations
+export class StripeService implements PaymentService { /* ... */ }
+export class PaypalService implements PaymentService { /* ... */ }
+
+@Module({
+  providers: [
+    {
+      // "Whenever someone asks for PaymentService..."
+      provide: PaymentService, 
+      // "...give them the StripeService instead!"
+      useClass: StripeService, 
+    },
+  ],
+})
+export class AppModule {}
+```
+The consuming code doesn't know (or care) if it's using Stripe or Paypal:
+```typescript
+@Injectable()
+export class CheckoutService {
+  // It asks for the abstract class, but receives StripeService at runtime!
+  constructor(private paymentService: PaymentService) {} 
+}
+```
+
+### 3. Factory Providers (`useFactory`)
+Useful when the provider needs to be constructed dynamically, requires asynchronous initialization (like a database connection), or depends on other providers.
+
+```typescript
+@Module({
+  providers: [
+    ConfigService, // Standard provider
+    {
+      provide: 'DATABASE_CONNECTION',
+      
+      // The factory function
+      useFactory: async (configService: ConfigService) => {
+        // We can do asynchronous work before the app finishes booting!
+        const connection = await createDbConnection({
+          url: configService.get('DB_URL'),
+        });
+        return connection;
+      },
+      
+      // 'inject' tells NestJS what to pass into the useFactory function arguments
+      inject: [ConfigService], 
+    },
+  ],
+})
+export class AppModule {}
+```
+
+## Best Practices
+- **Use String Tokens Carefully**: When using `useValue` or `useFactory`, you often have to use string tokens (`provide: 'MY_TOKEN'`). Strings are prone to typos. It is highly recommended to extract these tokens into constants files (`export const DATABASE_TOKEN = Symbol('DATABASE_TOKEN')`) to leverage TypeScript's compiler safety.
+- **Mocking in Tests**: Custom Providers are the entire basis of unit testing in NestJS. When you write a test, you override the standard providers using `.overrideProvider(UsersService).useValue(mockUsersService)`. Understanding Custom Providers makes writing tests vastly easier.

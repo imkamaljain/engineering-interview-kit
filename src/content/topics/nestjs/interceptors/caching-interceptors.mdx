@@ -1,0 +1,95 @@
+---
+title: "Caching Interceptors"
+description: "Caching Interceptors in NestJS"
+importance: "HIGH"
+revisionTime: 5
+category: "NestJS"
+subcategory: "Interceptors"
+order: 850
+---
+
+*Caching Interceptors improve application performance by storing the results of expensive operations and returning those stored results for subsequent identical requests, bypassing the controller entirely.*
+
+## Overview
+If a route fetches data that rarely changes (like a list of countries or product categories), querying the database on every request is inefficient. 
+
+An interceptor is the perfect place to implement caching because it wraps the route handler. It can intercept the request, check a cache (like memory or Redis), and if the data exists, return it immediately without ever invoking `next.handle()`.
+
+## Key Concepts
+- **Circuit Breaking**: The act of *not* calling `next.handle()` prevents the controller logic from executing.
+- **RxJS `of()`**: To return cached data, you must wrap it in an RxJS Observable using the `of()` function, so it matches the expected return type of `intercept()`.
+- **Cache Key Generation**: You need a reliable way to generate unique string keys for the cache, usually based on the URL and query parameters.
+
+## Code Examples
+
+### A Simple In-Memory Cache Interceptor
+This example demonstrates the core logic of intercepting and circuit-breaking.
+
+```typescript
+import { Injectable, NestInterceptor, ExecutionContext, CallHandler } from '@nestjs/common';
+import { Observable, of } from 'rxjs';
+import { tap } from 'rxjs/operators';
+
+@Injectable()
+export class SimpleCacheInterceptor implements NestInterceptor {
+  // A simple in-memory Map to store responses
+  private cache = new Map<string, any>();
+
+  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+    const request = context.switchToHttp().getRequest();
+    const cacheKey = request.url; // Use the URL as the cache key
+
+    // 1. Check if we have the data in the cache
+    if (this.cache.has(cacheKey)) {
+      console.log(`Cache HIT for ${cacheKey}`);
+      // CIRCUIT BREAK: Return the cached data wrapped in an Observable.
+      // next.handle() is never called!
+      return of(this.cache.get(cacheKey));
+    }
+
+    console.log(`Cache MISS for ${cacheKey}`);
+
+    // 2. If not in cache, execute the controller
+    return next.handle().pipe(
+      // 3. When the controller finishes, intercept the response and save it to the cache
+      tap(response => {
+        this.cache.set(cacheKey, response);
+      }),
+    );
+  }
+}
+```
+
+### Using the Built-in Cache Module
+While the above is good for learning, you should use NestJS's built-in `@nestjs/cache-manager` in production, as it supports Redis, TTLs (Time to Live), and handles edge cases.
+
+```typescript
+// 1. Install dependencies: npm install @nestjs/cache-manager cache-manager
+// 2. Import CacheModule in AppModule
+import { CacheModule, CacheInterceptor } from '@nestjs/cache-manager';
+
+@Module({
+  imports: [CacheModule.register()],
+})
+export class AppModule {}
+
+// 3. Apply the built-in CacheInterceptor to your controller!
+import { Controller, Get, UseInterceptors } from '@nestjs/common';
+import { CacheInterceptor, CacheTTL } from '@nestjs/cache-manager';
+
+@Controller('products')
+// Automatically caches all GET requests in this controller
+@UseInterceptors(CacheInterceptor)
+export class ProductsController {
+  
+  @Get()
+  @CacheTTL(60000) // Keep in cache for 60 seconds
+  findAll() {
+    return this.expensiveDatabaseQuery();
+  }
+}
+```
+
+## Best Practices
+- **Only Cache GET Requests**: Never cache `POST`, `PUT`, `PATCH`, or `DELETE` requests. Caching interceptors should generally inspect `request.method` and immediately `return next.handle()` if it is not a `GET` request.
+- **Cache Invalidation**: The hardest part of caching is knowing when to clear it. If you cache a list of products, and an admin adds a new product, you need a mechanism to invalidate (delete) the cache key so users see the fresh data.

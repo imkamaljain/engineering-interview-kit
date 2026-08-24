@@ -1,0 +1,91 @@
+---
+title: "Rooms & Namespaces"
+description: "Rooms & Namespaces in NestJS"
+importance: "LOW"
+revisionTime: 11
+category: "NestJS"
+subcategory: "WebSockets"
+order: 2110
+---
+
+*Rooms and Namespaces are features of Socket.IO that allow you to segment your WebSocket connections. They are essential for building multi-tenant applications or chat applications where users only receive data relevant to them.*
+
+## Overview
+If you have 10,000 users connected to your server, you rarely want to broadcast a message to all 10,000 simultaneously. If User A sends a message in "Project Alpha", only the 5 users currently viewing "Project Alpha" should receive it.
+
+**Namespaces** are multiplexed channels over a single TCP connection, acting like completely separate WebSocket servers.
+**Rooms** are arbitrary channels within a Namespace that sockets can join and leave dynamically.
+
+## Key Concepts
+- **Namespaces (`/`)**: Every Socket.IO connection joins the default namespace (`/`). You can create custom namespaces like `/chat` or `/alerts`. A client must explicitly connect to a specific namespace.
+- **Rooms**: A socket can join one or multiple rooms (e.g., `room_123`). The server can then broadcast a message exclusively to `room_123`. Clients do NOT know what rooms they are in; rooms are managed entirely on the server.
+- **Self Room**: By default, every socket automatically joins a room identified by its own socket ID. This allows you to easily send private messages to specific users.
+
+## Code Examples
+
+### 1. Defining a Namespace
+You define a namespace directly in the `@WebSocketGateway()` decorator. 
+
+```typescript
+// chat.gateway.ts
+import { WebSocketGateway, WebSocketServer, SubscribeMessage } from '@nestjs/websockets';
+import { Server, Socket } from 'socket.io';
+
+// Clients must connect using: const socket = io('http://localhost:3000/chat');
+@WebSocketGateway({ namespace: 'chat' })
+export class ChatGateway {
+  @WebSocketServer() server: Server;
+  
+  // ...
+}
+```
+
+### 2. Joining and Leaving Rooms
+Because rooms are a server-side concept, the client usually sends an event like "join_room", and the server executes the join logic.
+
+```typescript
+@WebSocketGateway()
+export class RoomsGateway {
+  
+  @SubscribeMessage('join_room')
+  handleJoinRoom(client: Socket, roomName: string) {
+    // The socket joins the room
+    client.join(roomName);
+    console.log(`Socket ${client.id} joined room ${roomName}`);
+    
+    // Acknowledge back to the client
+    return { status: 'Joined', room: roomName };
+  }
+
+  @SubscribeMessage('leave_room')
+  handleLeaveRoom(client: Socket, roomName: string) {
+    // The socket leaves the room
+    client.leave(roomName);
+    return { status: 'Left', room: roomName };
+  }
+}
+```
+
+### 3. Broadcasting to a Room
+Once sockets have joined rooms, you can target those rooms using `.to(roomName)`.
+
+```typescript
+@WebSocketGateway()
+export class MessageGateway {
+  @WebSocketServer() server: Server;
+
+  @SubscribeMessage('send_to_room')
+  handleMessageToRoom(client: Socket, payload: { room: string; message: string }) {
+    
+    // 1. Send to everyone in the room INCLUDING the sender
+    // this.server.to(payload.room).emit('new_message', payload.message);
+
+    // 2. Send to everyone in the room EXCEPT the sender
+    client.to(payload.room).emit('new_message', payload.message);
+  }
+}
+```
+
+## Best Practices
+- **Map User IDs to Socket IDs**: A common problem is wanting to send a private message to `UserId: 42`. The server only knows `SocketId: abcde`. You should maintain a mapping (e.g., in Redis) that links `UserId` to `SocketId`. Better yet, upon connection, have the socket automatically join a room named after their User ID (`client.join(user.id.toString())`). Then, to message User 42, simply do `server.to('42').emit(...)`.
+- **Clean Up**: You generally do not need to manually call `client.leave()` when a user disconnects entirely; Socket.IO automatically removes disconnected sockets from all rooms they were in. Only use `leave()` when a user actively navigates away from a specific channel but keeps the app open.

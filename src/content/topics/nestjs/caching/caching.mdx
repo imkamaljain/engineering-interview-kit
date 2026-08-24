@@ -1,0 +1,86 @@
+---
+title: "Caching"
+description: "Caching in NestJS"
+importance: "HIGH"
+revisionTime: 10
+category: "NestJS"
+subcategory: "Caching"
+order: 2120
+---
+
+*Caching is a fundamental technique for improving application performance and scalability by storing copies of frequently accessed data in a fast, temporary storage layer.*
+
+## Overview
+Every time your application processes an HTTP request, it likely hits a database, runs complex algorithms, or calls an external API. If 1,000 users request the exact same data, recalculating it 1,000 times is a waste of CPU cycles and database connections.
+
+Caching solves this by saving the result of the first request. The next 999 requests simply read the saved result from memory. NestJS provides a unified caching API out-of-the-box, supporting an in-memory cache by default, and seamlessly integrating with distributed caches like Redis via Cache Manager.
+
+## Key Concepts
+- **Cache Hit vs. Miss**: A "Hit" means the requested data was found in the cache. A "Miss" means it wasn't, so the application must fetch the raw data, compute it, and then store it in the cache for next time.
+- **Time To Live (TTL)**: How long a piece of data should stay in the cache before it is considered "stale" and automatically deleted.
+- **Eviction Policy**: When the cache is full, how does it decide what to delete? The most common is LRU (Least Recently Used).
+- **In-Memory vs. Distributed**: In-memory (RAM) caching is blazing fast but tied to a single server instance. Distributed caching (Redis) is slightly slower but shared across multiple server instances.
+
+## Code Examples
+
+### 1. Installation
+Install the necessary packages for caching.
+
+```bash
+npm install @nestjs/cache-manager cache-manager
+```
+
+### 2. Manual Caching (Service Level)
+You can inject the `CACHE_MANAGER` directly into a service to manually get, set, and delete keys. This is useful when you need precise control over the cache.
+
+```typescript
+import { Injectable, Inject } from '@nestjs/common';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import { Cache } from 'cache-manager';
+import { DatabaseService } from './database.service';
+
+@Injectable()
+export class ReportService {
+  constructor(
+    @Inject(CACHE_MANAGER) private cacheManager: Cache,
+    private db: DatabaseService
+  ) {}
+
+  async getMonthlyReport() {
+    // 1. Check if it exists in the cache (Cache Hit)
+    const cachedData = await this.cacheManager.get('monthly_report');
+    if (cachedData) {
+      console.log('Serving from cache!');
+      return cachedData;
+    }
+
+    // 2. Not in cache (Cache Miss). Fetch from database.
+    console.log('Cache miss. Calculating...');
+    const freshData = await this.db.calculateHeavyReport();
+
+    // 3. Store in cache for next time (expires in 60 seconds)
+    // Note: In cache-manager v5, TTL is in milliseconds!
+    await this.cacheManager.set('monthly_report', freshData, 60000);
+
+    return freshData;
+  }
+}
+```
+
+### 3. Deleting Cache Entries
+When underlying data changes, you must invalidate (delete) the stale cache entry.
+
+```typescript
+  async clearReportCache() {
+    // Deletes a specific key
+    await this.cacheManager.del('monthly_report');
+    
+    // Wipes the ENTIRE cache (use with caution!)
+    // await this.cacheManager.reset(); 
+  }
+```
+
+## Best Practices
+- **Cache Sizing**: In-memory caching uses your server's RAM. If you cache too much data without a strict TTL or `max` item limit, Node.js will crash with an out-of-memory error. Always configure a maximum number of items (e.g., `max: 100`).
+- **Don't Cache User-Specific Data Globally**: Never cache a "User Profile" response using a generic key like `profile_data`. User B will see User A's data! The cache key must include the user's ID (e.g., `profile_data_${userId}`).
+- **Stale-While-Revalidate**: For highly trafficked endpoints, instead of letting a cache expire and forcing a user to wait during a Cache Miss, use background jobs to proactively refresh the cache right before the TTL expires.

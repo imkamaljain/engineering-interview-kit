@@ -1,0 +1,72 @@
+---
+title: "NestJS Performance Optimization"
+description: "NestJS Performance Optimization in NestJS"
+importance: "HIGH"
+revisionTime: 6
+category: "NestJS"
+subcategory: "Interview Patterns"
+order: 3060
+---
+
+*Performance Optimization in NestJS involves tweaking the underlying HTTP adapter, utilizing caching, and managing asynchronous Node.js processes effectively to handle high-throughput traffic.*
+
+## Overview
+By default, NestJS uses Express as its underlying HTTP framework. Express is mature and stable, but not exceptionally fast. Out of the box, a basic NestJS/Express app can handle a few thousand requests per second. 
+
+When interviewing for Senior roles, you will likely be asked how to scale a NestJS application to handle tens of thousands of requests per second.
+
+## Key Concepts
+- **Fastify**: The most significant performance upgrade you can make. Switching the underlying adapter from Express to Fastify can yield up to a 2x-3x increase in raw requests-per-second.
+- **Execution Context Overhead**: NestJS adds abstraction overhead (Guards, Interceptors, Pipes). While usually negligible, in hyper-optimized scenarios, minimizing global interceptors can save precious CPU cycles.
+- **Serialization Overhead**: `class-transformer` (used in `ValidationPipe`) is notoriously slow when transforming large arrays of objects into JSON.
+
+## Code Examples
+
+### 1. Switching to Fastify
+Switching to Fastify is usually a 2-line code change in `main.ts`, assuming you haven't written raw Express-specific code (like using `req.res.send()`) in your controllers.
+
+```typescript
+// main.ts
+import { NestFactory } from '@nestjs/core';
+import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
+import { AppModule } from './app.module';
+
+async function bootstrap() {
+  // Pass the FastifyAdapter into the NestFactory
+  const app = await NestFactory.create<NestFastifyApplication>(
+    AppModule,
+    new FastifyAdapter() 
+  );
+  
+  // Fastify requires you to explicitly listen on '0.0.0.0' for Docker containers
+  await app.listen(3000, '0.0.0.0'); 
+}
+bootstrap();
+```
+
+### 2. Optimizing `ValidationPipe` (Class-Transformer)
+If you are returning a massive array of database entities (e.g., 10,000 rows) and using the `ClassSerializerInterceptor` to strip out `@Exclude()` properties (like passwords), `class-transformer` will severely block the Node.js event loop.
+
+To fix this, you should do the projection/exclusion at the Database level (e.g., `SELECT id, name FROM users`), bypassing the need for the NestJS interceptor entirely.
+
+```typescript
+// ANTI-PATTERN: Slow for large arrays
+@UseInterceptors(ClassSerializerInterceptor)
+@Get('users')
+async getAllUsers() {
+  // Returns full entities; class-transformer loops over 10,000 records to remove passwords
+  return this.db.find(User); 
+}
+
+// BEST PRACTICE: Fast for large arrays
+@Get('users-fast')
+async getAllUsersFast() {
+  // Database only returns public fields; no serialization needed in Node.js
+  return this.db.find(User, { select: ['id', 'username', 'email'] });
+}
+```
+
+## Best Practices
+- **Caching**: The fastest request is the one that never hits the database. Implement the NestJS `CacheModule` (with a Redis store) at the Controller level using the `@CacheKey()` and `@CacheTTL()` decorators to serve heavily requested, rarely changing endpoints directly from memory.
+- **Node.js Clustering (PM2)**: NestJS runs on Node.js, which is single-threaded. If you deploy to an 8-core server and run `node dist/main.js`, you are only using 1 core. You must use a process manager like PM2 (`pm2 start dist/main.js -i max`) or deploy multiple Docker containers via Kubernetes to utilize all CPU cores.
+- **Disable detailed logs in Production**: Frequent `console.log` or standard `Logger.debug` calls involve synchronous blocking I/O under the hood in Node.js. Always set your production log level to `warn` or `error`.

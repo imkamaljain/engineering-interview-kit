@@ -1,0 +1,93 @@
+---
+title: "Request-Response"
+description: "Request-Response in NestJS"
+importance: "HIGH"
+revisionTime: 14
+category: "NestJS"
+subcategory: "Microservices"
+order: 1890
+---
+
+*Request-Response is the standard communication paradigm where a client sends a message to a microservice and actively waits for a reply before continuing its execution.*
+
+## Overview
+In traditional REST APIs, Request-Response is the only way to communicate. The client opens an HTTP connection, sends data, and the connection remains open until the server sends a response.
+
+NestJS Microservices recreate this paradigm over various messaging protocols (like TCP, Redis, or RabbitMQ) using the `ClientProxy.send()` method and `@MessagePattern()` decorators. Under the hood, NestJS manages the complex task of correlating the outgoing request with the incoming response.
+
+## Key Concepts
+- **`client.send()`**: The method used by the client to initiate a Request-Response interaction. It returns an RxJS Observable.
+- **Correlation IDs**: When a client sends a message over a message broker (like RabbitMQ), it attaches a unique ID. When the server replies, it includes that same ID so the client knows which request the response belongs to. NestJS handles this entirely automatically.
+- **Blocking (Conceptually)**: While Node.js remains asynchronous, the specific execution flow waiting on the response is paused until the microservice replies or times out.
+
+## Code Examples
+
+### 1. The Requesting Client
+The client uses the `send()` method. Because `send()` returns an Observable, you can use RxJS operators (like `timeout`) or convert it to a Promise.
+
+```typescript
+import { Controller, Get, Inject, RequestTimeoutException } from '@nestjs/common';
+import { ClientProxy } from '@nestjs/microservices';
+import { firstValueFrom, timeout, catchError } from 'rxjs';
+
+@Controller('users')
+export class UsersController {
+  constructor(@Inject('BILLING_SERVICE') private client: ClientProxy) {}
+
+  @Get('balance')
+  async getUserBalance() {
+    // We send a Request to the Billing Service
+    const pattern = { cmd: 'get_balance' };
+    const payload = { userId: 123 };
+
+    try {
+      // 1. Send the message
+      // 2. Wait a maximum of 5 seconds for a response
+      // 3. Convert the Observable to a Promise
+      const response = await firstValueFrom(
+        this.client.send<number>(pattern, payload).pipe(
+          timeout(5000), 
+        )
+      );
+      
+      return { balance: response };
+    } catch (err) {
+      throw new RequestTimeoutException('Billing service is unresponsive');
+    }
+  }
+}
+```
+
+### 2. The Responding Microservice
+The microservice uses `@MessagePattern()` and simply returns the value.
+
+```typescript
+import { Controller } from '@nestjs/common';
+import { MessagePattern } from '@nestjs/microservices';
+import { delay, of } from 'rxjs';
+
+@Controller()
+export class BillingController {
+  
+  @MessagePattern({ cmd: 'get_balance' })
+  getBalance(data: { userId: number }) {
+    console.log(`Calculating balance for user ${data.userId}`);
+    
+    // You can return a raw value, a Promise, or an Observable.
+    // NestJS will wait for it to resolve, serialize it, and send it back to the client!
+    const balance = 1500.50;
+    
+    return balance;
+  }
+
+  // Example returning an Observable (simulating a slow network request)
+  @MessagePattern({ cmd: 'get_history' })
+  getHistory() {
+    return of(['Purchase 1', 'Purchase 2']).pipe(delay(2000));
+  }
+}
+```
+
+## Best Practices
+- **Always Implement Timeouts**: In a microservice architecture, networks fail. If the `Billing Service` crashes, the API Gateway waiting for the response will hang indefinitely if you don't use the RxJS `timeout()` operator. Always set reasonable timeouts to prevent your Gateway from running out of memory due to hanging requests.
+- **Don't Use for Long-Running Tasks**: If a task takes 30 seconds to complete (e.g., generating a massive PDF report), do not use Request-Response. The HTTP connection to the original frontend client will likely timeout. Instead, use Event-Based communication: the Gateway *emits* a 'generate_report' event and immediately returns `202 Accepted` to the frontend. Later, the microservice notifies the frontend via WebSockets when the PDF is ready.

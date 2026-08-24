@@ -1,0 +1,104 @@
+---
+title: "Repositories"
+description: "Repositories in NestJS"
+importance: "MEDIUM"
+revisionTime: 8
+category: "NestJS"
+subcategory: "Database & ORM"
+order: 1260
+---
+
+*In the context of NestJS and TypeORM, Repositories are the auto-generated classes that provide standard CRUD (Create, Read, Update, Delete) operations for your Entities.*
+
+## Overview
+When you register an entity in a feature module using `TypeOrmModule.forFeature([User])`, NestJS automatically creates a `Repository<User>` provider. 
+
+You inject this repository into your services. It comes pre-loaded with dozens of useful methods to interact with the database, eliminating the need to write basic SQL queries.
+
+## Key Concepts
+- **`@InjectRepository()`**: The decorator used to inject the auto-generated repository into a Service constructor.
+- **`find` vs `findOne`**: Methods for querying the database.
+- **`create` vs `save` vs `insert`**: Different approaches to adding data to the database, each with specific side effects.
+
+## Code Examples
+
+### 1. Querying Data (Read)
+The `find` methods accept complex "Find Options" objects.
+
+```typescript
+import { Injectable, NotFoundException } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository, Like, MoreThan } from 'typeorm';
+import { User } from './user.entity';
+
+@Injectable()
+export class UsersService {
+  constructor(
+    @InjectRepository(User) private userRepository: Repository<User>,
+  ) {}
+
+  // Get a single record
+  async getUser(id: number): Promise<User> {
+    // findOneBy is a helper for querying by simple conditions
+    const user = await this.userRepository.findOneBy({ id });
+    if (!user) throw new NotFoundException();
+    return user;
+  }
+
+  // Complex querying
+  async searchUsers(): Promise<User[]> {
+    return this.userRepository.find({
+      where: {
+        isActive: true,
+        age: MoreThan(18),             // Age > 18
+        name: Like('%John%'),          // Name LIKE '%John%'
+      },
+      order: { createdAt: 'DESC' },    // ORDER BY createdAt DESC
+      take: 10,                        // LIMIT 10
+      skip: 0,                         // OFFSET 0
+      relations: ['profile', 'posts']  // Join these tables!
+    });
+  }
+}
+```
+
+### 2. Mutating Data (Create, Update, Delete)
+
+```typescript
+@Injectable()
+export class UsersService {
+  constructor(@InjectRepository(User) private userRepository: Repository<User>) {}
+
+  // CREATE
+  async createUser(dto: any) {
+    // .create() makes an object in memory. It DOES NOT hit the database.
+    const newUser = this.userRepository.create(dto);
+    
+    // .save() executes the INSERT query and triggers lifecycle hooks.
+    return await this.userRepository.save(newUser);
+  }
+
+  // UPDATE
+  async updateUser(id: number, dto: any) {
+    // .update() executes a raw UPDATE query. It is very fast, but does 
+    // NOT trigger lifecycle hooks (like @BeforeUpdate).
+    await this.userRepository.update(id, dto);
+    
+    return this.getUser(id); // Fetch the updated record
+  }
+
+  // DELETE
+  async deleteUser(id: number) {
+    // Executes a raw DELETE query.
+    await this.userRepository.delete(id);
+    
+    // Alternatively, soft delete (sets deletedAt timestamp instead of removing row)
+    // await this.userRepository.softDelete(id);
+  }
+}
+```
+
+## Best Practices
+- **Understand `save` vs `update/insert`**: 
+  - Use `repository.save(entity)` when you need to trigger TypeORM listeners (like hashing a password on save) or when you need to save cascading relationships. It is slower because it often does a `SELECT` to see if the record exists before doing an `INSERT` or `UPDATE`.
+  - Use `repository.update()` or `repository.insert()` when you want raw performance. They execute direct SQL commands without checking if the entity exists in memory and without triggering hooks.

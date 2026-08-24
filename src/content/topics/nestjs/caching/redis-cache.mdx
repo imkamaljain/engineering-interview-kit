@@ -1,0 +1,99 @@
+---
+title: "Redis Cache"
+description: "Redis Cache in NestJS"
+importance: "HIGH"
+revisionTime: 6
+category: "NestJS"
+subcategory: "Caching"
+order: 2150
+---
+
+*Redis (Remote Dictionary Server) is an in-memory data structure store, used as a distributed, in-memory key-value database, cache and message broker. It is the de-facto standard for caching in NestJS applications.*
+
+## Overview
+While you can use Memcached or other tools, Redis dominates the caching ecosystem. It is incredibly fast (sub-millisecond latency) because it stores all data in RAM, but it also offers persistence (saving to disk) so you don't lose your cache if the server restarts.
+
+In NestJS, Redis is most commonly integrated using the `cache-manager-redis-store` package alongside the standard `CacheModule`.
+
+## Key Concepts
+- **Data Structures**: Unlike Memcached which only stores strings, Redis can store Hashes, Lists, Sets, and Sorted Sets. (Though standard `cache-manager` usage primarily just uses simple Key-Value strings).
+- **Pub/Sub**: Redis isn't just a cache; it has a built-in Publish/Subscribe messaging paradigm, making it excellent for Microservice communication or WebSocket scaling.
+- **Eviction Policies**: Redis can be configured to automatically delete the least recently used keys (`allkeys-lru`) when it runs out of memory, making it a perfect dedicated cache server.
+
+## Code Examples
+
+### 1. Basic Redis Integration
+Using the `cache-manager-redis-store` v3 (compatible with `cache-manager` v5).
+
+```bash
+npm install @nestjs/cache-manager cache-manager cache-manager-redis-store redis
+```
+
+```typescript
+import { Module } from '@nestjs/common';
+import { CacheModule } from '@nestjs/cache-manager';
+import { redisStore } from 'cache-manager-redis-store';
+
+@Module({
+  imports: [
+    CacheModule.registerAsync({
+      isGlobal: true,
+      useFactory: async () => ({
+        // Using the redisStore function
+        store: await redisStore({
+          socket: {
+            host: 'localhost',
+            port: 6379,
+          },
+          ttl: 60 * 1000, // 60 seconds
+        }),
+      }),
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+### 2. Direct Redis Client Access (Advanced)
+Sometimes the generic `cache-manager` API (`get`, `set`, `del`) isn't enough. What if you want to use Redis-specific features like atomic increments (`INCR`) or sets (`SADD`)? You can inject the underlying Redis client directly.
+
+```typescript
+import { Injectable, Inject } from '@nestjs/common';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import { Cache } from 'cache-manager';
+import { RedisClientType } from 'redis';
+
+@Injectable()
+export class RateLimiterService {
+  // We need the underlying Redis client, not just the Cache wrapper
+  private redisClient: RedisClientType;
+
+  constructor(@Inject(CACHE_MANAGER) private cacheManager: Cache) {
+    // Extract the raw Redis client from the store
+    // Note: The exact property depends on the specific redis-store version
+    this.redisClient = (this.cacheManager.store as any).client;
+  }
+
+  async recordApiHit(ipAddress: string) {
+    const key = `rate_limit:${ipAddress}`;
+    
+    // Using a Redis-specific atomic INCR command
+    // This is impossible using standard cacheManager.get() and set()
+    const currentHits = await this.redisClient.incr(key);
+    
+    if (currentHits === 1) {
+      // Set expiry to 60 seconds only on the first hit
+      await this.redisClient.expire(key, 60);
+    }
+
+    if (currentHits > 100) {
+      throw new Error('Rate limit exceeded');
+    }
+  }
+}
+```
+
+## Best Practices
+- **Prefixing Keys**: If multiple applications share the same Redis instance, they might overwrite each other's cache keys! Always use a prefix. You can configure this globally: `CacheModule.register({ store: redisStore, prefix: 'my_app_' })`.
+- **Memory Management**: Redis stores everything in RAM. If you cache heavy JSON objects and don't set a TTL, your Redis server will run out of memory and crash. Configure Redis with `maxmemory` and an eviction policy like `allkeys-lru` in its `redis.conf` file to protect the server.
+- **Avoid Large Payloads**: Don't cache a 5MB JSON array under a single key. Retrieving and parsing 5MB of JSON on every request will block the Node.js event loop and ruin your performance. Cache smaller, distinct pieces of data.

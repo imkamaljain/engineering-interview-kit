@@ -1,0 +1,76 @@
+---
+title: "Mutations"
+description: "Mutations in NestJS"
+importance: "MEDIUM"
+revisionTime: 7
+category: "NestJS"
+subcategory: "GraphQL"
+order: 1670
+---
+
+*Mutations are the GraphQL equivalent of REST `POST`, `PUT`, `PATCH`, and `DELETE` requests. They are used exclusively to modify data on the server and return the modified data.*
+
+## Overview
+While queries only read data, mutations change it. Every time you create a user, update a post, or delete a comment, you use a Mutation.
+
+In NestJS, you define Mutations exactly like you define Queries: as methods inside a `@Resolver()` class. The only difference is that you decorate the method with `@Mutation()`.
+
+## Key Concepts
+- **`@Mutation()`**: The decorator used to expose a method as a GraphQL mutation.
+- **Side Effects**: Mutations inherently cause side effects in the database.
+- **Return the Resource**: A well-designed mutation usually returns the object it just created or updated, allowing the frontend (like Apollo Client) to automatically update its local cache without needing to fetch the data again.
+
+## Code Examples
+
+### 1. Basic Mutations
+Here we define mutations to create and delete a recipe.
+
+```typescript
+import { Resolver, Mutation, Args, Int } from '@nestjs/graphql';
+import { Recipe } from './models/recipe.model';
+import { RecipesService } from './recipes.service';
+
+@Resolver(() => Recipe)
+export class RecipesResolver {
+  constructor(private recipesService: RecipesService) {}
+
+  // 1. A Mutation that returns the created object
+  // Note: NewRecipeInput is an @InputType (discussed in the next topic)
+  @Mutation(() => Recipe)
+  async createRecipe(
+    @Args('newRecipeData') newRecipeData: NewRecipeInput,
+  ): Promise<Recipe> {
+    const recipe = await this.recipesService.create(newRecipeData);
+    return recipe; // Return the created object so the client can cache it
+  }
+
+  // 2. A Mutation that returns a boolean indicating success
+  // We explicitly name it 'removeRecipe' in the schema
+  @Mutation(() => Boolean, { name: 'removeRecipe' })
+  async remove(
+    @Args('id', { type: () => Int }) id: number,
+  ): Promise<boolean> {
+    return this.recipesService.remove(id);
+  }
+}
+```
+
+### 2. What the Client Sends
+If the frontend wants to execute the `createRecipe` mutation, they send this GraphQL string:
+
+```graphql
+# The client mutation
+mutation CreateMyRecipe {
+  # The mutation name, passing the input object
+  createRecipe(newRecipeData: { title: "Pancakes", description: "Fluffy!" }) {
+    # The fields the client wants BACK after the creation is successful
+    id
+    title
+    creationDate
+  }
+}
+```
+
+## Best Practices
+- **Never Use Queries for Updates**: You *can* technically write a `@Query()` that updates the database, because both are just HTTP POST requests under the hood. However, this breaks the fundamental rules of GraphQL. Client libraries (like Apollo, Relay, URQL) treat Queries and Mutations very differently regarding caching and network retries. Always use `@Mutation()` for state changes.
+- **Return the Entity**: Always try to return the full entity (`@Mutation(() => Recipe)`) rather than just a success boolean or ID, especially for Create and Update operations. If a client updates a recipe's title, returning the updated `Recipe` object allows their UI to update instantly without needing a second network request to fetch the new title.

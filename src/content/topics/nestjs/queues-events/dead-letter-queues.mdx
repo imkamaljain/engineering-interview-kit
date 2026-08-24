@@ -1,0 +1,100 @@
+---
+title: "Dead Letter Queues"
+description: "Dead Letter Queues in NestJS"
+importance: "LOW"
+revisionTime: 13
+category: "NestJS"
+subcategory: "Queues & Events"
+order: 2030
+---
+
+*A Dead Letter Queue (DLQ) is a secondary queue designed to catch messages or jobs that have completely failed processing, exhausted all retries, or were rejected due to fatal errors.*
+
+## Overview
+Even with exponential backoff and 10 retries, jobs will eventually fail permanently. An API might be down for 24 hours, or a payload might be malformed causing a `TypeError`.
+
+If you don't have a DLQ, a permanently failed job might just sit in your "Failed" registry, taking up Redis RAM, or worse, blocking other jobs depending on your queue configuration. A DLQ explicitly moves these "poison pills" into a separate storage area where a human developer can inspect the error, fix the bug, and manually requeue them.
+
+## Key Concepts
+- **Poison Pill**: A message that continually crashes the consumer. If not moved to a DLQ, it can create infinite loops in poorly configured systems.
+- **Manual Intervention**: The primary purpose of a DLQ is observability and manual recovery. You usually build an admin dashboard to view the DLQ.
+- **Implementation differences**: RabbitMQ has native, broker-level support for Dead Letter Exchanges. Bull/Redis handles failures at the application level by moving jobs to a "failed" set.
+
+## Code Examples
+
+### 1. RabbitMQ Dead Letter Exchange (DLX)
+When using `@nestjs/microservices` with `Transport.RMQ`, you configure DLQs at the infrastructure level.
+
+```typescript
+// main.ts
+import { NestFactory } from '@nestjs/core';
+import { MicroserviceOptions, Transport } from '@nestjs/microservices';
+import { AppModule } from './app.module';
+
+async function bootstrap() {
+  const app = await NestFactory.createMicroservice<MicroserviceOptions>(AppModule, {
+    transport: Transport.RMQ,
+    options: {
+      urls: ['amqp://localhost:5672'],
+      queue: 'main_processing_queue',
+      noAck: false, // Must be false so we can reject (NACK) messages!
+      queueOptions: {
+        durable: true,
+        // Tell RabbitMQ: "If a message is rejected, route it to THIS exchange/queue"
+        arguments: {
+          'x-dead-letter-exchange': '',
+          'x-dead-letter-routing-key': 'dead_letter_queue', 
+        },
+      },
+    },
+  });
+  await app.listen();
+}
+```
+If your controller method throws an error (and retries are exhausted), NestJS will NACK the message, and RabbitMQ will automatically slide it over to the `dead_letter_queue`.
+
+### 2. Bull (Redis) Failed Jobs
+Bull doesn't have a separate "Queue" for dead letters. Instead, it maintains a `failed` set within the existing queue. You can query this set to build your own DLQ dashboard.
+
+```typescript
+// admin.controller.ts
+import { Controller, Get, Post, Param } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bull';
+import { Queue } from 'bull';
+
+@Controller('admin/dlq')
+export class DlqController {
+  constructor(@InjectQueue('emails') private emailQueue: Queue) {}
+
+  // 1. Get all permanently failed jobs
+  @Get()
+  async getFailedJobs() {
+    // Fetches all jobs in the 'failed' state
+    const failedJobs = await this.emailQueue.getFailed();
+    
+    return failedJobs.map(job => ({
+      id: job.id,
+      failedReason: job.failedReason, // Why it failed!
+      data: job.data,
+      attemptsMade: job.attemptsMade,
+    }));
+  }
+
+  // 2. Retry a specific failed job (after a developer fixed the bug!)
+  @Post('retry/:id')
+  async retryJob(@Param('id') id: string) {
+    const job = await this.emailQueue.getJob(id);
+    if (job) {
+      // Moves it from 'failed' back to 'waiting'
+      await job.retry(); 
+      return { status: 'Job requeued' };
+    }
+    return { status: 'Job not found' };
+  }
+}
+```
+
+## Best Practices
+- **Alerting**: A DLQ is useless if nobody looks at it. Set up a listener on your queue (`@OnQueueFailed()`) that fires a webhook to Slack or PagerDuty whenever a job is moved to the failed/dead-letter state.
+- **Add Context to Failures**: When throwing an error inside a worker, don't just throw `new Error('Failed')`. Throw `new Error('Failed to charge Stripe: Insufficient Funds, UserId: 123')`. This error message is saved into the DLQ, making it infinitely easier for the developer debugging it later.
+- **Use Third-Party Dashboards**: If using Bull, do not build your own DLQ admin panel from scratch. Use open-source tools like `bull-board` which easily mount into your NestJS Express app and provide a beautiful UI for inspecting and retrying failed jobs.

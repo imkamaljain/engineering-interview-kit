@@ -1,0 +1,109 @@
+---
+title: "Role-based Access Control"
+description: "Role-based Access Control in NestJS"
+importance: "LOW"
+revisionTime: 7
+category: "NestJS"
+subcategory: "Authentication & Authorization"
+order: 1160
+---
+
+*Role-Based Access Control (RBAC) is an authorization paradigm where permissions are grouped into "Roles", and users are assigned those Roles.*
+
+## Overview
+RBAC is the most common way to handle authorization in modern web applications. Instead of saying "User A can delete posts and edit posts", you say "User A has the `ADMIN` role. The `ADMIN` role is allowed to delete and edit posts."
+
+In NestJS, implementing RBAC involves three parts:
+1.  A custom decorator (e.g., `@Roles()`) to attach metadata to a route.
+2.  The `Reflector` service to read that metadata.
+3.  A Guard to compare the metadata against the user's role.
+
+## Key Concepts
+- **Metadata**: NestJS uses the `Reflector` class to read arbitrary data (like an array of roles) attached to a class or method via a decorator.
+- **The User Object**: RBAC assumes that an Authentication Guard has already run and attached the user's current role to `request.user.role`.
+
+## Code Examples
+
+### 1. Create the Roles Decorator
+This decorator allows you to easily tag routes with the required roles.
+
+```typescript
+// roles.decorator.ts
+import { SetMetadata } from '@nestjs/common';
+
+export enum Role {
+  USER = 'user',
+  ADMIN = 'admin',
+  SUPER_ADMIN = 'super_admin',
+}
+
+// We use 'roles' as the key to store the metadata
+export const Roles = (...roles: Role[]) => SetMetadata('roles', roles);
+```
+
+### 2. Create the Roles Guard
+This Guard reads the metadata and compares it to the authenticated user.
+
+```typescript
+// roles.guard.ts
+import { Injectable, CanActivate, ExecutionContext } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
+import { Role } from './roles.decorator';
+
+@Injectable()
+export class RolesGuard implements CanActivate {
+  constructor(private reflector: Reflector) {}
+
+  canActivate(context: ExecutionContext): boolean {
+    // Read the required roles from the route handler
+    const requiredRoles = this.reflector.getAllAndOverride<Role[]>('roles', [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+
+    // If no roles are required, allow access
+    if (!requiredRoles) {
+      return true;
+    }
+
+    // Get the user from the request (attached by JwtAuthGuard)
+    const { user } = context.switchToHttp().getRequest();
+
+    // Check if the user's role exists in the array of required roles
+    return requiredRoles.some((role) => user.role?.includes(role));
+  }
+}
+```
+
+### 3. Protect the Route
+Now apply both the Authentication Guard and the Roles Guard to the controller.
+
+```typescript
+// admin.controller.ts
+import { Controller, Get, UseGuards } from '@nestjs/common';
+import { JwtAuthGuard } from './jwt-auth.guard';
+import { RolesGuard } from './roles.guard';
+import { Roles, Role } from './roles.decorator';
+
+@Controller('admin')
+// Apply globally to the whole controller
+@UseGuards(JwtAuthGuard, RolesGuard)
+export class AdminController {
+  
+  @Get('dashboard')
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN) // Only Admins can access this!
+  getDashboard() {
+    return 'Admin Dashboard Data';
+  }
+
+  @Get('billing')
+  @Roles(Role.SUPER_ADMIN) // Even regular Admins are blocked from this!
+  getBilling() {
+    return 'Billing Data';
+  }
+}
+```
+
+## Best Practices
+- **Use Enums**: Never use magic strings for roles (e.g., `@Roles('admin')`). Always define an `enum` and use it everywhere. If the spelling of a role changes, you only have to update the enum, not search through 50 controllers.
+- **Hierarchy vs Flat Roles**: The RBAC example above uses a "flat" array check. In complex systems, you might want a hierarchy (e.g., `SUPER_ADMIN` automatically has all permissions of `ADMIN`). You can implement this logic inside the `RolesGuard` by having a predefined map of role inheritances.

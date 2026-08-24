@@ -1,0 +1,111 @@
+---
+title: "Workers"
+description: "Workers in NestJS"
+importance: "HIGH"
+revisionTime: 14
+category: "NestJS"
+subcategory: "Queues & Events"
+order: 1990
+---
+
+*In the broader ecosystem of Node.js and NestJS, "Workers" refer to isolated processes or threads dedicated to executing background tasks, preventing CPU-intensive operations from blocking the main HTTP event loop.*
+
+## Overview
+Node.js is single-threaded. This means if you write a NestJS controller that takes 5 seconds to generate a PDF, during those 5 seconds, your server cannot respond to *any* other HTTP requests. The event loop is blocked.
+
+To solve this, you must offload the work to a "Worker". There are two primary types of workers in NestJS:
+1. **Worker Threads (Node.js native)**: Spawning multiple threads within the same Node.js process.
+2. **Worker Processes (Bull Sandboxing / Microservices)**: Running entirely separate Node.js processes.
+
+## Key Concepts
+- **Event Loop Blocking**: The cardinal sin of Node.js. Any synchronous `while` loop or heavy mathematical computation (like image processing or cryptography) will block the loop.
+- **`worker_threads`**: The native Node.js module that allows you to run JavaScript in parallel threads, sharing memory.
+- **Bull Sandboxed Processors**: A feature of `@nestjs/bull` that automatically spins up separate Node.js processes for your queue consumers.
+
+## Code Examples
+
+### 1. The Problem (Blocking the Event Loop)
+Do not do this in a standard Controller or Service!
+
+```typescript
+import { Controller, Get } from '@nestjs/common';
+
+@Controller('math')
+export class MathController {
+  @Get('prime')
+  calculateMassivePrime() {
+    // This synchronous loop will freeze the entire server!
+    // No other user can log in or fetch data until this finishes.
+    let prime = 0;
+    for (let i = 0; i < 1000000000; i++) {
+      // heavy math...
+    }
+    return prime;
+  }
+}
+```
+
+### 2. Solution A: Bull Sandboxed Processors (Recommended)
+If you are using Bull for Job Queues, the absolute best way to handle CPU-intensive tasks is to tell Bull to run the processor in a separate file.
+
+```typescript
+// app.module.ts
+import { BullModule } from '@nestjs/bull';
+import { join } from 'path';
+
+// Instead of providing a class with @Processor, you point Bull to a file path!
+BullModule.registerQueue({
+  name: 'heavy_math',
+  // Bull will spawn a separate Node.js process and load this file!
+  processors: [join(__dirname, 'math.processor.js')],
+})
+```
+
+```javascript
+// math.processor.js (Must be a plain JS/TS file exporting a default function)
+// Note: This file runs in a completely separate process. It cannot use NestJS Dependency Injection!
+module.exports = async function (job) {
+  console.log(`Calculating for job ${job.id}`);
+  
+  // This can take 10 minutes, and the main NestJS HTTP server won't even notice!
+  let prime = 0;
+  for (let i = 0; i < 1000000000; i++) {
+    // heavy math...
+  }
+  
+  return prime; // Saved to Redis
+}
+```
+
+### 3. Solution B: Worker Threads (Without Bull)
+If you aren't using a job queue, you can use Node's native `worker_threads` inside a NestJS service.
+
+```typescript
+// math.service.ts
+import { Injectable } from '@nestjs/common';
+import { Worker } from 'worker_threads';
+import { join } from 'path';
+
+@Injectable()
+export class MathService {
+  runWorkerTask(data: any): Promise<number> {
+    return new Promise((resolve, reject) => {
+      // Spawn a new thread
+      const worker = new Worker(join(__dirname, 'worker.js'), {
+        workerData: data,
+      });
+
+      // Listen for the result
+      worker.on('message', resolve);
+      worker.on('error', reject);
+      worker.on('exit', (code) => {
+        if (code !== 0) reject(new Error(`Worker stopped with exit code ${code}`));
+      });
+    });
+  }
+}
+```
+
+## Best Practices
+- **Separate Deployments**: The ultimate Worker architecture is not just running separate threads, but running entirely separate servers. Deploy your `Api-App` (which only contains HTTP Controllers) to 3 servers. Deploy your `Worker-App` (which only contains `@Processor` classes and connects to the same Redis instance) to 5 different servers. This allows you to scale web traffic and background processing independently.
+- **Dependency Injection limits in Sandboxes**: Because Bull Sandboxed processors run in a separate Node.js process, they do *not* have access to your NestJS `AppModule` context. You cannot inject `UsersService` into a sandboxed processor. You must instantiate your own database connections inside the sandbox file.

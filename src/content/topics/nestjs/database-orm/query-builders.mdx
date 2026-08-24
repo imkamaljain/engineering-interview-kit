@@ -1,0 +1,82 @@
+---
+title: "Query Builders"
+description: "Query Builders in NestJS"
+importance: "HIGH"
+revisionTime: 12
+category: "NestJS"
+subcategory: "Database & ORM"
+order: 1300
+---
+
+*A Query Builder is a programmatic interface that allows you to write complex SQL queries using TypeScript methods, offering a balance between raw SQL performance and ORM type safety.*
+
+## Overview
+While standard Repository methods (like `find({ where: { ... } })`) are great for 80% of CRUD operations, they quickly become restrictive when you need to perform complex `INNER JOIN`s, `GROUP BY` aggregations, or subqueries. 
+
+Instead of falling back to raw, un-typed SQL strings, you can use the TypeORM Query Builder. It generates SQL dynamically based on the methods you chain together.
+
+## Key Concepts
+- **`createQueryBuilder('alias')`**: The entry point. The 'alias' is how you refer to the main table in the rest of the query (e.g., `qb.where('alias.id = 1')`).
+- **Method Chaining**: Building the query step-by-step (`.select()`, `.leftJoin()`, `.where()`).
+- **Execution**: The query is not sent to the database until you call an execution method like `.getMany()`, `.getOne()`, or `.getRawMany()`.
+
+## Code Examples
+
+### 1. Basic Query Builder Usage
+You usually generate a Query Builder from an existing injected Repository.
+
+```typescript
+import { Injectable } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { User } from './user.entity';
+
+@Injectable()
+export class UsersService {
+  constructor(
+    @InjectRepository(User) private userRepository: Repository<User>,
+  ) {}
+
+  async findActiveAdmins() {
+    // We alias the 'users' table as 'user' for this query
+    const queryBuilder = this.userRepository.createQueryBuilder('user');
+
+    return await queryBuilder
+      .where('user.isActive = :active', { active: true }) // Use parameters to prevent SQL injection!
+      .andWhere('user.role = :role', { role: 'admin' })
+      .orderBy('user.createdAt', 'DESC')
+      .getMany(); // Executes the query and returns an array of User entities
+  }
+}
+```
+
+### 2. Complex Joins and Aggregations
+This is where the Query Builder shines. Let's find all users, join their posts, and count how many posts they have.
+
+```typescript
+async getUsersWithPostCounts() {
+  const queryBuilder = this.userRepository.createQueryBuilder('user');
+
+  return await queryBuilder
+    // 1. Select the specific columns we want
+    .select([
+      'user.id', 
+      'user.email'
+    ])
+    // 2. Add an aggregated column (COUNT). We MUST alias it!
+    .addSelect('COUNT(post.id)', 'postCount')
+    // 3. Perform a LEFT JOIN on the 'posts' relation (assuming it's defined in the User entity)
+    .leftJoin('user.posts', 'post')
+    // 4. Group by the user to calculate the count
+    .groupBy('user.id')
+    // 5. Use getRawMany() because the result contains aggregated data ('postCount')
+    // that doesn't fit into the standard User entity class.
+    .getRawMany(); 
+}
+```
+
+## Best Practices
+- **Always Use Parameters**: Never concatenate strings into a `.where()` clause (e.g., `.where('user.name = ' + req.query.name)`). This causes critical SQL Injection vulnerabilities. Always use the parameter object: `.where('user.name = :name', { name: req.query.name })`.
+- **`getMany()` vs `getRawMany()`**: 
+  - Use `.getMany()` when you want the results hydrated into actual TypeScript Entity class instances.
+  - Use `.getRawMany()` when you are doing aggregations (`SUM`, `COUNT`) or selecting specific columns, as this returns plain, flat JavaScript objects representing exactly what the database returned.

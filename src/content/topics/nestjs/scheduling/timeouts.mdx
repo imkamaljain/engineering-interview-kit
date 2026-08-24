@@ -1,0 +1,90 @@
+---
+title: "Timeouts"
+description: "Timeouts in NestJS"
+importance: "MEDIUM"
+revisionTime: 6
+category: "NestJS"
+subcategory: "Scheduling"
+order: 2240
+---
+
+*Timeouts allow you to schedule a function to run exactly once after a specified delay, acting as a declarative wrapper around JavaScript's native `setTimeout`.*
+
+## Overview
+Sometimes you need to delay an action without blocking the main execution thread. For example, when an application boots up, you might want to wait 10 seconds for the database connections to fully stabilize before initiating a heavy cache-warming routine.
+
+The `@Timeout` decorator provides a clean way to handle these delayed, one-off executions in NestJS.
+
+## Key Concepts
+- **One-off Execution**: Unlike `@Cron` or `@Interval`, a `@Timeout` runs only once.
+- **Milliseconds**: The delay is always defined in milliseconds.
+- **Relative to Boot**: For static decorators (`@Timeout(5000)`), the timer starts counting exactly when the NestJS application fully bootstraps (after `onApplicationBootstrap` lifecycle hooks).
+
+## Code Examples
+
+### 1. Basic Timeout
+Delay execution of a task relative to application startup.
+
+```typescript
+import { Injectable, Logger } from '@nestjs/common';
+import { Timeout } from '@nestjs/schedule';
+
+@Injectable()
+export class CacheService {
+  private readonly logger = new Logger(CacheService.name);
+
+  // Wait 15 seconds after app startup before warming the cache
+  @Timeout(15000)
+  warmUpCache() {
+    this.logger.debug('Warming up the Redis cache...');
+    // Heavy DB queries here
+  }
+}
+```
+
+### 2. Dynamic Timeouts
+If you need to schedule a timeout based on a user action (e.g., "Send a follow-up email 2 hours after registration"), you cannot use the decorator. You must use the `SchedulerRegistry`.
+
+```typescript
+import { Injectable } from '@nestjs/common';
+import { SchedulerRegistry } from '@nestjs/schedule';
+
+@Injectable()
+export class EmailService {
+  constructor(private schedulerRegistry: SchedulerRegistry) {}
+
+  scheduleWelcomeEmail(userId: string) {
+    const twoHoursInMs = 2 * 60 * 60 * 1000;
+    const timeoutName = `welcome_email_${userId}`;
+
+    // 1. Create a standard JavaScript setTimeout
+    const callback = () => this.sendEmail(userId);
+    const timeout = setTimeout(callback, twoHoursInMs);
+
+    // 2. Add it to the registry so we can track or cancel it later
+    this.schedulerRegistry.addTimeout(timeoutName, timeout);
+  }
+
+  cancelWelcomeEmail(userId: string) {
+    const timeoutName = `welcome_email_${userId}`;
+    
+    try {
+      // Find and clear the timeout if the user deleted their account early
+      const timeout = this.schedulerRegistry.getTimeout(timeoutName);
+      clearTimeout(timeout);
+      this.schedulerRegistry.deleteTimeout(timeoutName);
+    } catch (e) {
+      // Timeout already executed or doesn't exist
+    }
+  }
+
+  private sendEmail(userId: string) {
+    console.log(`Sending email to ${userId}`);
+    // Clean up registry after execution
+    this.schedulerRegistry.deleteTimeout(`welcome_email_${userId}`);
+  }
+}
+```
+
+## Best Practices
+- **Persistence Warning**: Dynamic timeouts created via `setTimeout` only live in the server's RAM. If a user registers, you set a 2-hour timeout, and 1 hour later you deploy a new version of your code (restarting the server), **that timeout is lost forever**. For long-term scheduling (anything more than a few minutes), do *not* use `@Timeout` or `setTimeout`. You must save the scheduled time in a database and use a `@Cron` job to check the database periodically, or use a persistent queue like BullMQ.

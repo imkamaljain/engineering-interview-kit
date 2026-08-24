@@ -1,0 +1,86 @@
+---
+title: "Custom Guards"
+description: "Custom Guards in NestJS"
+importance: "MEDIUM"
+revisionTime: 8
+category: "NestJS"
+subcategory: "Guards"
+order: 760
+---
+
+*Custom Guards allow you to implement complex, highly specific business rules that gate access to your application's resources.*
+
+## Overview
+While standard role-based access control (RBAC) covers many use cases, you frequently need authorization logic that depends on the *data* being requested, not just the user's role. 
+
+For instance, a user might have the "User" role, which allows them to update profiles. However, they should only be allowed to update *their own* profile, not someone else's. Implementing this requires a Custom Guard.
+
+## Key Concepts
+- **Data-Driven Decisions**: Custom guards often need to read parameters from the URL (e.g., `/:id`) and query a database to determine ownership before granting access.
+- **Asynchronous Execution**: Because querying a database takes time, custom guards frequently return a `Promise<boolean>`.
+- **Dependency Injection**: Because custom guards are `@Injectable()` classes, you can inject Repositories, Services, or configuration modules.
+
+## Code Examples
+
+### A Resource Ownership Guard
+Let's build a guard that ensures a user can only edit an article if they are the original author of that article.
+
+```typescript
+import { Injectable, CanActivate, ExecutionContext, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { ArticlesService } from './articles.service';
+
+@Injectable()
+export class ArticleOwnerGuard implements CanActivate {
+  // Inject the service needed to lookup the article
+  constructor(private articlesService: ArticlesService) {}
+
+  async canActivate(context: ExecutionContext): Promise<boolean> {
+    const request = context.switchToHttp().getRequest();
+    
+    // 1. Get the authenticated user (populated by an AuthGuard that ran previously)
+    const user = request.user;
+    if (!user) return false;
+
+    // 2. Extract the article ID from the URL (/articles/:articleId)
+    const articleId = request.params.articleId;
+
+    // 3. Fetch the article from the database
+    const article = await this.articlesService.findById(articleId);
+
+    // 4. Handle edge cases
+    if (!article) {
+      throw new NotFoundException('Article not found');
+    }
+
+    // 5. The core business rule: Is the user the author?
+    if (article.authorId !== user.id) {
+       // Throwing ForbiddenException allows us to provide a custom message
+       throw new ForbiddenException('You can only edit your own articles');
+    }
+
+    // Pass!
+    return true;
+  }
+}
+```
+
+### Applying the Custom Guard
+You apply it just like any other guard, making sure it executes *after* authentication.
+
+```typescript
+@Controller('articles')
+export class ArticlesController {
+  
+  @Patch(':articleId')
+  // 1. AuthGuard ensures the user is logged in
+  // 2. ArticleOwnerGuard ensures the user owns the specific article
+  @UseGuards(JwtAuthGuard, ArticleOwnerGuard)
+  updateArticle(@Param('articleId') id: string, @Body() updateDto: any) {
+    return 'Article updated!';
+  }
+}
+```
+
+## Best Practices
+- **Performance Considerations**: If your custom guard queries the database to fetch an `Article`, and then your Controller method *also* queries the database to fetch the exact same `Article` to update it, you are making duplicate DB calls. A clever trick is to have the Guard mutate the request object by attaching the fetched entity (e.g., `request.article = article;`), allowing the controller to skip the DB lookup!
+- **Keep Logic Granular**: Don't build one massive guard that checks if a user owns an article, or a comment, or a profile. Build small, specific guards (`ArticleOwnerGuard`, `CommentOwnerGuard`) to maximize reusability.

@@ -1,0 +1,102 @@
+---
+title: "CORS"
+description: "CORS in NestJS"
+importance: "LOW"
+revisionTime: 5
+category: "NestJS"
+subcategory: "Security"
+order: 2550
+---
+
+*Cross-Origin Resource Sharing (CORS) is a browser security mechanism that restricts web pages from making HTTP requests to a different domain than the one that served the web page.*
+
+## Overview
+If a user is logged into their bank (`bank.com`), and they visit a malicious website (`evil.com`), the malicious website could try to execute a background AJAX script: `fetch('https://bank.com/transfer?amount=1000')`.
+
+To prevent this, browsers enforce the **Same-Origin Policy**. By default, `evil.com` cannot read data from `bank.com`'s API. 
+
+However, in modern architectures, your frontend might be hosted on `https://my-app.vercel.app` while your NestJS API is hosted on `https://api.my-app.com`. Because the domains are different, the browser will block the frontend from talking to the API! You must explicitly configure CORS in NestJS to tell the browser: *"It is okay for my-app.vercel.app to access this API."*
+
+## Key Concepts
+- **Origin**: A combination of the protocol, domain, and port (e.g., `https://example.com:443`). `http://example.com` and `https://example.com` are *different* origins.
+- **Preflight Request**: For complex requests (like `POST` or requests with custom headers), the browser first sends an `OPTIONS` request to the API to ask for permission. The API must respond with allowed origins and methods before the browser sends the actual `POST` request.
+- **Access-Control-Allow-Origin**: The primary HTTP header returned by the server that tells the browser which origins are allowed.
+
+## Code Examples
+
+### 1. Enabling Basic CORS (Development)
+The easiest (but least secure) way to enable CORS is to allow all origins. This is fine for public APIs (like a weather API) or local development.
+
+```typescript
+// main.ts
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from './app.module';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+  
+  // Allow all origins (*)
+  app.enableCors();
+  
+  await app.listen(3000);
+}
+bootstrap();
+```
+
+### 2. Strict CORS (Production)
+In production, you must restrict CORS to only your specific frontend domains.
+
+```typescript
+// main.ts
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+  
+  app.enableCors({
+    // Only allow these specific origins
+    origin: [
+      'https://www.my-production-app.com', 
+      'https://my-production-app.com',
+      'http://localhost:3000', // Allow local frontend during development
+    ],
+    // Only allow specific HTTP methods
+    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
+    
+    // Allow the frontend to send custom headers (like Authorization for JWTs)
+    allowedHeaders: 'Content-Type, Accept, Authorization',
+    
+    // Allow cookies to be sent across origins (required if using session cookies)
+    credentials: true, 
+  });
+  
+  await app.listen(3000);
+}
+```
+
+### 3. Dynamic CORS Resolution
+If you are building a SaaS platform where users can connect their own custom domains, you can't hardcode the origins in `main.ts`. You must look them up dynamically (e.g., from a database).
+
+```typescript
+app.enableCors({
+  origin: function (origin, callback) {
+    // Note: 'origin' will be undefined if the request is NOT from a browser 
+    // (e.g. from Postman or a mobile app)
+    if (!origin) {
+      return callback(null, true);
+    }
+    
+    // Check against your database of allowed domains
+    databaseService.checkIfDomainIsAllowed(origin)
+      .then((isAllowed) => {
+        if (isAllowed) {
+          callback(null, true);
+        } else {
+          callback(new Error('Not allowed by CORS'));
+        }
+      });
+  },
+});
+```
+
+## Best Practices
+- **Do not use `*` in Production**: Never use `app.enableCors({ origin: '*' })` unless you are building a completely public API with no sensitive user data. 
+- **CORS does not stop Postman or cURL**: Remember that CORS is entirely enforced by the *browser*. An attacker using Python, Postman, or a terminal can completely ignore CORS. CORS protects your users from malicious websites; it does *not* protect your API from being hacked directly. You still need Authentication and Rate Limiting.

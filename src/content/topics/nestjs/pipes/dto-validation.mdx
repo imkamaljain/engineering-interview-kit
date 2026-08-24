@@ -1,0 +1,97 @@
+---
+title: "DTO Validation"
+description: "DTO Validation in NestJS"
+importance: "HIGH"
+revisionTime: 7
+category: "NestJS"
+subcategory: "Pipes"
+order: 680
+---
+
+*Data Transfer Object (DTO) validation is the process of defining the expected shape and rules of incoming data using TypeScript classes and decorators, enforced by the ValidationPipe.*
+
+## Overview
+In NestJS, a DTO is a simple class that defines how data should be sent over the network. 
+
+By combining DTO classes, the `class-validator` library (for rules), the `class-transformer` library (for type casting), and the built-in `ValidationPipe` (the enforcement engine), Nest provides a robust, declarative validation system that guarantees bad data never reaches your controllers.
+
+## Key Concepts
+- **Declarative Approach**: Validation rules are defined using decorators right next to the properties they validate, keeping the schema unified.
+- **Partial DTOs (Mapped Types)**: NestJS provides utilities to quickly create `Update` DTOs by automatically making all properties of a `Create` DTO optional.
+- **Global Enforcement**: Validation should generally be enforced globally across the entire application to prevent security oversights.
+
+## Code Examples
+
+### Defining a Comprehensive DTO
+This example demonstrates a variety of validation scenarios.
+
+```typescript
+// create-article.dto.ts
+import { 
+  IsString, 
+  IsNotEmpty, 
+  MaxLength, 
+  IsOptional, 
+  IsArray, 
+  IsEnum 
+} from 'class-validator';
+
+enum ArticleStatus {
+  DRAFT = 'draft',
+  PUBLISHED = 'published',
+}
+
+export class CreateArticleDto {
+  // Must be a string, cannot be empty or just whitespace
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(100)
+  title: string;
+
+  // Must be a string, but can be omitted entirely
+  @IsString()
+  @IsOptional()
+  content?: string;
+
+  // Must be an array of strings
+  @IsArray()
+  @IsString({ each: true })
+  tags: string[];
+
+  // Must strictly match one of the enum values
+  @IsEnum(ArticleStatus)
+  status: ArticleStatus;
+}
+```
+
+### Reusing DTOs (Mapped Types)
+When building a `PATCH` endpoint to update an article, you usually want the exact same rules as the `CreateArticleDto`, but every field should be optional. Instead of duplicating the class, use `PartialType`.
+
+```typescript
+// update-article.dto.ts
+import { PartialType } from '@nestjs/mapped-types';
+import { CreateArticleDto } from './create-article.dto';
+
+// UpdateArticleDto inherits all properties and validation decorators from CreateArticleDto,
+// but magically applies @IsOptional() to all of them!
+export class UpdateArticleDto extends PartialType(CreateArticleDto) {}
+```
+*(Note: If you are using `@nestjs/swagger`, import `PartialType` from `@nestjs/swagger` instead of `@nestjs/mapped-types` so the Swagger docs generate correctly).*
+
+### Handling Validation Errors
+When the `ValidationPipe` catches an error, it automatically sends a 400 response formatted like this:
+
+```json
+{
+  "statusCode": 400,
+  "message": [
+    "title must be shorter than or equal to 100 characters",
+    "status must be a valid enum value"
+  ],
+  "error": "Bad Request"
+}
+```
+
+## Best Practices
+- **Classes, not Interfaces**: Always define DTOs as TypeScript `classes`, NOT `interfaces`. Interfaces are stripped away during transpilation and do not exist at runtime. NestJS needs the class to exist at runtime so the `ValidationPipe` can read its decorators and validate the incoming data.
+- **Group DTOs by Feature**: Keep DTOs in a `dto` folder within the feature module (e.g., `src/articles/dto/create-article.dto.ts`).

@@ -1,0 +1,100 @@
+---
+title: "Request Lifecycle"
+description: "Request Lifecycle in NestJS"
+importance: "HIGH"
+revisionTime: 10
+category: "NestJS"
+subcategory: "REST APIs"
+order: 1440
+---
+
+*The Request Lifecycle defines the exact order in which NestJS executes different components (Middlewares, Guards, Interceptors, Pipes, Filters) when an HTTP request enters and leaves the application.*
+
+## Overview
+Understanding the request lifecycle is crucial for debugging NestJS applications. If a user is denied access, you need to know if the request was blocked by a Middleware, a Guard, or an Interceptor.
+
+NestJS has a very rigid, predictable execution order. It provides a robust pipeline to transform, validate, or reject requests before they ever hit your Controller's business logic.
+
+## Key Concepts
+- **Inbound Pipeline**: The steps a request takes *before* hitting the controller method.
+- **Outbound Pipeline**: The steps a response takes *after* the controller method finishes, before being sent to the client.
+- **Global vs. Controller vs. Route**: Components can be applied globally to the whole app, to a specific controller, or to a single route. Global components execute first.
+
+## The Execution Order
+
+When an HTTP request hits a NestJS server, it travels through these layers in this exact order:
+
+### 1. The Inbound Journey (Request)
+1. **Middleware**: (Global -> Module-bound). Excellent for request logging or modifying headers.
+2. **Guards**: (Global -> Controller -> Route). Determine if the request is authorized (e.g., checking JWTs). If a guard returns `false`, a `403 Forbidden` is thrown immediately, and the lifecycle stops.
+3. **Interceptors (Pre-Controller)**: (Global -> Controller -> Route). Can bind extra logic before the controller executes (e.g., starting a performance timer).
+4. **Pipes**: (Global -> Controller -> Route -> Route Parameter). Transform or validate the incoming data (`@Body()`, `@Query()`). If validation fails, a `400 Bad Request` is thrown.
+5. **Controller Method Handler**: Your actual business logic executes!
+
+### 2. The Outbound Journey (Response)
+6. **Interceptors (Post-Controller)**: The interceptor's RxJS `handle().pipe()` stream receives the data returned by the controller. It can map or mutate the response data before sending it out.
+7. **Exception Filters**: If an error was thrown *anywhere* in steps 1-6 (e.g., a Guard threw `UnauthorizedException`, or the Controller threw a database error), the Exception Filter catches it and formats the final error JSON response.
+
+## Code Examples
+
+### Tracing the Lifecycle with Logging
+If you placed `console.log` statements inside these components, this is the order you would see in your terminal:
+
+```typescript
+// 1. Middleware
+export class LoggerMiddleware implements NestMiddleware {
+  use(req: Request, res: Response, next: NextFunction) {
+    console.log('1. Middleware Executing');
+    next();
+  }
+}
+
+// 2. Guard
+@Injectable()
+export class AuthGuard implements CanActivate {
+  canActivate(context: ExecutionContext): boolean {
+    console.log('2. Guard Executing');
+    return true; 
+  }
+}
+
+// 3 & 6. Interceptor
+@Injectable()
+export class LoggingInterceptor implements NestInterceptor {
+  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+    console.log('3. Interceptor (Pre-Controller)');
+    return next.handle().pipe(
+      tap(() => console.log('6. Interceptor (Post-Controller)'))
+    );
+  }
+}
+
+// 4. Pipe
+@Injectable()
+export class ValidationPipe implements PipeTransform {
+  transform(value: any) {
+    console.log('4. Pipe Executing');
+    return value;
+  }
+}
+
+// 5. Controller
+@Controller('cats')
+export class CatsController {
+  @Get()
+  @UseGuards(AuthGuard)
+  @UseInterceptors(LoggingInterceptor)
+  findAll(@Query(ValidationPipe) query: any) {
+    console.log('5. Controller Executing');
+    return 'Cats!';
+  }
+}
+```
+
+## Best Practices
+- **Choose the Right Tool**: 
+  - Need to check permissions? Use a **Guard**. 
+  - Need to validate a JSON body? Use a **Pipe**. 
+  - Need to wrap a response in a `{ data: [...] }` object? Use an **Interceptor**. 
+  - Need to catch unhandled database errors and return clean HTTP errors? Use an **Exception Filter**.
+- **Avoid Middleware for Business Logic**: Middleware sits very low in the stack (closer to raw Express). It doesn't have access to the NestJS `ExecutionContext` (meaning it doesn't know which controller method is about to be called). Therefore, avoid using Middleware for complex authorization; use Guards instead.

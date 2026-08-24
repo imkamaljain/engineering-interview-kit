@@ -1,0 +1,82 @@
+---
+title: "Existing Providers"
+description: "Existing Providers in NestJS"
+importance: "MEDIUM"
+revisionTime: 9
+category: "NestJS"
+subcategory: "Providers & Services"
+order: 500
+---
+
+*Existing Providers (aliasing) allow you to map one dependency token to an already existing provider, ensuring both tokens resolve to the exact same singleton instance.*
+
+## Overview
+Sometimes you need to expose the same physical object under two different tokens. 
+
+For instance, you might have a `WinstonLoggerService` that implements a generic `LoggerInterface`. Some parts of your app might ask for `WinstonLoggerService` specifically, while other parts just ask for `LoggerInterface`. If you use standard provider registration, Nest will instantiate *two separate copies* of the logger. 
+
+`useExisting` prevents this by creating an alias.
+
+## Key Concepts
+- **`useExisting`**: Creates an alias. When someone asks for the new token, Nest looks up the token provided to `useExisting` and returns that instance instead of creating a new one.
+- **Shared State**: Because it's the exact same instance in memory, any state mutations made by one consumer will be visible to the other.
+
+## Code Examples
+
+### Creating an Alias
+In this example, both `AliasedLoggerService` and `LoggerService` will resolve to the exact same instance in memory.
+
+```typescript
+@Injectable()
+class LoggerService {
+  log(message: string) {
+    console.log(message);
+  }
+}
+
+@Module({
+  providers: [
+    // 1. Register the original provider normally
+    LoggerService,
+    // 2. Register the alias
+    {
+      provide: 'AliasedLoggerService', // The new token
+      useExisting: LoggerService,      // Points to the original token
+    },
+  ],
+})
+export class AppModule {}
+```
+
+### Practical Use Case: Abstract Classes as Interfaces
+If you are building a library, you might expose an abstract class `StorageStrategy` that consumers must implement. Inside your library, you ask for `StorageStrategy`.
+
+```typescript
+// 1. The interface/token (Abstract Class)
+export abstract class StorageStrategy {
+  abstract save(data: any): void;
+}
+
+// 2. The concrete implementation (created by the user)
+@Injectable()
+export class S3StorageService implements StorageStrategy {
+  save(data: any) { /* save to S3 */ }
+}
+
+@Module({
+  providers: [
+    // We register the concrete class so it can be injected elsewhere in the app
+    S3StorageService,
+    {
+      // But we ALSO map the abstract token to the exact same instance
+      // so the library code can find it!
+      provide: StorageStrategy,
+      useExisting: S3StorageService,
+    }
+  ]
+})
+export class StorageModule {}
+```
+
+## Best Practices
+- **Avoid `useClass` when you mean `useExisting`**: A common mistake when trying to fulfill an abstract class token is using `useClass: ConcreteClass` while *also* providing `ConcreteClass` in the providers array. This results in two separate instances being created, which can cause severe bugs if the class holds state (like a database connection). Use `useExisting` to point to the singleton.

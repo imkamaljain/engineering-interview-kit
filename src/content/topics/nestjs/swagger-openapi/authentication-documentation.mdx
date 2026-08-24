@@ -1,0 +1,110 @@
+---
+title: "Authentication Documentation"
+description: "Authentication Documentation in NestJS"
+importance: "HIGH"
+revisionTime: 5
+category: "NestJS"
+subcategory: "Swagger & OpenAPI"
+order: 1610
+---
+
+*Authentication Documentation ensures that the Swagger UI knows how to securely authenticate requests. It adds the familiar "Authorize" padlock button to the dashboard, allowing developers to paste in a JWT or API Key and test secured endpoints.*
+
+## Overview
+If you have a `@UseGuards(JwtAuthGuard)` on your controller, but you don't tell Swagger about it, anyone using the Swagger UI will just receive `401 Unauthorized` errors when they click "Try it out".
+
+You must configure the Security Scheme in `main.ts` (telling Swagger *how* authentication works), and then apply security decorators to your controllers (telling Swagger *which* endpoints require that authentication).
+
+## Key Concepts
+- **`addBearerAuth()` / `addSecurity()`**: Methods used on the `DocumentBuilder` in `main.ts` to define the global security mechanism (e.g., JWT Bearer tokens, OAuth2, Basic Auth).
+- **`@ApiBearerAuth()`**: A decorator applied to a controller or method to indicate that it requires a Bearer token.
+- **`@ApiSecurity()`**: A decorator used for custom API key headers.
+
+## Code Examples
+
+### 1. Configuring JWT Bearer Auth (Most Common)
+First, define the security scheme globally in your bootstrap function.
+
+```typescript
+// main.ts
+import { NestFactory } from '@nestjs/core';
+import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
+import { AppModule } from './app.module';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+
+  const config = new DocumentBuilder()
+    .setTitle('Secure API')
+    // 1. Define the Bearer Auth mechanism
+    // The default configuration assumes an 'Authorization' header in the format 'Bearer <token>'
+    .addBearerAuth() 
+    .build();
+
+  const document = SwaggerModule.createDocument(app, config);
+  SwaggerModule.setup('docs', app, document);
+
+  await app.listen(3000);
+}
+```
+
+### 2. Securing the Controllers
+Now that Swagger knows *how* to authenticate, you must tell it *where* authentication is required.
+
+```typescript
+// users.controller.ts
+import { Controller, Get, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { JwtAuthGuard } from './jwt-auth.guard';
+
+@ApiTags('Users')
+@Controller('users')
+// 1. The actual NestJS logic to protect the routes
+@UseGuards(JwtAuthGuard) 
+// 2. The Swagger documentation telling the UI to require the Bearer token
+@ApiBearerAuth() 
+export class UsersController {
+  
+  @Get('profile')
+  getProfile() {
+    return 'Secured profile data';
+  }
+}
+```
+*Note: In the Swagger UI, every endpoint in this controller will now have a little padlock icon next to it.*
+
+### 3. Configuring API Key Authentication
+If your API uses a custom header (like `X-API-KEY`) instead of a JWT, you define it using `addSecurity`.
+
+```typescript
+// main.ts
+const config = new DocumentBuilder()
+  .setTitle('Public API')
+  // Define a custom security scheme named 'api-key'
+  .addSecurity('api-key', {
+    type: 'apiKey',
+    in: 'header',
+    name: 'X-API-KEY', // The actual header name
+  })
+  .build();
+```
+
+```typescript
+// public.controller.ts
+import { Controller, Get } from '@nestjs/common';
+import { ApiSecurity } from '@nestjs/swagger';
+
+@Controller('public')
+// Require the 'api-key' security scheme defined in main.ts
+@ApiSecurity('api-key') 
+export class PublicController {
+  @Get('data')
+  getData() {
+    return 'Data fetched with API key';
+  }
+}
+```
+
+## Best Practices
+- **Match Guards with Documentation**: A common bug is applying `@UseGuards(JwtAuthGuard)` but forgetting `@ApiBearerAuth()`. This makes testing via Swagger impossible. Consider writing an E2E test or using custom decorators to bundle the Guard and the Swagger metadata together (e.g., `@Auth()` that applies both).
+- **Public Routes in Secured Controllers**: If you apply `@ApiBearerAuth()` to a whole controller, but have one public route (like `/login`), you need to tell Swagger that specific route doesn't need auth. Unfortunately, OpenAPI doesn't have a simple `@ApiPublic()` decorator. You either move the public route to a different controller, or you manually override the security requirements on that specific method using `@ApiSecurity([])` (an empty array).

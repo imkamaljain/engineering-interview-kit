@@ -1,0 +1,106 @@
+---
+title: "Prisma"
+description: "Prisma in NestJS"
+importance: "LOW"
+revisionTime: 14
+category: "NestJS"
+subcategory: "Database & ORM"
+order: 1240
+---
+
+*Prisma is a Next-Generation ORM that replaces traditional Class-based Entities (like TypeORM) with a custom declarative schema file, providing arguably the best Type-Safety experience in the Node.js ecosystem.*
+
+## Overview
+Unlike TypeORM, where your database schema is defined using TypeScript decorators (`@Column()`), Prisma requires you to define your schema in a special `.prisma` file. 
+
+Prisma then reads this file and auto-generates a fully-typed TypeScript client (the Prisma Client). This means if you rename a column in your `.prisma` file, your TypeScript compiler will immediately throw errors everywhere in your code that referenced the old column name. There are no "magic strings".
+
+## Key Concepts
+- **`schema.prisma`**: The single source of truth for your database connection, data models, and relations.
+- **Prisma Client**: An auto-generated query builder tailored exactly to your schema.
+- **Migrations**: Prisma has a built-in migration system (`prisma migrate`) that is generally considered easier to use than TypeORM's.
+
+## Code Examples
+
+### 1. The Prisma Schema
+This is not TypeScript. This is Prisma's custom domain-specific language.
+
+```prisma
+// schema.prisma
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  email     String   @unique
+  name      String?  // Optional (nullable) field
+  posts     Post[]   // One-to-many relationship
+  createdAt DateTime @default(now())
+}
+
+model Post {
+  id       Int    @id @default(autoincrement())
+  title    String
+  authorId Int
+  author   User   @relation(fields: [authorId], references: [id])
+}
+```
+
+### 2. Integrating Prisma into NestJS
+Unlike TypeORM, there is no official `@nestjs/prisma` module. You simply create a standard NestJS Service that instantiates the generated `PrismaClient`.
+
+```typescript
+// prisma.service.ts
+import { Injectable, OnModuleInit } from '@nestjs/common';
+import { PrismaClient } from '@prisma/client';
+
+@Injectable()
+export class PrismaService extends PrismaClient implements OnModuleInit {
+  // Connect to the database when the NestJS application starts
+  async onModuleInit() {
+    await this.$connect();
+  }
+}
+```
+
+### 3. Querying with Prisma
+Notice how incredibly type-safe the queries are. There are no repositories to inject; you just inject the `PrismaService` and access the models directly as properties.
+
+```typescript
+// users.service.ts
+import { Injectable } from '@nestjs/common';
+import { PrismaService } from './prisma.service';
+import { User, Prisma } from '@prisma/client';
+
+@Injectable()
+export class UsersService {
+  constructor(private prisma: PrismaService) {}
+
+  async createUser(data: Prisma.UserCreateInput): Promise<User> {
+    // Autocomplete will know exactly what 'data' needs to contain based on the schema!
+    return this.prisma.user.create({
+      data,
+    });
+  }
+
+  async findUsersWithPosts() {
+    // Prisma will return an array of Users, and TypeScript will automatically
+    // know that each user object contains a 'posts' array.
+    return this.prisma.user.findMany({
+      where: { email: { endsWith: '@gmail.com' } },
+      include: { posts: true }, // Joins the Post table
+    });
+  }
+}
+```
+
+## Best Practices
+- **Use `Prisma.*Input` Types**: When building DTOs or Service methods, rely on the auto-generated types provided by Prisma (e.g., `Prisma.UserCreateInput`) rather than manually re-typing interfaces.
+- **Connection Pooling**: If you are deploying your NestJS app in a Serverless environment (like AWS Lambda), Prisma creates a new DB connection on every request, which will quickly crash your database. You must use Prisma Accelerate (or a tool like PgBouncer) to handle connection pooling.

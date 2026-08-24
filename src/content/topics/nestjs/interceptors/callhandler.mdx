@@ -1,0 +1,71 @@
+---
+title: "CallHandler"
+description: "CallHandler in NestJS"
+importance: "LOW"
+revisionTime: 8
+category: "NestJS"
+subcategory: "Interceptors"
+order: 810
+---
+
+*The `CallHandler` interface is the second argument passed to an Interceptor's `intercept()` method. It provides the crucial `handle()` method which actually invokes the route handler.*
+
+## Overview
+When an interceptor executes, it pauses the request lifecycle. The controller method *will not run* unless you explicitly tell NestJS to continue. 
+
+The `CallHandler` is the object that allows you to resume execution. When you call `next.handle()`, NestJS proceeds to execute the controller method. The `handle()` method returns an RxJS `Observable` that contains the data returned by the controller.
+
+## Key Concepts
+- **`next.handle()`**: The trigger that invokes the controller method.
+- **RxJS Observable**: The return value of `handle()` is always an Observable. This is what allows Interceptors to manipulate the response *after* the controller has finished executing.
+- **Circuit Breaking (Skipping)**: If you do not call `next.handle()` (e.g., you return `of(cachedData)` instead), the controller method is entirely skipped.
+
+## Code Examples
+
+### The Default Behavior (Pass-Through)
+If your interceptor doesn't need to do anything, it still *must* return the result of `next.handle()`.
+
+```typescript
+import { Injectable, NestInterceptor, ExecutionContext, CallHandler } from '@nestjs/common';
+import { Observable } from 'rxjs';
+
+@Injectable()
+export class PassThroughInterceptor implements NestInterceptor {
+  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+    
+    // We are simply invoking the controller and returning its result.
+    // If we forget to return next.handle(), the request hangs forever!
+    return next.handle();
+  }
+}
+```
+
+### Skipping the Controller (Circuit Breaking)
+Interceptors can bypass the controller completely. This is exactly how caching interceptors work.
+
+```typescript
+import { Injectable, NestInterceptor, ExecutionContext, CallHandler } from '@nestjs/common';
+import { Observable, of } from 'rxjs';
+
+@Injectable()
+export class CacheInterceptor implements NestInterceptor {
+  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+    
+    const isCached = true; // Pretend we checked a Redis cache
+
+    if (isCached) {
+      // 1. DO NOT call next.handle()
+      // 2. Instead, wrap our cached data in an RxJS Observable using 'of()'
+      // 3. The controller method is NEVER executed!
+      return of({ data: 'This came from the cache!' });
+    }
+
+    // If not cached, proceed normally
+    return next.handle();
+  }
+}
+```
+
+## Best Practices
+- **Don't Forget to Return**: The most common mistake when writing interceptors is calling `next.handle()` but forgetting to `return` it. This will cause the HTTP request to hang until it times out, because Nest is waiting for the Observable to resolve.
+- **Handling Promises**: If your interceptor needs to do asynchronous work *before* calling the controller (like checking a database), the `intercept()` method itself can be `async`. Wait for your DB call, and then `return next.handle()`. The return signature will automatically be understood by NestJS.

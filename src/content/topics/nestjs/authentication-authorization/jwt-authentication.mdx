@@ -1,0 +1,80 @@
+---
+title: "JWT Authentication"
+description: "JWT Authentication in NestJS"
+importance: "LOW"
+revisionTime: 6
+category: "NestJS"
+subcategory: "Authentication & Authorization"
+order: 1100
+---
+
+*JSON Web Token (JWT) Authentication is the industry standard for securing stateless REST APIs. It involves issuing a signed token to a user upon login, which they must present on subsequent requests.*
+
+## Overview
+In a traditional session-based app, the server stores a session ID in memory or a database. In a stateless JWT architecture, the server stores *nothing*. 
+
+When a user logs in, the server creates a JSON object containing the user's ID and roles, cryptographically signs it with a secret key, and sends it to the client. The client saves this string (the JWT) and sends it back in the `Authorization: Bearer <token>` header on every request. The server verifies the signature, and if valid, trusts the data inside the token.
+
+## Key Concepts
+- **Stateless**: The server does not need to query a database to verify a JWT; the cryptographic signature guarantees the token hasn't been tampered with.
+- **The Payload**: The data inside the token (e.g., `{ sub: 1, email: "test@test.com" }`). It is encoded in Base64, *not encrypted*. Anyone can read the payload, but they cannot modify it without breaking the signature.
+- **The `@nestjs/jwt` Module**: A dedicated NestJS wrapper around the `jsonwebtoken` library, used for generating and signing tokens.
+
+## Code Examples
+
+### 1. Generating a JWT (The Login Flow)
+This typically happens in your `AuthService` after a user successfully proves their password is correct.
+
+```typescript
+import { Injectable } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
+
+@Injectable()
+export class AuthService {
+  constructor(private jwtService: JwtService) {}
+
+  // Assume this is called after validating the user's password
+  async generateToken(user: any) {
+    
+    // 1. Define the payload. 'sub' (subject) is the standard claim for the User ID.
+    const payload = { 
+      email: user.email, 
+      sub: user.id,
+      role: user.role 
+    };
+
+    // 2. Sign the token using the JwtService
+    // (The secret key is configured in the JwtModule setup)
+    const accessToken = this.jwtService.sign(payload);
+
+    return {
+      access_token: accessToken,
+    };
+  }
+}
+```
+
+### 2. Configuring the JWT Module
+You must configure the module with a secret key and an expiration time.
+
+```typescript
+import { Module } from '@nestjs/common';
+import { JwtModule } from '@nestjs/jwt';
+import { AuthService } from './auth.service';
+
+@Module({
+  imports: [
+    JwtModule.register({
+      secret: 'YOUR_SUPER_SECRET_KEY_HERE', // In production, use ConfigService to load from .env!
+      signOptions: { expiresIn: '60m' },    // Token expires in 60 minutes
+    }),
+  ],
+  providers: [AuthService],
+})
+export class AuthModule {}
+```
+
+## Best Practices
+- **Keep Payloads Small**: Every byte you put in the JWT payload is sent back and forth on every single HTTP request. Do not put entire user profiles in the token. Usually, the `sub` (User ID), `role`, and maybe an `email` are all you need.
+- **Security**: Because the payload is merely encoded (not encrypted), **NEVER** put sensitive information like passwords, social security numbers, or API keys inside a JWT payload.
+- **Expiration**: JWTs cannot easily be revoked once issued. Always set a short expiration time (e.g., 15 minutes to 1 hour) and use a Refresh Token mechanism to issue new ones.

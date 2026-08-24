@@ -1,0 +1,98 @@
+---
+title: "Cache Interceptors"
+description: "Cache Interceptors in NestJS"
+importance: "MEDIUM"
+revisionTime: 11
+category: "NestJS"
+subcategory: "Caching"
+order: 2140
+---
+
+*Cache Interceptors provide a declarative, automatic way to cache HTTP responses in NestJS using decorators, eliminating the need to manually write `.get()` and `.set()` logic in your services.*
+
+## Overview
+While injecting `CACHE_MANAGER` gives you granular control, it pollutes your business logic with caching boilerplate. 
+
+NestJS provides a built-in `CacheInterceptor`. When applied to a controller route, it intercepts the incoming HTTP request. It checks if a cached response exists for the URL; if yes, it returns it immediately. If not, it lets the controller execute, catches the response on the way out, saves it to the cache, and then returns it to the user.
+
+## Key Concepts
+- **`@UseInterceptors(CacheInterceptor)`**: The decorator used to enable automatic caching on a controller or specific route.
+- **Auto-generated Cache Keys**: By default, the `CacheInterceptor` uses the HTTP request URL (e.g., `/users/123`) as the cache key.
+- **GET requests only**: By default, the interceptor only caches `GET` requests. It ignores `POST`, `PUT`, `PATCH`, and `DELETE`.
+
+## Code Examples
+
+### 1. Auto-Caching a Route
+Simply apply the interceptor. Ensure `CacheModule` is registered in your application.
+
+```typescript
+import { Controller, Get, UseInterceptors } from '@nestjs/common';
+import { CacheInterceptor, CacheTTL } from '@nestjs/cache-manager';
+
+@Controller('stats')
+@UseInterceptors(CacheInterceptor) // Applies to all routes in this controller
+export class StatsController {
+  
+  @Get('global')
+  // Automatically caches the response under the key '/stats/global'
+  getGlobalStats() {
+    return { users: 1000, revenue: 5000 }; 
+  }
+
+  @Get('heavy')
+  @CacheTTL(10000) // Override the default TTL just for this route (10 seconds)
+  getHeavyQuery() {
+    return this.expensiveDatabaseCall();
+  }
+}
+```
+
+### 2. Custom Cache Keys
+If you want to cache a response, but don't want the key to be the raw URL, you can use the `@CacheKey()` decorator.
+
+```typescript
+import { Controller, Get, UseInterceptors } from '@nestjs/common';
+import { CacheInterceptor, CacheKey, CacheTTL } from '@nestjs/cache-manager';
+
+@Controller('config')
+export class ConfigController {
+
+  @Get()
+  @UseInterceptors(CacheInterceptor)
+  @CacheKey('app_global_configuration') // The exact string used in Redis/Memory
+  @CacheTTL(3600000) // 1 hour
+  getConfig() {
+    return { theme: 'dark', language: 'en' };
+  }
+}
+```
+
+### 3. Dynamic Custom Keys (Custom Interceptor)
+Sometimes the URL isn't enough. What if the response depends on the `Authorization` header (User A sees different data than User B on the same URL)? You must subclass the `CacheInterceptor` and override `trackBy`.
+
+```typescript
+import { Injectable, ExecutionContext, CallHandler } from '@nestjs/common';
+import { CacheInterceptor } from '@nestjs/cache-manager';
+
+@Injectable()
+export class HttpUserCacheInterceptor extends CacheInterceptor {
+  trackBy(context: ExecutionContext): string | undefined {
+    const request = context.switchToHttp().getRequest();
+    const userId = request.user?.id;
+    const url = request.url;
+
+    // If there is no user, skip caching entirely by returning undefined
+    if (!userId) {
+      return undefined; 
+    }
+
+    // Cache key: userId-123:/dashboard
+    return `userId-${userId}:${url}`; 
+  }
+}
+```
+Apply it like this: `@UseInterceptors(HttpUserCacheInterceptor)`
+
+## Best Practices
+- **Beware of Query Parameters**: By default, `/users?sort=asc` and `/users?sort=desc` will generate *different* cache keys because the URLs are different. This is usually what you want. However, if a user sends `/users?random=12345`, it generates a new cache entry, which can easily be abused to flood your cache (Cache Poisoning / Memory Exhaustion). 
+- **Don't Cache Authenticated Routes Globally**: If you apply `CacheInterceptor` to a route that returns personal user data (like `/profile`), the first person who hits it will cache *their* profile under the key `/profile`. The next person who hits `/profile` will see the first person's data! You MUST use a custom `trackBy` method (as shown in Example 3) to append the User ID to the cache key for authenticated routes.

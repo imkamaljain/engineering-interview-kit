@@ -1,0 +1,72 @@
+---
+title: "class-transformer"
+description: "class-transformer in NestJS"
+importance: "MEDIUM"
+revisionTime: 7
+category: "NestJS"
+subcategory: "Validation & DTOs"
+order: 1010
+---
+
+*`class-transformer` is the engine that converts plain JavaScript objects (like parsed JSON) into real instances of TypeScript classes, and vice versa.*
+
+## Overview
+When an HTTP request arrives, the Express/Fastify layer parses the incoming JSON body. The result is a "plain" JavaScript object. Even if you type-hint your controller method with `@Body() dto: CreateUserDto`, the object at runtime is *not* actually an instance of `CreateUserDto`. It doesn't have any of the class methods, and more importantly, `class-validator` cannot read its decorators!
+
+The `ValidationPipe` uses `class-transformer` under the hood to perform "instantiation". It takes the plain JSON object and transforms it into a real, breathing instance of your DTO class.
+
+## Key Concepts
+- **Transformation**: Converting plain objects to class instances (`plainToInstance()`) and class instances to plain objects (`instanceToPlain()`).
+- **Data Casting**: Converting strings to numbers, dates, or booleans based on metadata.
+- **Serialization**: Controlling which properties are exposed or hidden when sending data back to the client.
+
+## Code Examples
+
+### The Type Decorator (Nested Objects)
+The most important decorator in `class-transformer` is `@Type()`. If your DTO contains *another* custom class or an array of custom classes, you must explicitly tell `class-transformer` what type to cast the nested objects into.
+
+```typescript
+import { ValidateNested, IsString } from 'class-validator';
+import { Type } from 'class-transformer';
+
+class AddressDto {
+  @IsString()
+  street: string;
+}
+
+export class CreateUserDto {
+  @IsString()
+  username: string;
+
+  // We must tell the transformer: "Hey, this nested object should 
+  // be instantiated as an AddressDto!"
+  @ValidateNested() // (From class-validator) Enforces validation on the nested object
+  @Type(() => AddressDto) // (From class-transformer) Actually creates the nested instance
+  address: AddressDto;
+}
+```
+
+### Type Casting (The `@Transform` Decorator)
+Sometimes you need to mutate the incoming data before validation occurs. The `@Transform` decorator intercepts the value.
+
+```typescript
+import { Transform } from 'class-transformer';
+import { IsBoolean, IsString } from 'class-validator';
+
+export class UpdateSettingsDto {
+  // A client might send { "wantsNewsletter": "true" } (a string).
+  // We can force it into a boolean before validation happens.
+  @Transform(({ value }) => value === 'true' || value === true)
+  @IsBoolean()
+  wantsNewsletter: boolean;
+
+  // We can automatically trim whitespace from strings
+  @Transform(({ value }) => value?.trim())
+  @IsString()
+  firstName: string;
+}
+```
+
+## Best Practices
+- **Always use `@Type()` for nested objects**: If you have a nested object in a DTO and you only use `@ValidateNested()` but forget `@Type()`, the validation will silently fail to execute on the nested properties because they were never transformed into the target class.
+- **Enable Implicit Conversion**: Instead of using `@Type(() => Number)` on every single numeric property in your DTOs, configure your global `ValidationPipe` with `transformOptions: { enableImplicitConversion: true }`. This tells `class-transformer` to look at the TypeScript type (`price: number`) and automatically attempt the conversion.

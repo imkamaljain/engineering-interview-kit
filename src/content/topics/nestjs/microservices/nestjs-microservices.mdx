@@ -1,0 +1,92 @@
+---
+title: "NestJS Microservices"
+description: "NestJS Microservices in NestJS"
+importance: "LOW"
+revisionTime: 6
+category: "NestJS"
+subcategory: "Microservices"
+order: 1770
+---
+
+*The `@nestjs/microservices` package is a dedicated, built-in module that provides an abstract layer for building distributed applications, allowing developers to switch communication protocols (like TCP, Redis, or Kafka) with minimal code changes.*
+
+## Overview
+Standard NestJS applications are HTTP-based. They listen on a port (e.g., 3000) and respond to REST or GraphQL requests.
+
+NestJS Microservices operate differently. Instead of relying on standard HTTP routing (`@Get()`, `@Post()`), they rely on message routing (`@MessagePattern()`, `@EventPattern()`). They connect to a "Transporter" (a message broker or network protocol) and wait for specific messages to arrive.
+
+## Key Concepts
+- **Driver Agnostic**: The true power of NestJS Microservices is abstraction. You can write your business logic once, and expose it over TCP, Redis, RabbitMQ, Kafka, gRPC, or MQTT simply by changing a configuration object.
+- **Client and Server**: In a microservice architecture, an application often acts as both. It is a "Server" listening for incoming messages, and a "Client" sending messages to other microservices.
+- **Microservice Bootstrap**: You use `NestFactory.createMicroservice()` instead of the standard `NestFactory.create()`.
+
+## Code Examples
+
+### 1. Installation
+To get started, install the microservices package.
+`npm i @nestjs/microservices`
+
+### 2. Bootstrapping a Microservice
+A microservice does not use an Express or Fastify HTTP server. It binds directly to a transporter.
+
+```typescript
+// main.ts
+import { NestFactory } from '@nestjs/core';
+import { MicroserviceOptions, Transport } from '@nestjs/microservices';
+import { AppModule } from './app.module';
+
+async function bootstrap() {
+  // 1. Use createMicroservice instead of create
+  const app = await NestFactory.createMicroservice<MicroserviceOptions>(
+    AppModule,
+    {
+      // 2. Define the transport mechanism (TCP is the default and simplest)
+      transport: Transport.TCP,
+      options: {
+        host: '127.0.0.1',
+        port: 8877, // The microservice listens on this port
+      },
+    },
+  );
+  
+  // 3. Start listening for incoming messages
+  await app.listen();
+  console.log('Microservice is listening');
+}
+bootstrap();
+```
+
+### 3. Hybrid Applications (HTTP + Microservice)
+Often, a service needs to expose a public REST API to the frontend *and* a private Microservice port to talk to other backend services. This is called a Hybrid Application.
+
+```typescript
+// main.ts
+import { NestFactory } from '@nestjs/core';
+import { MicroserviceOptions, Transport } from '@nestjs/microservices';
+import { AppModule } from './app.module';
+
+async function bootstrap() {
+  // 1. Create a standard HTTP application
+  const app = await NestFactory.create(AppModule);
+
+  // 2. Connect a microservice listener to the same NestJS context
+  app.connectMicroservice<MicroserviceOptions>({
+    transport: Transport.TCP,
+    options: { port: 8877 },
+  });
+
+  // 3. Start ALL microservices connected to this app
+  await app.startAllMicroservices();
+  
+  // 4. Start the HTTP server
+  await app.listen(3000);
+  
+  console.log('HTTP Server running on 3000');
+  console.log('Microservice listening on 8877');
+}
+bootstrap();
+```
+
+## Best Practices
+- **Use Hybrid Apps for Gateways**: The most common architecture is an "API Gateway" (a standard NestJS HTTP app) that receives requests from the frontend. This Gateway is configured as a Hybrid app, which then acts as a *Client* to forward those requests to internal microservices via TCP or Redis.
+- **Shared Interfaces**: When building microservices, the biggest challenge is keeping data types (DTOs and Interfaces) synchronized between the Client and the Server. Create a separate NPM package or a monorepo shared library containing your DTOs so both microservices can import the exact same TypeScript definitions.

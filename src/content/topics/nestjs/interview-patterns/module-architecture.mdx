@@ -1,0 +1,76 @@
+---
+title: "Module Architecture"
+description: "Module Architecture in NestJS"
+importance: "MEDIUM"
+revisionTime: 14
+category: "NestJS"
+subcategory: "Interview Patterns"
+order: 2950
+---
+
+*Module Architecture is the foundation of organizing a NestJS application. It forces developers to divide their application into cohesive blocks of functionality, promoting encapsulation and reusability.*
+
+## Overview
+Unlike Express, where you can easily dump all routes and logic into a massive `server.js` file, NestJS strictly enforces modularity. Every NestJS application has at least one module (the root `AppModule`). 
+
+A Module is a class annotated with `@Module()`. It acts as a container that groups related components (Controllers, Services, Repositories) together. Crucially, a Module defines an **encapsulation boundary**. By default, everything inside a module is private to that module unless explicitly exported.
+
+## Key Concepts
+- **`imports`**: Other modules that this module depends on. If `UserModule` needs to use a service from `AuthModule`, it must import `AuthModule`.
+- **`providers`**: The services, repositories, and factories instantiated by the NestJS injector that are available *only* within this module.
+- **`controllers`**: The HTTP routing classes that belong to this module.
+- **`exports`**: The subset of `providers` that are made public. If `AuthModule` exports `AuthService`, any module that imports `AuthModule` can now inject `AuthService`.
+
+## Code Examples
+
+### 1. Basic Feature Module
+This is a standard feature module that encapsulates all logic related to Users.
+
+```typescript
+// users/users.module.ts
+import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { UsersController } from './users.controller';
+import { UsersService } from './users.service';
+import { User } from './user.entity';
+import { PasswordService } from './password.service'; // A private helper
+
+@Module({
+  // Import external modules (like the TypeORM entity configuration)
+  imports: [TypeOrmModule.forFeature([User])],
+  
+  // Register the controllers to expose HTTP routes
+  controllers: [UsersController],
+  
+  // Register the services used in this module
+  providers: [UsersService, PasswordService],
+  
+  // Expose ONLY the UsersService to the rest of the application
+  // PasswordService remains private and cannot be injected elsewhere
+  exports: [UsersService],
+})
+export class UsersModule {}
+```
+
+### 2. The Core Module Pattern (Anti-pattern vs Best Practice)
+In older Angular/NestJS apps, it was common to create a massive `CoreModule` or `SharedModule` that exported everything, and import it everywhere. This is now considered an anti-pattern as it leads to bloated modules and circular dependencies.
+
+Instead, NestJS provides the `@Global()` decorator. If a module is decorated with `@Global()`, its exports are available everywhere without needing to be explicitly imported in other modules' `imports` arrays.
+
+```typescript
+// database/database.module.ts
+import { Module, Global } from '@nestjs/common';
+import { DatabaseService } from './database.service';
+
+@Global() // Makes DatabaseService available application-wide
+@Module({
+  providers: [DatabaseService],
+  exports: [DatabaseService],
+})
+export class DatabaseModule {}
+```
+
+## Best Practices
+- **Feature Modules**: Group code by feature domain (e.g., `AuthModule`, `OrdersModule`, `UsersModule`), not by technical type (do not create a `ControllersModule` and a `ServicesModule`).
+- **Use `@Global()` Sparingly**: Only use `@Global()` for fundamental infrastructure that is truly required everywhere (like a Database connection, Logger, or Configuration service). Overusing it destroys the encapsulation benefits of modules and makes it hard to understand where dependencies are coming from.
+- **Avoid Circular Dependencies**: If `ModuleA` imports `ModuleB`, and `ModuleB` imports `ModuleA`, NestJS will fail to start. You can fix this using `forwardRef()`, but a circular dependency usually indicates a flaw in your architectural design. You should instead extract the shared logic into a new `ModuleC` that both A and B can import.

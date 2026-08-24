@@ -1,0 +1,84 @@
+---
+title: "ConfigService"
+description: "ConfigService in NestJS"
+importance: "HIGH"
+revisionTime: 5
+category: "NestJS"
+subcategory: "Configuration"
+order: 1370
+---
+
+*The `ConfigService` is the injectable provider that gives you access to the parsed environment variables throughout your application.*
+
+## Overview
+Once the `ConfigModule` is registered, the `ConfigService` becomes available via Dependency Injection. You inject it into your controllers, services, or even other modules to retrieve configuration values.
+
+It is superior to `process.env` because it provides type casting (e.g., converting a string "3000" into a number `3000`), allows for default fallback values, and can throw errors if a required variable is missing.
+
+## Key Concepts
+- **Type Hinting**: `configService.get<T>('KEY')` allows you to tell TypeScript what type you expect the variable to be.
+- **Default Values**: `configService.get('KEY', 'default_value')` provides a fallback if the key is missing in the `.env` file.
+- **`infer: true`**: A powerful TypeScript feature that infers nested configuration types.
+
+## Code Examples
+
+### 1. Basic Retrieval and Type Casting
+Notice how we can cast the `PORT` from a string to a number.
+
+```typescript
+import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+
+@Injectable()
+export class EmailService {
+  constructor(private configService: ConfigService) {}
+
+  sendEmail() {
+    // 1. Get a string
+    const apiKey = this.configService.get<string>('SENDGRID_API_KEY');
+
+    // 2. Get a number with a default fallback if the variable doesn't exist
+    const maxRetries = this.configService.get<number>('EMAIL_RETRIES', 3);
+
+    // 3. Get a boolean (e.g., if LOG_EMAILS=true)
+    const shouldLog = this.configService.get<boolean>('LOG_EMAILS');
+  }
+}
+```
+
+### 2. Async Configuration in Modules (The `forRootAsync` Pattern)
+You often need environment variables *before* a service is instantiated—specifically when configuring third-party modules like databases or cache servers in your `AppModule`.
+
+You cannot just use `process.env` here (it defeats the purpose of the ConfigModule). Instead, you use the `useFactory` pattern to inject the `ConfigService` into the module's setup phase.
+
+```typescript
+import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+
+@Module({
+  imports: [
+    ConfigModule.forRoot({ isGlobal: true }),
+    
+    // Using forRootAsync instead of forRoot!
+    TypeOrmModule.forRootAsync({
+      imports: [ConfigModule], // Tell TypeORM to import the ConfigModule
+      inject: [ConfigService], // Inject the ConfigService into the factory
+      
+      // The factory receives the ConfigService and returns the configuration object
+      useFactory: (configService: ConfigService) => ({
+        type: 'postgres',
+        host: configService.get<string>('DATABASE_HOST'),
+        port: configService.get<number>('DATABASE_PORT'),
+        username: configService.get<string>('DATABASE_USER'),
+        password: configService.get<string>('DATABASE_PASS'),
+      }),
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+## Best Practices
+- **Fail Fast**: If your application *absolutely requires* an environment variable to function (like `DATABASE_URL`), don't just provide a default value or wait for a runtime crash later. Use Configuration Validation (via Joi or class-validator) to ensure the app fails to start immediately if the variable is missing.
+- **Infer `true` for nested configs**: If you are using Custom Configuration files (namespaces), you can use `this.configService.get('database.host', { infer: true })` to get full TypeScript autocomplete for nested properties, preventing typos in the key strings.

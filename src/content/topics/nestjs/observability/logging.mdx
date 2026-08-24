@@ -1,0 +1,103 @@
+---
+title: "Logging"
+description: "Logging in NestJS"
+importance: "LOW"
+revisionTime: 8
+category: "NestJS"
+subcategory: "Observability"
+order: 2800
+---
+
+*Logging is the practice of recording events, errors, and system status during the runtime of an application. It is the first and most critical pillar of Observability.*
+
+## Overview
+Using `console.log()` might be fine for a tiny script, but in a production API handling thousands of requests, standard console outputs are insufficient. You need severity levels (Info vs Error), timestamps, context, and the ability to route those logs to external aggregation tools (like Datadog, ELK, or CloudWatch).
+
+NestJS provides a built-in `Logger` class that wraps the underlying `console` methods but adds context, coloring, and timestamps. It also serves as a dependency injection-friendly interface that can be replaced with custom, more powerful logging libraries (like Pino or Winston) in production.
+
+## Key Concepts
+- **Log Levels**: 
+  - `Fatal` / `Error`: The application cannot proceed or a user-facing request failed.
+  - `Warn`: Something unexpected happened, but the application recovered.
+  - `Info`: General operational events (e.g., "Server started on port 3000").
+  - `Debug`: Detailed information useful during development, usually disabled in production.
+  - `Verbose`: Highly granular, step-by-step tracing.
+- **Context**: Every log message should have a context (usually the name of the class emitting the log) so you know exactly where it came from.
+
+## Code Examples
+
+### 1. Using the Built-in Logger
+The easiest way to log is to instantiate the `Logger` class within your service, passing the class name as the context.
+
+```typescript
+import { Injectable, Logger } from '@nestjs/common';
+
+@Injectable()
+export class UsersService {
+  // 1. Instantiate the logger with the class name as the context
+  private readonly logger = new Logger(UsersService.name);
+
+  async createUser(email: string) {
+    this.logger.log(`Attempting to create user with email: ${email}`);
+
+    try {
+      const user = await this.db.save(email);
+      // Info level
+      this.logger.log(`Successfully created user ${user.id}`); 
+      return user;
+    } catch (error) {
+      // Error level - include the error stack trace if possible
+      this.logger.error(`Failed to create user ${email}`, error.stack);
+      throw error;
+    }
+  }
+}
+```
+*Output:*
+`[Nest] 12345  - 10/25/2023, 10:00:00 AM     LOG [UsersService] Successfully created user 1`
+
+### 2. Transient Scope Logger (Alternative)
+Instead of instantiating `Logger` manually, you can inject it. However, if you inject it normally, you lose the Class Context. You must make the provider `Transient` so NestJS creates a new instance for every class that injects it.
+
+```typescript
+import { Injectable, Logger } from '@nestjs/common';
+
+@Injectable()
+export class OrdersService {
+  // 1. Inject the logger
+  constructor(private readonly logger: Logger) {}
+
+  placeOrder() {
+    // 2. You must manually pass the context as the second argument
+    this.logger.log('Order placed', OrdersService.name);
+  }
+}
+```
+*Note: Because of the boilerplate of passing the context manually, the instantiation approach (Example 1) is usually preferred.*
+
+### 3. Disabling Log Levels in Production
+In development, you want to see `Debug` and `Verbose` logs. In production, they will bloat your logging costs and slow down the app. You can control this in your `main.ts`.
+
+```typescript
+// main.ts
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from './app.module';
+
+async function bootstrap() {
+  const isProduction = process.env.NODE_ENV === 'production';
+
+  const app = await NestFactory.create(AppModule, {
+    // Only show these levels in production
+    logger: isProduction 
+      ? ['log', 'warn', 'error', 'fatal'] 
+      : ['log', 'warn', 'error', 'debug', 'verbose', 'fatal'],
+  });
+
+  await app.listen(3000);
+}
+bootstrap();
+```
+
+## Best Practices
+- **Don't Log PII (Personally Identifiable Information)**: Never log raw passwords, credit card numbers, or full authorization tokens. If an attacker gains access to your logs (e.g., in Datadog), they gain access to your users' accounts. Always mask or redact sensitive fields before logging.
+- **Log Actionable Errors**: If you log an `Error`, someone should probably be paged to fix it. If a user submits a badly formatted email address (400 Bad Request), that is *their* fault, not a server error. That should be a `Warn` or `Info`, not an `Error`.

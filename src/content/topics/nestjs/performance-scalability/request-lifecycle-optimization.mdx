@@ -1,0 +1,92 @@
+---
+title: "Request Lifecycle Optimization"
+description: "Request Lifecycle Optimization in NestJS"
+importance: "LOW"
+revisionTime: 10
+category: "NestJS"
+subcategory: "Performance & Scalability"
+order: 2410
+---
+
+*Request Lifecycle Optimization involves understanding the exact order in which NestJS executes its layers (Middleware -> Guards -> Interceptors -> Pipes -> Controllers) and placing logic in the most efficient location to fail fast and save resources.*
+
+## Overview
+A common performance mistake in NestJS is doing heavy work (like a database query to check permissions) *after* parsing a massive JSON payload, instead of *before*.
+
+If an unauthorized user uploads a 50MB file to your `/video/upload` endpoint, you want to reject that request in 1 millisecond. If you check their authorization in the Controller or an Interceptor, NestJS will fully download the 50MB file into memory first, parse it, and *then* reject it. This is a massive waste of CPU, memory, and bandwidth.
+
+By understanding the Request Lifecycle, you can "fail fast".
+
+## Key Concepts
+- **The Lifecycle Order**: 
+  1. Incoming Request
+  2. Middleware
+  3. Guards (Authentication / Authorization)
+  4. Interceptors (Pre-Controller)
+  5. Pipes (Validation / Transformation)
+  6. Controller (Route Handler)
+  7. Service (Business Logic)
+  8. Interceptors (Post-Controller)
+  9. Exception Filters (If an error occurred anywhere)
+  10. Server Response
+
+## Code Examples
+
+### 1. The Wrong Place for Authorization
+Do not put authorization logic inside an Interceptor or Controller. 
+
+```typescript
+// BAD: Interceptors run AFTER the body is parsed.
+@Injectable()
+export class AuthInterceptor implements NestInterceptor {
+  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+    const req = context.switchToHttp().getRequest();
+    // The 50MB body has already been processed! We wasted resources.
+    if (req.headers.authorization !== 'secret') {
+      throw new UnauthorizedException();
+    }
+    return next.handle();
+  }
+}
+```
+
+### 2. The Right Place: Guards
+Guards execute *before* Interceptors and Pipes. They are designed for fast, boolean checks to determine if the request should proceed.
+
+```typescript
+// GOOD: Guards run early in the lifecycle.
+@Injectable()
+export class AuthGuard implements CanActivate {
+  canActivate(context: ExecutionContext): boolean {
+    const req = context.switchToHttp().getRequest();
+    // The request is rejected instantly, before heavy payload parsing!
+    return req.headers.authorization === 'secret';
+  }
+}
+```
+
+### 3. Middleware for Ultra-Fast Rejection
+Middleware is the very first thing to run. If you have a specific IP address that is maliciously DDoSing you, you want to drop their connection before NestJS even creates the Execution Context or instantiates Guards.
+
+```typescript
+// VERY FAST: Runs at the Express/Fastify layer
+import { Injectable, NestMiddleware } from '@nestjs/common';
+import { Request, Response, NextFunction } from 'express';
+
+@Injectable()
+export class IpBlockMiddleware implements NestMiddleware {
+  private blockedIps = new Set(['192.168.1.100']);
+
+  use(req: Request, res: Response, next: NextFunction) {
+    if (this.blockedIps.has(req.ip)) {
+      // Drop the connection immediately
+      return res.status(403).send('Forbidden');
+    }
+    next();
+  }
+}
+```
+
+## Best Practices
+- **Guards for Auth, Pipes for Data**: Never validate `req.body` structure inside a Guard. Never check user permissions inside a Pipe. Adhere strictly to the intended purpose of each lifecycle layer.
+- **Switch to Fastify**: If you have optimized your lifecycle but still need raw HTTP throughput, switch the underlying NestJS engine from Express to Fastify. Fastify processes the HTTP lifecycle significantly faster, often yielding a 20-30% increase in requests per second without changing your business logic.

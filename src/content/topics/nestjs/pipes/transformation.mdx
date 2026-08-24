@@ -1,0 +1,74 @@
+---
+title: "Transformation"
+description: "Transformation in NestJS"
+importance: "HIGH"
+revisionTime: 14
+category: "NestJS"
+subcategory: "Pipes"
+order: 660
+---
+
+*Transformation is one of the two main purposes of a Pipe (the other being Validation). It involves taking an incoming value and altering its type or structure before it reaches the controller.*
+
+## Overview
+In the context of HTTP, all incoming data from the URL (route parameters and query parameters) is inherently typed as a `string` by the underlying network protocol. 
+
+If your controller method expects an `id` to be a `number`, but the routing mechanism provides it as the string `"42"`, you have a type mismatch. Transformation pipes bridge this gap by safely parsing the string into the expected JavaScript type.
+
+## Key Concepts
+- **Type Casting vs. Parsing**: TypeScript's type casting (`as number`) only affects compile-time checking. Transformation pipes actually parse the data at *runtime* using functions like `parseInt()`.
+- **Fail-Safe**: If a transformation fails (e.g., trying to parse the string "apple" into an integer), the pipe should throw an exception (usually a 400 Bad Request) rather than passing `NaN` to the controller.
+- **The `transform` Method**: Inside a custom pipe, the `transform` method is where you write the logic to alter the input `value`.
+
+## Code Examples
+
+### A Simple Custom Transformation Pipe
+Let's build a pipe that takes a string ID from the URL and automatically fetches the entire entity from the database. This transforms a simple ID into a rich object.
+
+```typescript
+import { PipeTransform, Injectable, NotFoundException } from '@nestjs/common';
+import { UsersService } from './users.service';
+import { User } from './user.entity';
+
+@Injectable()
+export class ParseUserPipe implements PipeTransform<string, Promise<User>> {
+  // Pipes can use Dependency Injection!
+  constructor(private usersService: UsersService) {}
+
+  // 1. value: the incoming string 'id'
+  // 2. Returns a Promise containing the rich User object
+  async transform(value: string): Promise<User> {
+    const user = await this.usersService.findById(parseInt(value, 10));
+    
+    if (!user) {
+      // If we throw here, the controller is never reached
+      throw new NotFoundException(`User ${value} not found`);
+    }
+    
+    return user; // The transformed value is passed to the controller
+  }
+}
+```
+
+### Using the Custom Transformation Pipe
+
+```typescript
+import { Controller, Get, Param } from '@nestjs/common';
+import { ParseUserPipe } from './parse-user.pipe';
+import { User } from './user.entity';
+
+@Controller('users')
+export class UsersController {
+  
+  @Get(':id')
+  // The 'id' in the URL is magically transformed into the User object!
+  getUser(@Param('id', ParseUserPipe) user: User) {
+    // We don't have to call this.usersService.findById() in the controller anymore!
+    return user; 
+  }
+}
+```
+
+## Best Practices
+- **Extract Repetitive Lookups**: Using pipes to transform an ID into a database entity (like `ParseUserPipe` above) is an excellent way to clean up your controllers, especially if multiple routes need to look up the same entity.
+- **ValidationPipe `transform: true`**: When validating JSON bodies using DTOs, you can configure the global `ValidationPipe` with `{ transform: true }`. This enables the `class-transformer` library to automatically transform plain JSON objects into instances of your DTO classes, and automatically parse numeric strings in query parameters into numbers based on the DTO types!

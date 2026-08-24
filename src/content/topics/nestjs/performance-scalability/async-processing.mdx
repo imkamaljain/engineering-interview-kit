@@ -1,0 +1,105 @@
+---
+title: "Async Processing"
+description: "Async Processing in NestJS"
+importance: "LOW"
+revisionTime: 6
+category: "NestJS"
+subcategory: "Performance & Scalability"
+order: 2450
+---
+
+*Asynchronous Processing allows your application to handle multiple concurrent tasks without blocking the main execution thread, maximizing CPU utilization and keeping the API responsive.*
+
+## Overview
+Node.js (and by extension, NestJS) is single-threaded. This means it can only execute one piece of JavaScript code at a time. 
+
+If a user uploads an image, and you run a heavy image-resizing algorithm synchronously, your NestJS server will "freeze" for 5 seconds. During those 5 seconds, it cannot answer HTTP requests for *any other user*.
+
+Async processing solves this. I/O tasks (like talking to a database or making an HTTP request) are offloaded to the operating system. CPU-intensive tasks must be explicitly offloaded to Worker Threads or external processes.
+
+## Key Concepts
+- **The Event Loop**: The core of Node.js that continuously checks for completed I/O tasks and executes their callbacks.
+- **Non-Blocking I/O**: Operations (like database queries) that do not stop the execution of the JavaScript thread while waiting for a response.
+- **CPU Bound vs I/O Bound**: 
+  - *I/O Bound*: Waiting for a database, file system, or external API. Handled perfectly by standard `async/await`.
+  - *CPU Bound*: Cryptography, image processing, massive JSON parsing. Will block the event loop unless offloaded.
+
+## Code Examples
+
+### 1. The Right Way to do I/O (Async/Await)
+NestJS handles this beautifully by default. The thread is free to serve other users while `await`-ing the database.
+
+```typescript
+@Injectable()
+export class ReportService {
+  async generateReport(userId: string) {
+    // 1. Send the query to the DB.
+    // 2. The Node thread is now FREE to serve other incoming HTTP requests!
+    // 3. When the DB finishes 5 seconds later, the thread resumes here.
+    const data = await this.db.query('SELECT ...'); 
+    return data;
+  }
+}
+```
+
+### 2. The Wrong Way (Blocking the Event Loop)
+If you try to process a massive array synchronously, your API will go offline for everyone else.
+
+```typescript
+@Injectable()
+export class BadService {
+  processMassiveArray() {
+    const data = new Array(10000000).fill('data');
+    
+    // BAD! This is CPU bound. The entire NestJS application is frozen 
+    // until this loop finishes. No HTTP requests can be served.
+    for (let i = 0; i < data.length; i++) {
+      data[i] = crypto.createHash('sha256').update(data[i]).digest('hex');
+    }
+  }
+}
+```
+
+### 3. Fixing CPU Bound Tasks (Worker Threads)
+To fix the above issue, you must spawn a separate thread using Node's `worker_threads` module.
+
+```typescript
+// worker.js (A separate file!)
+const { parentPort, workerData } = require('worker_threads');
+const crypto = require('crypto');
+
+// This heavy work happens in a completely separate CPU thread!
+const data = workerData;
+for (let i = 0; i < data.length; i++) {
+  data[i] = crypto.createHash('sha256').update(data[i]).digest('hex');
+}
+parentPort.postMessage(data);
+```
+
+```typescript
+// app.service.ts
+import { Injectable } from '@nestjs/common';
+import { Worker } from 'worker_threads';
+import * as path from 'path';
+
+@Injectable()
+export class GoodService {
+  async processMassiveArraySafe(data: any[]): Promise<any[]> {
+    return new Promise((resolve, reject) => {
+      // Spawn a new thread, passing the data
+      const worker = new Worker(path.resolve(__dirname, 'worker.js'), {
+        workerData: data,
+      });
+
+      // The main thread is FREE to serve HTTP requests! 
+      // It just waits for the message back from the worker thread.
+      worker.on('message', resolve);
+      worker.on('error', reject);
+    });
+  }
+}
+```
+
+## Best Practices
+- **Fire and Forget (with caution)**: If a user registers, you might want to send a welcome email. Don't make the user wait for the email API to respond! However, don't just omit the `await` keyword, as unhandled promise rejections can crash the app. Better yet, push the email task to a background queue (like BullMQ).
+- **Promise.all**: If you need to fetch data from 3 different APIs to build a dashboard, do not `await` them sequentially. That takes `Time(A) + Time(B) + Time(C)`. Use `Promise.all([apiA(), apiB(), apiC()])` to execute them concurrently, reducing the total time to `Max(Time(A, B, C))`.

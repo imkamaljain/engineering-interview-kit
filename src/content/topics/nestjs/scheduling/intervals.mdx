@@ -1,0 +1,78 @@
+---
+title: "Intervals"
+description: "Intervals in NestJS"
+importance: "LOW"
+revisionTime: 5
+category: "NestJS"
+subcategory: "Scheduling"
+order: 2230
+---
+
+*Intervals allow you to schedule a function to run repeatedly at a fixed delay, acting as a declarative wrapper around JavaScript's native `setInterval`.*
+
+## Overview
+While `@Cron` runs based on the actual clock time (e.g., "exactly at 5:00 PM"), `@Interval` runs based on elapsed time (e.g., "every 5 minutes"). 
+
+If the server starts at 4:58 PM, a 5-minute interval will execute at 5:03 PM, 5:08 PM, etc. A cron job for `*/5 * * * *` (every 5 minutes) would execute at 5:00 PM, 5:05 PM, etc.
+
+Use `@Interval` when you don't care *when* something happens on the clock, only *how often* it happens.
+
+## Key Concepts
+- **Milliseconds**: The delay for `@Interval` is always defined in milliseconds.
+- **Non-Overlapping (usually)**: In standard JavaScript, `setInterval` doesn't care if the previous execution finished. If your function takes 10 seconds to run, but your interval is 5 seconds, multiple instances will run concurrently.
+
+## Code Examples
+
+### 1. Basic Interval
+```typescript
+import { Injectable, Logger } from '@nestjs/common';
+import { Interval } from '@nestjs/schedule';
+
+@Injectable()
+export class HealthCheckService {
+  private readonly logger = new Logger(HealthCheckService.name);
+
+  // Runs every 30 seconds (30,000 milliseconds)
+  @Interval(30000)
+  pingExternalService() {
+    this.logger.debug('Pinging external payment gateway to ensure it is up...');
+  }
+}
+```
+
+### 2. Dynamic Intervals via SchedulerRegistry
+Sometimes you want to change the frequency based on system load, or pause the interval entirely.
+
+```typescript
+import { Injectable } from '@nestjs/common';
+import { SchedulerRegistry, Interval } from '@nestjs/schedule';
+
+@Injectable()
+export class SyncService {
+  constructor(private schedulerRegistry: SchedulerRegistry) {}
+
+  @Interval('data_sync', 10000) // Name the interval "data_sync"
+  syncData() {
+    console.log('Syncing data...');
+  }
+
+  pauseSyncing() {
+    // Stop the interval
+    const interval = this.schedulerRegistry.getInterval('data_sync');
+    clearInterval(interval);
+  }
+
+  changeSyncFrequency(newMilliseconds: number) {
+    this.pauseSyncing();
+    // Restart it with a new frequency using standard JavaScript
+    const newInterval = setInterval(() => this.syncData(), newMilliseconds);
+    // Overwrite the registry entry
+    this.schedulerRegistry.deleteInterval('data_sync');
+    this.schedulerRegistry.addInterval('data_sync', newInterval);
+  }
+}
+```
+
+## Best Practices
+- **Beware of the Event Loop**: If the code inside your `@Interval` is highly CPU-intensive (e.g., parsing massive JSON files synchronously), it will block the Node.js event loop. If your interval is 1 second, and the parsing takes 2 seconds, your entire application will freeze and become unresponsive to HTTP requests. Offload heavy CPU work to Worker Threads.
+- **Handling Delays**: If your interval fetches data from an API, and that API is slow (takes 10 seconds), and your interval is 5 seconds, you will flood the API with concurrent requests. If you need a task to wait exactly 5 seconds *after* the previous execution finishes, do not use `@Interval`. Instead, use a recursive `setTimeout` pattern.

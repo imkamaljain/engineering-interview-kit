@@ -1,0 +1,75 @@
+---
+title: "Interceptors"
+description: "Interceptors in NestJS"
+importance: "LOW"
+revisionTime: 12
+category: "NestJS"
+subcategory: "Interceptors"
+order: 790
+---
+
+*Interceptors are powerful tools inspired by Aspect-Oriented Programming (AOP). They allow you to bind extra logic before and after the execution of a controller method.*
+
+## Overview
+An interceptor is a class annotated with the `@Injectable()` decorator and implements the `NestInterceptor` interface.
+
+Unlike Middleware (which only wraps the request lifecycle) or Guards (which only return a boolean), Interceptors have access to the actual return value of the controller method. This means they can completely mutate the response before it is sent to the client.
+
+## Key Capabilities
+Because they wrap the controller method using RxJS Observables, interceptors can:
+- **Bind extra logic before/after method execution**: e.g., logging execution time.
+- **Transform the result**: e.g., wrapping all responses in a standard JSON envelope `{"data": ... }`.
+- **Transform exceptions**: e.g., catching a database `UniqueConstraintError` and throwing a `ConflictException` instead.
+- **Override the route handler entirely**: e.g., returning a cached response without ever invoking the controller method!
+
+## Code Examples
+
+### A Basic Logging Interceptor
+This interceptor records the time right before the controller is called, and then calculates the total duration after the controller finishes and returns its response.
+
+```typescript
+import { Injectable, NestInterceptor, ExecutionContext, CallHandler } from '@nestjs/common';
+import { Observable } from 'rxjs';
+import { tap } from 'rxjs/operators';
+
+@Injectable()
+export class LoggingInterceptor implements NestInterceptor {
+  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+    
+    // 1. Logic BEFORE the controller method executes
+    console.log('Before...');
+    const now = Date.now();
+
+    // 2. next.handle() invokes the controller method. 
+    // It returns an Observable containing the controller's response.
+    return next
+      .handle()
+      // 3. Logic AFTER the controller method executes (using RxJS tap)
+      .pipe(
+        tap(() => console.log(`After... execution time: ${Date.now() - now}ms`)),
+      );
+  }
+}
+```
+
+### Applying Interceptors
+Just like guards and pipes, interceptors can be controller-scoped, method-scoped, or global.
+
+```typescript
+import { Controller, Get, UseInterceptors } from '@nestjs/common';
+import { LoggingInterceptor } from './logging.interceptor';
+
+@Controller('cats')
+// Applied to all routes in this controller
+@UseInterceptors(LoggingInterceptor) 
+export class CatsController {
+  @Get()
+  findAll() {
+    return [{ name: 'Tom' }];
+  }
+}
+```
+
+## Best Practices
+- **Embrace RxJS**: Interceptors rely entirely on RxJS Observables. To use them effectively, you must understand basic RxJS operators like `map()` (for transforming data), `catchError()` (for handling exceptions), and `tap()` (for side effects like logging).
+- **Global Serialization**: The most common use case for a global interceptor in NestJS is the `ClassSerializerInterceptor`. When used with `class-transformer`, it automatically strips out properties marked with `@Exclude()` (like passwords) from all API responses before they are sent to the client.

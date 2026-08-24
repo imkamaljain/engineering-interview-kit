@@ -1,0 +1,100 @@
+---
+title: "Arguments"
+description: "Arguments in NestJS"
+importance: "LOW"
+revisionTime: 7
+category: "NestJS"
+subcategory: "GraphQL"
+order: 1710
+---
+
+*Arguments in GraphQL allow clients to pass variables into queries and mutations. NestJS handles arguments using the `@Args()` decorator and the `@ArgsType()` class.*
+
+## Overview
+If a client wants to fetch a specific user, they need to pass an `id`. If they want to search, they pass a `query` string. 
+
+You can extract these arguments individually (using `@Args('id')`) or you can group them together into a dedicated class using `@ArgsType()`. 
+
+## Key Concepts
+- **`@Args('name')`**: Extracts a single argument from the GraphQL query.
+- **`@ArgsType()`**: A class decorator that groups multiple arguments together. Unlike `@InputType()` (which represents a single JSON object parameter), `@ArgsType()` flattens its properties so they appear as individual, top-level arguments in the GraphQL schema.
+
+## Code Examples
+
+### 1. Inline Arguments (Simple)
+If you only have one or two arguments, extracting them individually is fine.
+
+```typescript
+import { Resolver, Query, Args, Int } from '@nestjs/graphql';
+import { Author } from './models/author.model';
+
+@Resolver(() => Author)
+export class AuthorsResolver {
+  
+  @Query(() => Author, { nullable: true })
+  async getAuthor(
+    // 1. Basic argument
+    @Args('firstName') firstName: string,
+    
+    // 2. Argument with explicit type and default value
+    @Args('id', { type: () => Int, defaultValue: 1 }) id: number,
+    
+    // 3. Optional argument
+    @Args('lastName', { nullable: true }) lastName?: string,
+  ) {
+    return this.authorsService.find({ id, firstName, lastName });
+  }
+}
+```
+*Client Query:* `query { getAuthor(firstName: "John", id: 2) { name } }`
+
+### 2. Grouping with `@ArgsType()` (Recommended)
+If your query accepts many arguments (e.g., pagination, sorting, and filtering), defining them inline becomes incredibly messy. Instead, define an `@ArgsType()`.
+
+```typescript
+// author-search.args.ts
+import { ArgsType, Field, Int } from '@nestjs/graphql';
+import { Min, Max, IsString } from 'class-validator';
+
+@ArgsType()
+export class AuthorSearchArgs {
+  @Field(() => String, { nullable: true })
+  @IsString()
+  firstName?: string;
+
+  @Field(() => Int, { defaultValue: 0 })
+  @Min(0)
+  skip: number;
+
+  @Field(() => Int, { defaultValue: 10 })
+  @Min(1)
+  @Max(100)
+  take: number;
+}
+```
+
+Now, inject the entire class into the resolver. Notice we use `@Args()` **without a string name**.
+
+```typescript
+// authors.resolver.ts
+@Resolver(() => Author)
+export class AuthorsResolver {
+  
+  @Query(() => [Author])
+  async searchAuthors(
+    // No string name passed to @Args!
+    @Args() searchArgs: AuthorSearchArgs 
+  ) {
+    // searchArgs is an object: { firstName: '...', skip: 0, take: 10 }
+    return this.authorsService.search(searchArgs);
+  }
+}
+```
+*Client Query:* `query { searchAuthors(firstName: "John", skip: 0, take: 20) { name } }`
+*Notice how the arguments remain flat in the query!*
+
+## Best Practices
+- **`@ArgsType()` vs `@InputType()`**: This is a common source of confusion. 
+  - Use `@ArgsType()` for **Queries** (pagination, filtering, sorting). The fields are flattened in the schema (`query { users(skip: 0, limit: 10) }`).
+  - Use `@InputType()` for **Mutations** (creating or updating entities). The fields are grouped into a single object (`mutation { createUser(input: { name: "John", age: 30 }) }`).
+- **Use `class-validator`**: Just like Input Types, Args Types fully support `class-validator` decorators. Always validate pagination bounds (`@Max(100)`) to prevent clients from requesting millions of rows in a single query.

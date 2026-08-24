@@ -1,0 +1,68 @@
+---
+title: "Conditional Validation"
+description: "Conditional Validation in NestJS"
+importance: "HIGH"
+revisionTime: 5
+category: "NestJS"
+subcategory: "Validation & DTOs"
+order: 1030
+---
+
+*Conditional Validation allows you to apply validation rules dynamically based on the values of other properties in the same object.*
+
+## Overview
+Sometimes, a field is only required if another field has a specific value. 
+
+For example, imagine a user profile update. If the user sets `hasDriversLicense: true`, then the `licenseNumber` field should be required and validated as a string. But if `hasDriversLicense: false`, the `licenseNumber` field should be completely ignored (even if it's missing or null).
+
+`class-validator` provides powerful decorators to handle these conditional rules without cluttering your controller logic.
+
+## Key Concepts
+- **`@ValidateIf()`**: The core decorator for conditional logic. It accepts a callback function that receives the entire object being validated. If the callback returns `true`, the other decorators on that property are executed. If it returns `false`, they are skipped.
+- **Object Context**: The callback gives you access to the entire DTO instance, allowing you to check sibling properties.
+
+## Code Examples
+
+### Basic Conditional Validation
+In this example, the `taxId` is only required and validated if the user indicates they are a business account.
+
+```typescript
+import { IsString, IsBoolean, ValidateIf, IsNotEmpty, Length } from 'class-validator';
+
+export class RegisterAccountDto {
+  @IsBoolean()
+  isBusinessAccount: boolean;
+
+  // 1. Only run the following validators IF isBusinessAccount is true
+  @ValidateIf((object) => object.isBusinessAccount === true)
+  
+  // 2. These rules are ignored if isBusinessAccount is false!
+  @IsString()
+  @IsNotEmpty()
+  @Length(9, 9, { message: 'Tax ID must be exactly 9 characters' })
+  taxId: string;
+}
+```
+
+### Validating based on field existence
+Sometimes you want to validate a field only if it was actually provided in the request payload.
+
+```typescript
+export class UpdateProfileDto {
+  
+  @IsString()
+  username: string;
+
+  // Only validate 'website' as a URL if the user actually included 
+  // 'website' in the JSON payload.
+  // Note: @IsOptional() is often a cleaner shorthand for this specific use case,
+  // but ValidateIf is useful if you need more complex logic (e.g., if website !== null).
+  @ValidateIf((object) => object.website !== undefined)
+  @IsUrl()
+  website: string;
+}
+```
+
+## Best Practices
+- **`@IsOptional()` vs `@ValidateIf()`**: If a field is simply "not required", use `@IsOptional()`. Use `@ValidateIf()` only when the requirement depends on complex logic or the state of *other* fields in the payload.
+- **Keep it Simple**: If your `@ValidateIf` callback logic is hundreds of lines long and involves checking 10 different properties, your DTO is doing too much. Consider splitting the logic into different API endpoints (e.g., `/register/personal` and `/register/business`) with their own simple DTOs.

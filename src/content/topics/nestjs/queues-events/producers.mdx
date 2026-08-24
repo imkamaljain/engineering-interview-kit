@@ -1,0 +1,104 @@
+---
+title: "Producers"
+description: "Producers in NestJS"
+importance: "HIGH"
+revisionTime: 12
+category: "NestJS"
+subcategory: "Queues & Events"
+order: 1970
+---
+
+*In the context of Job Queues, a Producer is any piece of code responsible for creating a job, attaching a payload (data), and pushing that job onto the queue.*
+
+## Overview
+Producers are the entry point to background processing. In a typical NestJS application, Producers are usually found inside Controllers (responding to HTTP requests) or inside Cron Jobs (scheduled tasks).
+
+The Producer's only responsibility is to validate the data, hand it off to the Queue as quickly as possible, and return a response. A Producer should never perform the heavy lifting itself.
+
+## Key Concepts
+- **Queue Injection**: In NestJS, a Producer gains access to the queue via the `@InjectQueue('queue_name')` decorator.
+- **Payload Validation**: The data you put into a job (`job.data`) must be serializable (usually JSON). You cannot put complex class instances, database connections, or functions into a queue payload.
+- **Job Options**: When producing a job, you can attach options like `delay`, `attempts` (retries), `priority`, and `removeOnComplete`.
+
+## Code Examples
+
+### 1. A Standard HTTP Producer
+This controller receives an HTTP POST request and immediately delegates the heavy lifting to the queue.
+
+```typescript
+import { Controller, Post, Body } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bull'; // or @nestjs/bullmq
+import { Queue } from 'bull';
+
+@Controller('reports')
+export class ReportController {
+  
+  // Inject the 'reports' queue
+  constructor(@InjectQueue('reports') private readonly reportQueue: Queue) {}
+
+  @Post('generate')
+  async generateReport(@Body() dto: { userId: number; type: string }) {
+    
+    // Create the job payload
+    // IMPORTANT: Only pass plain objects/primitives!
+    const payload = { 
+      userId: dto.userId, 
+      reportType: dto.type 
+    };
+
+    // Add the job to the queue
+    // The first argument is the job name ('build_pdf')
+    const job = await this.reportQueue.add('build_pdf', payload, {
+      attempts: 3,         // If the worker fails, retry 3 times
+      backoff: 5000,       // Wait 5 seconds between retries
+      removeOnComplete: true, // Don't clutter Redis when finished
+    });
+
+    // Return the Job ID so the frontend can poll for status later
+    return { 
+      message: 'Report generation started', 
+      jobId: job.id 
+    };
+  }
+}
+```
+
+### 2. A Cron Job Producer
+Sometimes, jobs aren't triggered by users, but by time. You can combine NestJS Scheduling with Queues.
+
+```typescript
+import { Injectable } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
+import { InjectQueue } from '@nestjs/bull';
+import { Queue } from 'bull';
+import { UsersService } from './users.service';
+
+@Injectable()
+export class BillingCron {
+  constructor(
+    private usersService: UsersService,
+    @InjectQueue('billing') private billingQueue: Queue
+  ) {}
+
+  // Run at midnight on the 1st of every month
+  @Cron('0 0 1 * *')
+  async enqueueMonthlyInvoices() {
+    const activeUsers = await this.usersService.getActiveUsers();
+
+    // Fan-out: Produce a separate background job for EVERY user!
+    // We don't want to process 10,000 invoices synchronously in this cron job.
+    for (const user of activeUsers) {
+      await this.billingQueue.add('generate_invoice', {
+        userId: user.id,
+        month: new Date().getMonth(),
+      });
+    }
+    
+    console.log(`Queued ${activeUsers.length} invoice jobs.`);
+  }
+}
+```
+
+## Best Practices
+- **Small Payloads**: Redis is fast, but it is an in-memory database. Do not pass a 5MB base64 image string as the job payload. Instead, upload the image to an S3 bucket (or save it to disk), and pass the *URL or file path* as the payload. The Worker will download it when it's ready.
+- **Fail Fast**: The Producer should validate that the payload is correct *before* pushing it to the queue. If you put garbage data into the queue, the Worker will just crash repeatedly. Use standard NestJS Validation Pipes on your Controllers before enqueuing.

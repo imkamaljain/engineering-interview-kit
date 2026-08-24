@@ -1,0 +1,78 @@
+---
+title: "Interceptors vs Middleware"
+description: "Interceptors vs Middleware in NestJS"
+importance: "LOW"
+revisionTime: 7
+category: "NestJS"
+subcategory: "Interceptors"
+order: 870
+---
+
+*Middleware and Interceptors both sit in the request pipeline and can manipulate requests and responses, but they operate at very different layers of abstraction.*
+
+## Overview
+The easiest way to understand the difference is their position in the request lifecycle:
+- **Middleware** is the very first thing to run when a request hits the server, and the very last thing to run before the response leaves.
+- **Interceptors** wrap the controller method closely. They run *after* Middleware and Guards, but *before* Pipes and the actual Controller logic.
+
+## Key Differences
+
+### 1. Context and Knowledge
+- **Middleware is "Dumb"**: It only knows about the raw HTTP `Request` and `Response` objects. It does not know which NestJS Controller or Method will eventually handle the request.
+- **Interceptors are "Smart"**: They receive the `ExecutionContext`, which means they know exactly which Controller (`context.getClass()`) and Method (`context.getHandler()`) are being executed. They can read custom metadata (decorators) attached to those classes.
+
+### 2. Execution Paradigm
+- **Middleware uses Callbacks**: Middleware uses the standard Express/Connect callback pattern (`next()`). If you forget to call `next()`, the request hangs.
+- **Interceptors use RxJS**: Interceptors use RxJS Observables (`next.handle().pipe(...)`). This makes interceptors incredibly powerful for mutating the *response* because they can cleanly hook into the data stream emitted by the controller.
+
+### 3. Response Manipulation
+- **Middleware is clumsy with responses**: To change the response body in middleware, you have to monkey-patch the `res.send` method. It's ugly and error-prone.
+- **Interceptors are designed for responses**: Interceptors receive the controller's exact return value inside an Observable stream. You can simply use `map()` to cleanly format the JSON payload before it is sent to the client.
+
+## Code Examples
+
+### When to use Middleware
+Middleware is perfect for low-level, globally applicable network tasks.
+
+```typescript
+import { Injectable, NestMiddleware } from '@nestjs/common';
+import { Request, Response, NextFunction } from 'express';
+
+@Injectable()
+export class LoggerMiddleware implements NestMiddleware {
+  use(req: Request, res: Response, next: NextFunction) {
+    // Perfect for:
+    // 1. Parsing raw body buffers
+    // 2. Setting security headers (Helmet)
+    // 3. CORS handling
+    // 4. Rate limiting based on IP
+    console.log(`Request arrived at ${req.originalUrl}`);
+    next();
+  }
+}
+```
+
+### When to use Interceptors
+Interceptors are perfect for application-level logic that depends on the route's behavior.
+
+```typescript
+import { Injectable, NestInterceptor, ExecutionContext, CallHandler } from '@nestjs/common';
+import { Observable } from 'rxjs';
+import { map } from 'rxjs/operators';
+
+@Injectable()
+export class WrapResponseInterceptor implements NestInterceptor {
+  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+    // Perfect for:
+    // 1. Standardizing JSON response shapes
+    // 2. Caching responses
+    // 3. Serializing/excluding properties from DTOs
+    // 4. Measuring execution time of specific methods
+    return next.handle().pipe(map(data => ({ data })));
+  }
+}
+```
+
+## Best Practices
+- **Use Middleware for Network Boundaries**: Anything that needs to happen regardless of whether a controller route actually exists for the URL (like rejecting IPs, or parsing large file uploads) belongs in Middleware.
+- **Use Interceptors for Business Logic Boundaries**: Anything that manipulates the data flowing in or out of your specific application features belongs in an Interceptor.

@@ -1,0 +1,107 @@
+---
+title: "Cache Invalidation"
+description: "Cache Invalidation in NestJS"
+importance: "MEDIUM"
+revisionTime: 5
+category: "NestJS"
+subcategory: "Caching"
+order: 2180
+---
+
+*Cache Invalidation is the process of removing or updating cached data when the underlying source of truth (e.g., a database) changes, ensuring clients do not receive stale data.*
+
+## Overview
+As the famous saying goes: *"There are only two hard things in Computer Science: cache invalidation and naming things."*
+
+When you cache a user's profile, and that user updates their avatar, the database is immediately updated. However, the cache still holds the old avatar. If you don't invalidate the cache, the user will refresh their page and still see their old avatar. 
+
+In NestJS, you can handle invalidation manually using the `CACHE_MANAGER`, or use more advanced patterns like event-driven invalidation.
+
+## Key Concepts
+- **Time-based Invalidation (TTL)**: The simplest form. You let the cache expire naturally after a certain amount of time. Best for data that doesn't need to be strictly real-time.
+- **Event-based Invalidation**: You actively delete a cache key exactly when the underlying data changes.
+- **Tag-based Invalidation**: (Advanced) Tagging multiple cache entries (e.g., `tag:user_123`) and invalidating all of them at once when the user's data changes. (Not natively supported by `cache-manager` out of the box, but supported by Redis).
+
+## Code Examples
+
+### 1. Manual Invalidation in a Service
+The most straightforward approach is to manually call `cacheManager.del()` right after you update the database.
+
+```typescript
+import { Injectable, Inject } from '@nestjs/common';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import { Cache } from 'cache-manager';
+import { UserRepository } from './user.repository';
+
+@Injectable()
+export class UserService {
+  constructor(
+    @Inject(CACHE_MANAGER) private cacheManager: Cache,
+    private userRepository: UserRepository
+  ) {}
+
+  async getUserProfile(userId: string) {
+    const cacheKey = `user_profile_${userId}`;
+    
+    // Try cache first
+    const cached = await this.cacheManager.get(cacheKey);
+    if (cached) return cached;
+
+    // Fetch and set
+    const user = await this.userRepository.findById(userId);
+    await this.cacheManager.set(cacheKey, user, 3600000); // 1 hour
+    return user;
+  }
+
+  async updateUserAvatar(userId: string, newAvatarUrl: string) {
+    // 1. Update the database (Source of truth)
+    await this.userRepository.updateAvatar(userId, newAvatarUrl);
+
+    // 2. INVALIDATE THE CACHE!
+    const cacheKey = `user_profile_${userId}`;
+    await this.cacheManager.del(cacheKey);
+    
+    // Next time getUserProfile is called, it will suffer a cache miss
+    // and fetch the fresh data from the DB.
+  }
+}
+```
+
+### 2. Event-Driven Invalidation
+If multiple different services can update a user (e.g., a `BillingService` updates their subscription tier), manually injecting the `CACHE_MANAGER` everywhere becomes messy. Instead, use the NestJS `EventEmitter2`.
+
+```typescript
+// billing.service.ts
+@Injectable()
+export class BillingService {
+  constructor(private eventEmitter: EventEmitter2) {}
+
+  async upgradeTier(userId: string) {
+    await this.db.upgrade(userId);
+    // Fire an event!
+    this.eventEmitter.emit('user.updated', { userId });
+  }
+}
+
+// user-cache.listener.ts
+import { Injectable, Inject } from '@nestjs/common';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import { Cache } from 'cache-manager';
+import { OnEvent } from '@nestjs/event-emitter';
+
+@Injectable()
+export class UserCacheListener {
+  constructor(@Inject(CACHE_MANAGER) private cacheManager: Cache) {}
+
+  // Listen for ANY event that means the user data changed
+  @OnEvent('user.updated')
+  async handleUserUpdatedEvent(payload: { userId: string }) {
+    console.log(`Invalidating cache for user ${payload.userId}`);
+    await this.cacheManager.del(`user_profile_${payload.userId}`);
+  }
+}
+```
+
+## Best Practices
+- **Write-Through Caching**: In Example 1, we deleted the cache (`.del()`). An alternative is "Write-Through" caching, where you immediately `.set()` the new data into the cache after saving to the DB. This avoids the latency of a cache miss on the *next* read. Use Write-Through if the data is heavily read immediately after being written.
+- **Avoid Wildcard Deletions**: Do not use `cacheManager.reset()` to clear the entire application cache just because one user updated their profile. If you have millions of users, a full reset will cause a "Cache Stampede", where millions of requests suddenly hit your database simultaneously, likely bringing it down.

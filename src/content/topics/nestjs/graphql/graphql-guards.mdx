@@ -1,0 +1,102 @@
+---
+title: "GraphQL Guards"
+description: "GraphQL Guards in NestJS"
+importance: "LOW"
+revisionTime: 13
+category: "NestJS"
+subcategory: "GraphQL"
+order: 1720
+---
+
+*GraphQL Guards are used to protect your resolvers. Because NestJS is built on a unified architecture, you can often reuse the exact same Guards (like `JwtAuthGuard`) for both your REST APIs and your GraphQL APIs with only minor modifications.*
+
+## Overview
+In NestJS, Guards determine whether a given request will be handled by the route handler (or resolver) based on certain conditions (like roles, permissions, or authentication status). 
+
+When a standard Guard runs, it receives an `ExecutionContext` which, by default, wraps an HTTP Request. When used in a GraphQL context, the Guard must be smart enough to extract the request from the GraphQL `Context` instead.
+
+## Key Concepts
+- **`GqlExecutionContext`**: The utility class used inside the Guard to translate the generic execution context into a GraphQL-specific context.
+- **`@UseGuards()`**: The exact same decorator used in REST controllers, applied at the class or method level of a Resolver.
+- **Passport Integration**: The popular `@nestjs/passport` library requires a tiny override to work flawlessly with GraphQL.
+
+## Code Examples
+
+### 1. Creating a GraphQL-Compatible AuthGuard
+If you are using `@nestjs/passport` for JWT authentication, you usually extend `AuthGuard('jwt')`. To make it work with GraphQL, you must override the `getRequest()` method.
+
+```typescript
+// jwt-auth.guard.ts
+import { ExecutionContext, Injectable } from '@nestjs/common';
+import { AuthGuard } from '@nestjs/passport';
+import { GqlExecutionContext } from '@nestjs/graphql';
+
+@Injectable()
+export class GqlAuthGuard extends AuthGuard('jwt') {
+  
+  // This is the magic! Passport calls this method to find the HTTP Request.
+  // We intercept that call and pull the Request out of the GraphQL Context.
+  getRequest(context: ExecutionContext) {
+    const ctx = GqlExecutionContext.create(context);
+    return ctx.getContext().req;
+  }
+}
+```
+*(Note: For this to work, you MUST have configured `context: ({ req }) => ({ req })` in your `GraphQLModule.forRoot()`!)*
+
+### 2. Creating a Role-Based Authorization Guard
+You can create custom guards that check permissions.
+
+```typescript
+// roles.guard.ts
+import { Injectable, CanActivate, ExecutionContext } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
+import { GqlExecutionContext } from '@nestjs/graphql';
+
+@Injectable()
+export class RolesGuard implements CanActivate {
+  constructor(private reflector: Reflector) {}
+
+  canActivate(context: ExecutionContext): boolean {
+    const requiredRoles = this.reflector.get<string[]>('roles', context.getHandler());
+    if (!requiredRoles) {
+      return true; // No roles required, allow access
+    }
+    
+    const ctx = GqlExecutionContext.create(context);
+    const user = ctx.getContext().req.user; // Assuming GqlAuthGuard ran first!
+
+    return requiredRoles.some((role) => user.roles?.includes(role));
+  }
+}
+```
+
+### 3. Applying Guards to Resolvers
+You apply guards just like you do in REST.
+
+```typescript
+import { Resolver, Query, Mutation } from '@nestjs/graphql';
+import { UseGuards } from '@nestjs/common';
+import { GqlAuthGuard } from './jwt-auth.guard';
+import { RolesGuard } from './roles.guard';
+import { Roles } from './roles.decorator';
+
+@Resolver('Post')
+export class PostsResolver {
+  
+  // 1. A route requiring authentication, but no specific role
+  @Query(() => [Post])
+  @UseGuards(GqlAuthGuard)
+  getPrivatePosts() { ... }
+
+  // 2. A route requiring authentication AND the 'admin' role
+  @Mutation(() => Post)
+  @UseGuards(GqlAuthGuard, RolesGuard)
+  @Roles('admin')
+  deletePost() { ... }
+}
+```
+
+## Best Practices
+- **Apply at the Class Level carefully**: If you put `@UseGuards(GqlAuthGuard)` at the top of the Resolver class, it protects *all* Queries and Mutations in that class. It also protects *all* `@ResolveField()` methods. This can cause severe performance issues if the Guard makes a database check, as the Guard will run once for the root query, and then *again* for every single resolved field! Apply Guards to specific `@Query()` and `@Mutation()` methods instead.
+- **Mix Authentication and Authorization**: Always run authentication (`GqlAuthGuard`) before authorization (`RolesGuard`) in the `@UseGuards()` array so that the `req.user` object is populated before the RolesGuard tries to check it.

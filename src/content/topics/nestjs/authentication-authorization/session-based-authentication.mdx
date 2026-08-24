@@ -1,0 +1,92 @@
+---
+title: "Session-based Authentication"
+description: "Session-based Authentication in NestJS"
+importance: "LOW"
+revisionTime: 6
+category: "NestJS"
+subcategory: "Authentication & Authorization"
+order: 1200
+---
+
+*Session-Based Authentication is the traditional stateful method of managing user logins, where the server stores session data in memory or a database, and the client stores a Session ID in a secure cookie.*
+
+## Overview
+While JWTs (stateless) are trendy for REST APIs, Session-Based authentication (stateful) remains incredibly relevant, especially for traditional Web Applications (Server-Side Rendered apps) or Single Page Applications (SPAs) where you need strict control over session revocation.
+
+In this pattern, when a user logs in, the server generates a random string (Session ID), stores user data associated with that ID in a database (like Redis), and sends the ID back to the browser in a `Set-Cookie` header. The browser automatically sends this cookie on subsequent requests.
+
+## Key Concepts
+- **Stateful**: The server must remember every active session.
+- **`express-session`**: The underlying Node.js middleware used by NestJS to handle cookie parsing, generation, and session storage.
+- **Passport Serializer**: When using sessions with Passport in NestJS, you must configure a `PassportSerializer` to tell Passport exactly how to translate a full User object into a small identifier to store in the session (Serialization), and how to translate that identifier back into a User object on subsequent requests (Deserialization).
+
+## Code Examples
+
+### 1. Setting up express-session (main.ts)
+You must apply the session middleware globally before bootstrapping the app.
+
+```typescript
+// main.ts
+import * as session from 'express-session';
+import * as passport from 'passport';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+
+  app.use(
+    session({
+      secret: 'my-super-secret-key',
+      resave: false,
+      saveUninitialized: false,
+      cookie: { 
+        maxAge: 3600000, // 1 hour 
+        httpOnly: true,  // Prevent XSS attacks (JS cannot read the cookie)
+        // secure: true  // MUST be true in production (requires HTTPS)
+      },
+    }),
+  );
+
+  // Initialize passport and connect it to the express-session instance
+  app.use(passport.initialize());
+  app.use(passport.session());
+
+  await app.listen(3000);
+}
+```
+
+### 2. The Passport Serializer
+This class tells Passport how to manage the session data.
+
+```typescript
+import { PassportSerializer } from '@nestjs/passport';
+import { Injectable } from '@nestjs/common';
+import { UsersService } from '../users/users.service';
+
+@Injectable()
+export class SessionSerializer extends PassportSerializer {
+  constructor(private usersService: UsersService) {
+    super();
+  }
+
+  // Called ONCE when the user logs in.
+  // Determines what data to store in the Redis/Memory session store.
+  serializeUser(user: any, done: (err: Error, user: any) => void): void {
+    // To save memory, we ONLY store the user's ID in the session.
+    done(null, { id: user.id });
+  }
+
+  // Called on EVERY SUBSEQUENT request.
+  // Takes the ID from the session store and turns it back into a full User object.
+  async deserializeUser(payload: any, done: (err: Error, payload: string) => void): Promise<void> {
+    // We hit the database on every request to get fresh user data
+    const user = await this.usersService.findById(payload.id);
+    
+    // Attaches the full user object to `request.user`
+    done(null, user);
+  }
+}
+```
+
+## Best Practices
+- **Use a Real Session Store**: By default, `express-session` stores sessions in the Node.js process memory. This will cause a memory leak in production and will break immediately if you scale your app to multiple instances (Load Balancing). Always use a persistent store like `connect-redis` or `connect-pg-simple` in production.
+- **CSRF Protection**: Because sessions rely on Cookies, and browsers automatically attach cookies to cross-origin requests, Session-based apps are inherently vulnerable to Cross-Site Request Forgery (CSRF). If you use sessions in an API consumed by a browser, you **must** implement CSRF protection (e.g., using the `csurf` middleware).

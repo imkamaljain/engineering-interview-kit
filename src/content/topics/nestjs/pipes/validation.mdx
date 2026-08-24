@@ -1,0 +1,77 @@
+---
+title: "Validation"
+description: "Validation in NestJS"
+importance: "HIGH"
+revisionTime: 7
+category: "NestJS"
+subcategory: "Pipes"
+order: 670
+---
+
+*Validation is the process of ensuring that incoming data conforms to specific rules and constraints before allowing it to reach your core business logic.*
+
+## Overview
+Validation is arguably the most critical security and stability measure for any API. You must never trust data sent by the client. 
+
+In NestJS, validation is the second primary responsibility of a Pipe (alongside transformation). If the incoming data passes validation, the pipe returns it unchanged. If it fails, the pipe throws an exception (usually `BadRequestException`), which immediately halts execution and returns an error to the client.
+
+## Key Concepts
+- **Fail-Fast**: Validation happens before the controller method executes. This saves your application from processing bad data or hitting the database unnecessarily.
+- **DTOs (Data Transfer Objects)**: Classes used to define the schema of incoming data.
+- **Declarative Validation**: The Nest ecosystem favors defining validation rules declaratively using decorators on DTO classes.
+
+## Code Examples
+
+### Creating a Custom Validation Pipe
+While Nest provides the powerful `ValidationPipe` built-in, here is how you would write a simple custom validation pipe to understand the underlying mechanics.
+
+```typescript
+import { PipeTransform, Injectable, BadRequestException } from '@nestjs/common';
+
+@Injectable()
+export class JoiValidationPipe implements PipeTransform {
+  // Inject a Joi schema (a popular JS validation library)
+  constructor(private schema: ObjectSchema) {}
+
+  transform(value: any) {
+    const { error } = this.schema.validate(value);
+    
+    if (error) {
+      // Throw an error if validation fails
+      throw new BadRequestException('Validation failed: ' + error.message);
+    }
+    
+    // Return the value unchanged if validation succeeds
+    return value;
+  }
+}
+```
+
+### Using the Custom Validator
+
+```typescript
+import { Controller, Post, Body, UsePipes } from '@nestjs/common';
+import * as Joi from 'joi';
+
+// Define the schema
+const createUserSchema = Joi.object({
+  username: Joi.string().required(),
+  age: Joi.number().min(18).required(),
+});
+
+@Controller('users')
+export class UsersController {
+  
+  @Post()
+  // Apply the custom pipe with the schema
+  @UsePipes(new JoiValidationPipe(createUserSchema))
+  create(@Body() body: any) {
+    // This code only runs if the body has a username and age >= 18
+    return 'User created successfully';
+  }
+}
+```
+
+## Best Practices
+- **Use `class-validator`**: While you can write custom validation pipes using libraries like Joi or Zod, the *idiomatic* NestJS approach is to use the built-in `ValidationPipe` in combination with the `class-validator` library. This allows you to use decorators like `@IsString()` directly on your DTO classes, keeping your schema and TypeScript types unified in one place.
+- **Centralize Validation**: Do not write validation logic (`if (!body.email) return error`) inside your Controller methods or Services. Always push this logic up to the Pipe layer.

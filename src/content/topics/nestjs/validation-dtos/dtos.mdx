@@ -1,0 +1,71 @@
+---
+title: "DTOs"
+description: "DTOs in NestJS"
+importance: "LOW"
+revisionTime: 12
+category: "NestJS"
+subcategory: "Validation & DTOs"
+order: 970
+---
+
+*A Data Transfer Object (DTO) is an object used to encapsulate data and send it from one subsystem of an application to another.*
+
+## Overview
+In NestJS, DTOs define the expected shape of the data coming into your application over the network (e.g., via a POST request body) or leaving your application as a response. 
+
+Instead of dealing with loose, untyped `any` objects in your controllers, you map incoming JSON payloads to strongly-typed DTO classes. This allows TypeScript to catch errors at compile time, and allows validation libraries to enforce rules at runtime.
+
+## Key Concepts
+- **Classes vs Interfaces**: DTOs should always be defined as TypeScript `class`es, NOT `interface`s. Interfaces are removed during compilation, leaving no metadata for NestJS to use at runtime. Classes exist at runtime, allowing features like `ValidationPipe` to read their decorators.
+- **Separation of Concerns**: DTOs should only contain data fields and validation decorators. They should *not* contain business logic or methods.
+- **Data Hiding**: A User DTO might only contain `name` and `email`, deliberately omitting the `passwordHash` field that exists on the User Database Entity.
+
+## Code Examples
+
+### A Standard DTO
+Here is a typical DTO used for creating a new user.
+
+```typescript
+// create-user.dto.ts
+import { IsString, IsEmail, MinLength } from 'class-validator';
+
+export class CreateUserDto {
+  @IsString()
+  @MinLength(3)
+  username: string;
+
+  @IsEmail()
+  email: string;
+
+  @IsString()
+  @MinLength(8)
+  password: string;
+}
+```
+
+### Using the DTO in a Controller
+The controller uses the DTO to strictly type the incoming `@Body()`.
+
+```typescript
+// users.controller.ts
+import { Controller, Post, Body } from '@nestjs/common';
+import { CreateUserDto } from './create-user.dto';
+
+@Controller('users')
+export class UsersController {
+  
+  @Post()
+  // 1. The ValidationPipe reads the CreateUserDto metadata
+  // 2. It intercepts the incoming raw JSON
+  // 3. It runs the class-validator rules
+  // 4. If valid, 'dto' is a guaranteed perfect CreateUserDto instance
+  create(@Body() dto: CreateUserDto) {
+    console.log(dto.email); // TypeScript knows this is a string
+    return 'User created!';
+  }
+}
+```
+
+## Best Practices
+- **Never expose Database Entities directly**: Do not use your TypeORM/Prisma entity classes as the return type for your controllers. Always map your database entities to a Response DTO before sending data to the client. This prevents you from accidentally leaking sensitive data (like password hashes or internal IDs) if you add a new column to the database in the future.
+- **Naming Conventions**: Name your DTOs clearly based on their action: `CreateUserDto`, `UpdateUserDto`, `UserResponseDto`, `PaginationQueryDto`.

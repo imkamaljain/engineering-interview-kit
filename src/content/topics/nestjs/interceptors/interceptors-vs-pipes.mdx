@@ -1,0 +1,75 @@
+---
+title: "Interceptors vs Pipes"
+description: "Interceptors vs Pipes in NestJS"
+importance: "MEDIUM"
+revisionTime: 11
+category: "NestJS"
+subcategory: "Interceptors"
+order: 880
+---
+
+*While both Interceptors and Pipes execute right before the controller method and can manipulate data, they serve entirely distinct architectural purposes.*
+
+## Overview
+It's easy to confuse Pipes and Interceptors because both can modify the incoming request payload. However, their intent is different.
+
+**Pipes** are purely focused on **Data Validation and Transformation** of the *incoming* parameters.
+**Interceptors** are focused on **Extra Logic and Side-Effects** wrapping the *entire execution lifecycle* (both incoming and outgoing).
+
+## Key Differences
+
+### 1. Scope of Operation
+- **Pipes operate on individual arguments**: A Pipe is invoked *per parameter* defined in the controller method signature. If your method has `@Body() body`, `@Query() query`, and `@Param('id') id`, pipes will run three separate times, dealing only with that specific chunk of data.
+- **Interceptors operate on the entire request**: An Interceptor runs once per request. It sees the request as a whole and the response as a whole.
+
+### 2. Response Handling
+- **Pipes cannot see the response**: A pipe runs, returns a modified value, and its job is done forever. It has no idea what the controller eventually returns.
+- **Interceptors wrap the response**: Because interceptors use RxJS Observables (`next.handle()`), they have full access to mutate the response data *after* the controller finishes.
+
+### 3. Intent
+- **Pipes**: "Is this data the correct shape? No? Throw a 400 error. Yes? Convert this string '5' into the number 5."
+- **Interceptors**: "Log the execution time. Wrap the successful result in a standard JSON format. Return cached data instead of running the controller."
+
+## Code Examples
+
+### A Job for a Pipe
+If you need to change the incoming data based on its type or content, use a Pipe.
+
+```typescript
+// 🟢 CORRECT: Using a Pipe for data transformation
+@Injectable()
+export class ParseIntPipe implements PipeTransform<string, number> {
+  transform(value: string, metadata: ArgumentMetadata): number {
+    const val = parseInt(value, 10);
+    if (isNaN(val)) throw new BadRequestException('Validation failed');
+    return val;
+  }
+}
+
+// In Controller:
+@Get(':id')
+findOne(@Param('id', ParseIntPipe) id: number) { ... }
+```
+
+### A Job for an Interceptor
+If you tried to write an interceptor to do what `ParseIntPipe` does, it would be a disaster. You would have to manually dig into `request.params.id`, change the value, and hope the controller handles it correctly.
+
+Instead, Interceptors shine when dealing with the *Response*.
+
+```typescript
+// 🟢 CORRECT: Using an Interceptor for response transformation
+@Injectable()
+export class TransformInterceptor implements NestInterceptor {
+  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+    // Interceptors don't care about the specific arguments passed to the method.
+    // They care about the result.
+    return next.handle().pipe(
+      map(data => ({ status: 'success', result: data }))
+    );
+  }
+}
+```
+
+## Best Practices
+- **Data Mutability Rule**: If you need to mutate incoming data (`@Body`, `@Query`, `@Param`) so that the controller receives it in a different format, **always use a Pipe**.
+- **The "Wrapper" Rule**: If you need to do something *before* the controller runs AND *after* it runs (like measuring duration, or opening a DB transaction and committing it later), **always use an Interceptor**.

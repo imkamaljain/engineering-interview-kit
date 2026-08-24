@@ -1,0 +1,111 @@
+---
+title: "Rate Limiting"
+description: "Rate Limiting in NestJS"
+importance: "HIGH"
+revisionTime: 12
+category: "NestJS"
+subcategory: "Performance & Scalability"
+order: 2500
+---
+
+*Rate Limiting protects your API from brute-force attacks, DDoS attempts, and noisy neighbors by restricting the number of requests a single client can make within a specific time window.*
+
+## Overview
+If a malicious user writes a script to hit your `/login` endpoint 1,000 times per second, they can exhaust your database connection pool, taking down the API for all legitimate users.
+
+Rate Limiting (Throttling) intercepts incoming requests, increments a counter for that user's IP address (or API Key), and if the counter exceeds a threshold, instantly rejects the request with an HTTP `429 Too Many Requests` status code.
+
+## Key Concepts
+- **TTL (Time to Live)**: The time window for the limit (e.g., 60 seconds).
+- **Limit**: The maximum number of requests allowed within the TTL (e.g., 100 requests).
+- **Distributed Throttling**: In a multi-server setup, the request counter must be stored in a shared database (like Redis), not in local server RAM, otherwise users can bypass the limit by hitting different load-balanced servers.
+
+## Code Examples
+
+### 1. Basic Rate Limiting
+NestJS provides the `@nestjs/throttler` package for declarative rate limiting.
+
+```bash
+npm install @nestjs/throttler
+```
+
+Configure it globally in your `AppModule`:
+
+```typescript
+// app.module.ts
+import { Module } from '@nestjs/common';
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { APP_GUARD } from '@nestjs/core';
+
+@Module({
+  imports: [
+    ThrottlerModule.forRoot([{
+      ttl: 60000, // 60 seconds (Note: in v5+ this is milliseconds)
+      limit: 10,  // Max 10 requests per 60 seconds
+    }]),
+  ],
+  providers: [
+    {
+      // Apply it globally to all endpoints
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
+  ],
+})
+export class AppModule {}
+```
+
+### 2. Customizing Limits per Route
+You can override the global limit for specific endpoints using the `@SkipThrottle()` and `@Throttle()` decorators.
+
+```typescript
+import { Controller, Get, Post } from '@nestjs/common';
+import { SkipThrottle, Throttle } from '@nestjs/throttler';
+
+@Controller('users')
+export class UsersController {
+  
+  // Skip the global rate limit entirely (e.g., for a health check or static asset)
+  @SkipThrottle()
+  @Get('public-info')
+  getPublicInfo() {
+    return 'This is public';
+  }
+
+  // Override the global limit to be much stricter (e.g., for login or password reset)
+  // Max 3 requests per 60 seconds
+  @Throttle({ default: { limit: 3, ttl: 60000 } })
+  @Post('login')
+  login() {
+    return 'Attempting login';
+  }
+}
+```
+
+### 3. Distributed Rate Limiting (Redis)
+If you have 3 NestJS servers behind a load balancer, standard Throttler uses local memory. A user could make 30 requests instead of 10! You must use Redis to share the counters.
+
+```bash
+npm install throttler-storage-redis ioredis
+```
+
+```typescript
+import { Module } from '@nestjs/common';
+import { ThrottlerModule } from '@nestjs/throttler';
+import { ThrottlerStorageRedisService } from 'throttler-storage-redis';
+
+@Module({
+  imports: [
+    ThrottlerModule.forRoot({
+      throttlers: [{ limit: 10, ttl: 60000 }],
+      // Use Redis to store the IP counters!
+      storage: new ThrottlerStorageRedisService('redis://localhost:6379'), 
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+## Best Practices
+- **Trust Proxy**: If you are behind a Load Balancer or Cloudflare, the `req.ip` will be the Load Balancer's IP. The Throttler will block *everyone* after 10 requests because it thinks everyone is the same user! You must configure Express to trust the proxy (`app.set('trust proxy', 1)`) so Throttler reads the real user's IP from the `X-Forwarded-For` header.
+- **Rate Limit by User ID**: IP-based rate limiting is flawed. A university library might have 500 students sharing a single public IP. If you rate-limit by IP, you block the whole library. For authenticated routes, write a custom Throttler Guard that limits based on `req.user.id` instead of `req.ip`.

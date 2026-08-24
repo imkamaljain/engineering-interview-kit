@@ -1,0 +1,123 @@
+---
+title: "OpenTelemetry"
+description: "OpenTelemetry in NestJS"
+importance: "LOW"
+revisionTime: 8
+category: "NestJS"
+subcategory: "Observability"
+order: 2870
+---
+
+*OpenTelemetry (OTel) is an open-source, vendor-agnostic framework for instrumenting, generating, collecting, and exporting telemetry data (traces, metrics, and logs).*
+
+## Overview
+Historically, if you wanted to use Datadog, you installed the `datadog-agent` and wrote Datadog-specific code. If you wanted to switch to New Relic later, you had to rewrite your entire observability layer.
+
+OpenTelemetry solves vendor lock-in. It provides a universal standard. You instrument your NestJS application *once* using OTel. Then, you simply configure the OTel Exporter to send that data to Datadog, Jaeger, Prometheus, or any other supported backend.
+
+## Key Concepts
+- **Instrumentation**: Libraries that automatically wrap popular frameworks (like Express/Nest, TypeORM, HTTP module) to extract traces and metrics without writing manual code.
+- **Collector**: A standalone proxy service. Your NestJS app sends telemetry to the Collector, and the Collector forwards it to your vendors (e.g., Datadog, AWS X-Ray).
+- **OTLP (OpenTelemetry Protocol)**: The standard protocol used to transmit telemetry data.
+
+## Code Examples
+
+### 1. Setting up OpenTelemetry in NestJS
+Because OTel needs to patch core Node.js modules (like `http` and `fs`) to automatically collect data, it must be initialized *before* NestJS or any other libraries are imported.
+
+```bash
+npm install @opentelemetry/sdk-node @opentelemetry/auto-instrumentations-node @opentelemetry/exporter-trace-otlp-http
+```
+
+Create a `tracing.ts` file:
+
+```typescript
+// tracing.ts
+import { NodeSDK } from '@opentelemetry/sdk-node';
+import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentations-node';
+import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
+
+const traceExporter = new OTLPTraceExporter({
+  // Send traces to a local Jaeger instance or an OTel Collector
+  url: 'http://localhost:4318/v1/traces',
+});
+
+export const otelSDK = new NodeSDK({
+  traceExporter,
+  instrumentations: [
+    // This magical array automatically instruments Express, HTTP, TypeORM, Redis, etc!
+    getNodeAutoInstrumentations({
+      // You can configure specific instrumentations here
+      '@opentelemetry/instrumentation-fs': { enabled: false }, // File system tracing is usually too noisy
+    }),
+  ],
+  serviceName: 'my-nestjs-microservice',
+});
+```
+
+### 2. Bootstrapping
+Import and start the SDK at the very top of `main.ts`, before importing `AppModule`.
+
+```typescript
+// main.ts
+import { otelSDK } from './tracing';
+
+// Start OpenTelemetry BEFORE anything else
+otelSDK.start();
+
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from './app.module';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+  await app.listen(3000);
+}
+bootstrap();
+
+// Gracefully shut down OTel when the app stops
+process.on('SIGTERM', () => {
+  otelSDK.shutdown()
+    .then(() => console.log('Tracing terminated'))
+    .finally(() => process.exit(0));
+});
+```
+
+### 3. Manual Spans (Optional)
+While auto-instrumentation handles 95% of use cases (HTTP requests, DB queries), you might want to wrap a very specific, complex business logic function in a custom Span.
+
+```typescript
+import { Injectable } from '@nestjs/common';
+import { trace } from '@opentelemetry/api';
+
+@Injectable()
+export class HeavyCalculationService {
+  // Get a tracer instance
+  private tracer = trace.getTracer('manual-tracer');
+
+  async performComplexMath() {
+    // Create a manual span
+    return this.tracer.startActiveSpan('performComplexMath', async (span) => {
+      try {
+        // Do heavy work
+        const result = await this.calculate();
+        
+        // Add custom attributes to the trace
+        span.setAttribute('calculation.resultSize', result.length);
+        
+        return result;
+      } catch (error) {
+        // Record the error in the trace
+        span.recordException(error);
+        throw error;
+      } finally {
+        // You MUST end the span, otherwise it leaks memory and never exports
+        span.end();
+      }
+    });
+  }
+}
+```
+
+## Best Practices
+- **Auto-Instrumentation First**: Always rely on `@opentelemetry/auto-instrumentations-node` first. It handles context propagation across async boundaries flawlessly. Only write manual spans for highly specific, critical business operations that don't involve network calls (which are already auto-instrumented).
+- **Use an OTel Collector**: Don't configure your NestJS app to export directly to Datadog or New Relic. Export to a local OTel Collector (running as a sidecar or daemonset in Kubernetes). The Collector can batch, compress, and reliably retry sending the data to the external vendor, removing that CPU/Network burden from your Node.js process.

@@ -1,0 +1,90 @@
+---
+title: "Modular Architecture"
+description: "Modular Architecture in NestJS"
+importance: "LOW"
+revisionTime: 7
+category: "NestJS"
+subcategory: "Advanced Architecture"
+order: 2690
+---
+
+*Modular Architecture is the foundational design pattern of NestJS. It involves dividing an application into discrete, self-contained Modules, each encapsulating a specific business capability or feature.*
+
+## Overview
+In a poorly designed application, every Service and Controller is dumped into a single global folder, resulting in a "Big Ball of Mud". It becomes impossible to understand the boundaries of features or untangle the dependencies.
+
+NestJS forces you to think in Modules. A Module is a cohesive block of code (e.g., an `OrdersModule` containing the `OrdersController`, `OrdersService`, and `OrderEntity`). Modules explicitly declare what they require from the outside world (`imports`) and what they provide to the outside world (`exports`).
+
+## Key Concepts
+- **Feature Modules**: Modules that encapsulate a specific business domain (e.g., `UsersModule`, `BillingModule`).
+- **Shared/Core Modules**: Modules that provide utility services across the entire app (e.g., `DatabaseModule`, `LoggerModule`).
+- **Encapsulation**: By default, Providers (Services) inside a Module are strictly private. If `OrdersService` tries to inject `UsersService`, it will crash unless `UsersModule` explicitly `exports: [UsersService]`, and `OrdersModule` explicitly `imports: [UsersModule]`.
+
+## Code Examples
+
+### 1. The Anatomy of a Feature Module
+A feature module bundles its related components together.
+
+```typescript
+// users/users.module.ts
+import { Module } from '@nestjs/common';
+import { UsersController } from './users.controller';
+import { UsersService } from './users.service';
+import { UsersRepository } from './users.repository';
+
+@Module({
+  controllers: [UsersController],
+  providers: [
+    UsersService,     // Private to this module
+    UsersRepository   // Private to this module
+  ],
+  exports: [
+    UsersService // We explicitly export this so OTHER modules can use it
+  ]
+})
+export class UsersModule {}
+```
+
+### 2. Importing and Consuming another Module
+If the `OrdersModule` needs to verify a user exists before placing an order, it must import the `UsersModule`.
+
+```typescript
+// orders/orders.module.ts
+import { Module } from '@nestjs/common';
+import { OrdersController } from './orders.controller';
+import { OrdersService } from './orders.service';
+import { UsersModule } from '../users/users.module'; // Import the feature module!
+
+@Module({
+  imports: [UsersModule], // This gives us access to anything UsersModule exports!
+  controllers: [OrdersController],
+  providers: [OrdersService],
+})
+export class OrdersModule {}
+```
+
+Now, the `OrdersService` can safely inject the exported `UsersService`.
+
+```typescript
+// orders/orders.service.ts
+import { Injectable } from '@nestjs/common';
+import { UsersService } from '../users/users.service';
+
+@Injectable()
+export class OrdersService {
+  constructor(private readonly usersService: UsersService) {}
+
+  async createOrder(userId: string) {
+    // We can use it!
+    const user = await this.usersService.findById(userId);
+    // ...
+  }
+}
+```
+
+## Best Practices
+- **Directory Structure by Feature**: Group files by feature (Module), not by type. 
+  - **Bad**: `/controllers`, `/services`, `/modules` (All controllers dumped together).
+  - **Good**: `/users` (contains controller, service, module), `/orders` (contains controller, service, module).
+- **Avoid Circular Dependencies**: If `UsersModule` imports `OrdersModule`, and `OrdersModule` imports `UsersModule`, NestJS will fail to resolve the dependency graph and crash on startup. This usually indicates a design flaw. You must either extract the shared logic into a third module (e.g., `SharedModule`), or use the `forwardRef()` utility (though `forwardRef` is a code smell and should be avoided if possible).
+- **Global Modules as a Last Resort**: You can decorate a module with `@Global()` so its providers are available everywhere without needing to be explicitly imported in every feature module's `imports` array. Use this sparingly, only for truly universal things like Configuration or Logging. Overusing `@Global()` destroys the encapsulation benefits of Modular Architecture.

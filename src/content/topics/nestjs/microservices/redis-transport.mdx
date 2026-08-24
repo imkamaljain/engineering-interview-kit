@@ -1,0 +1,125 @@
+---
+title: "Redis Transport"
+description: "Redis Transport in NestJS"
+importance: "HIGH"
+revisionTime: 5
+category: "NestJS"
+subcategory: "Microservices"
+order: 1810
+---
+
+*Redis is an in-memory data structure store that implements a high-performance Publish/Subscribe (Pub/Sub) messaging paradigm. It is an excellent message broker for NestJS microservices when low latency is prioritized over guaranteed message delivery.*
+
+## Overview
+Unlike TCP, which requires services to know each other's IP addresses, Redis acts as a central hub. 
+
+A NestJS client connects to Redis and "Publishes" a message to a specific channel. Any NestJS microservice that is "Subscribed" to that channel receives the message. Because Redis stores everything in RAM, this process is incredibly fast.
+
+## Key Concepts
+- **Pub/Sub Mechanism**: Publishers send messages without knowing who (if anyone) is listening. Subscribers listen to channels without knowing who is sending.
+- **Fire and Forget (mostly)**: Standard Redis Pub/Sub does *not* persist messages. If a microservice crashes, and a message is published while it is offline, that message is lost forever. (Note: Redis Streams solves this, but NestJS uses standard Pub/Sub by default).
+- **Load Balancing**: If you run three instances of a Microservice, and they all subscribe to the same Redis channel, *only one* of them will receive the message when using Request/Response (`@MessagePattern()`), thanks to NestJS's internal request routing. However, if using Event-Based communication (`@EventPattern()`), *all three* instances will receive the event!
+
+## Code Examples
+
+### 1. Installation
+You must install the Redis driver.
+`npm i ioredis`
+
+### 2. The Redis Server (Microservice)
+Configure the microservice to listen to a Redis instance.
+
+```typescript
+// server/main.ts
+import { NestFactory } from '@nestjs/core';
+import { MicroserviceOptions, Transport } from '@nestjs/microservices';
+import { AppModule } from './app.module';
+
+async function bootstrap() {
+  const app = await NestFactory.createMicroservice<MicroserviceOptions>(
+    AppModule,
+    {
+      transport: Transport.REDIS,
+      options: {
+        host: 'localhost',
+        port: 6379,
+        // You can add passwords and retry strategies here
+        password: 'my-secure-password',
+      },
+    },
+  );
+  await app.listen();
+}
+```
+
+```typescript
+// server/app.controller.ts
+import { Controller } from '@nestjs/common';
+import { EventPattern } from '@nestjs/microservices';
+
+@Controller()
+export class AppController {
+  
+  // Listen for 'user_created' events on the Redis broker
+  @EventPattern('user_created')
+  async handleUserCreated(data: Record<string, unknown>) {
+    console.log('New user created! Sending welcome email...', data);
+    // Logic to send email
+  }
+}
+```
+
+### 3. The Redis Client
+Configure the client (e.g., your API Gateway) to connect to the same Redis instance.
+
+```typescript
+// client/app.module.ts
+import { Module } from '@nestjs/common';
+import { ClientsModule, Transport } from '@nestjs/microservices';
+import { AppController } from './app.controller';
+
+@Module({
+  imports: [
+    ClientsModule.register([
+      {
+        name: 'NOTIFICATIONS_SERVICE',
+        transport: Transport.REDIS,
+        options: {
+          host: 'localhost',
+          port: 6379,
+        },
+      },
+    ]),
+  ],
+  controllers: [AppController],
+})
+export class AppModule {}
+```
+
+```typescript
+// client/app.controller.ts
+import { Controller, Post, Body, Inject } from '@nestjs/common';
+import { ClientProxy } from '@nestjs/microservices';
+
+@Controller('users')
+export class AppController {
+  constructor(
+    @Inject('NOTIFICATIONS_SERVICE') private client: ClientProxy,
+  ) {}
+
+  @Post()
+  createUser(@Body() userData: any) {
+    // Save user to DB...
+    
+    // Publish the event to Redis. 
+    // emit() is fire-and-forget. It does not wait for a response.
+    this.client.emit('user_created', userData);
+    
+    return 'User created!';
+  }
+}
+```
+
+## Best Practices
+- **Use for Ephemeral Data**: Redis Pub/Sub is perfect for transient data like live location updates, chat typing indicators, or cache invalidation signals. It is dangerous for critical business transactions (like financial ledger updates) because if the receiving service is rebooting when the message is sent, the message is lost.
+- **Connection Management**: Redis connections can drop. Ensure you configure `retryAttempts` and `retryDelay` in your `options` block so NestJS automatically attempts to reconnect if the Redis server blips.

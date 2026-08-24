@@ -1,0 +1,77 @@
+---
+title: "Global Middleware"
+description: "Global Middleware in NestJS"
+importance: "MEDIUM"
+revisionTime: 11
+category: "NestJS"
+subcategory: "Middleware"
+order: 550
+---
+
+*Global middleware is executed on every single incoming HTTP request, across the entire application, before any routing occurs.*
+
+## Overview
+Some middleware needs to be applied universally. Common examples include logging every request, parsing cookies, securing headers (`helmet`), or parsing the request body (which Nest actually does for you automatically).
+
+You can register middleware globally so that you don't have to configure it in every single module.
+
+## Key Concepts
+- **`app.use()`**: The method used in your bootstrap file (`main.ts`) to bind middleware to every registered route.
+- **Functional Middleware Only**: You can only use *functional* middleware with `app.use()`. You cannot pass a class-based middleware that requires Dependency Injection.
+- **Execution Order**: Global middleware registered with `app.use()` executes *before* any module-bound middleware.
+
+## Code Examples
+
+### Binding Functional Middleware Globally
+This is how you apply custom or third-party functional middleware to your entire application.
+
+```typescript
+// main.ts
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from './app.module';
+import helmet from 'helmet'; // Third-party functional middleware
+
+// Custom functional middleware
+function logger(req, res, next) {
+  console.log(`Global Request...`);
+  next();
+}
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+
+  // 1. Apply third-party middleware
+  app.use(helmet());
+
+  // 2. Apply custom functional middleware
+  app.use(logger);
+
+  await app.listen(3000);
+}
+bootstrap();
+```
+
+### The "Global Class-Based Middleware" Workaround
+Because `app.use()` cannot resolve dependencies, you cannot pass a class to it. If you absolutely *must* have a global middleware that uses Dependency Injection, you have to configure it in the root `AppModule` using the `*` wildcard route.
+
+```typescript
+// app.module.ts
+import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
+import { InjectableMiddleware } from './injectable.middleware';
+
+@Module({
+  // ...
+})
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer
+      .apply(InjectableMiddleware)
+      // The '*' wildcard means it applies to everything
+      .forRoutes('*'); 
+  }
+}
+```
+
+## Best Practices
+- **Use `app.use()` for Utility Libraries**: Use global functional middleware in `main.ts` for standard web utilities like `helmet` (security headers), `compression` (gzip response bodies), and `cookie-parser`.
+- **Avoid Global Business Logic**: Try to avoid putting complex business logic into global middleware. Global execution means it runs for *everything*, including health checks and static file serving, which can be an unnecessary performance hit. Use Guards for global authentication instead.

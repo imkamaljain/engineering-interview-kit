@@ -1,0 +1,88 @@
+---
+title: "Transporters"
+description: "Transporters in NestJS"
+importance: "HIGH"
+revisionTime: 12
+category: "NestJS"
+subcategory: "Microservices"
+order: 1790
+---
+
+*Transporters are the underlying network communication protocols or message brokers that move data between NestJS microservices. NestJS abstracts these transporters behind a unified API.*
+
+## Overview
+In the `@nestjs/microservices` package, you do not write raw socket code or raw Kafka consumer logic. Instead, you write standard Controller methods decorated with `@MessagePattern()`, and tell NestJS which Transporter to use. NestJS handles the connection, reconnection, message serialization, and routing.
+
+If you decide to switch from RabbitMQ to Kafka, you only change the configuration object in `main.ts`; your business logic controllers remain untouched.
+
+## Key Concepts
+- **Point-to-Point vs. Pub/Sub**: Some transporters (like TCP and gRPC) are point-to-point (Service A talks directly to Service B's IP address). Other transporters (like Redis, RabbitMQ, Kafka, NATS) use an intermediary message broker (Service A publishes to Redis, Service B subscribes to Redis).
+- **`Transport` Enum**: The NestJS enum used to define which transporter you are using (`Transport.TCP`, `Transport.KAFKA`, `Transport.RMQ`, etc.).
+- **Serialization**: Transporters send bytes across a network. NestJS automatically serializes your JavaScript objects into JSON (or binary, in the case of gRPC/Kafka) before sending, and deserializes them on arrival.
+
+## Transporter Categories
+
+### 1. Direct Network Transporters
+These require microservices to know the IP address and port of the services they want to talk to. Best for internal, low-latency, synchronous communication where a central broker isn't required.
+- **TCP** (The default. Simple, fast, built into Node.js)
+- **gRPC** (High performance, strongly typed via Protocol Buffers. Used for heavy lifting between backend services).
+
+### 2. Broker-Based Transporters (Message Queues)
+These introduce a middleman (the broker). Service A sends a message to the broker. The broker guarantees delivery to Service B. Best for decoupling services, load balancing, and handling offline services (the broker stores the message until the service reconnects).
+- **Redis** (Fast, lightweight Pub/Sub. Messages are lost if the subscriber is offline).
+- **RabbitMQ / RMQ** (Robust message queueing with guaranteed delivery, dead-letter queues, and complex routing).
+- **NATS** (High performance, cloud-native messaging system).
+- **Kafka** (Distributed event streaming. Best for event-sourcing architectures and replaying historical events. Very heavy/complex).
+- **MQTT** (Lightweight IoT protocol).
+
+## Code Examples
+
+### Switching Transporters is Just Configuration
+Here is the exact same microservice, configured to use three different transporters. The application code (`@MessagePattern()`) does not change!
+
+```typescript
+// main.ts
+import { NestFactory } from '@nestjs/core';
+import { MicroserviceOptions, Transport } from '@nestjs/microservices';
+import { AppModule } from './app.module';
+
+async function bootstrap() {
+  
+  // Example 1: TCP (Direct)
+  const tcpApp = await NestFactory.createMicroservice<MicroserviceOptions>(AppModule, {
+    transport: Transport.TCP,
+    options: { host: '127.0.0.1', port: 8877 },
+  });
+
+  // Example 2: Redis (Broker)
+  const redisApp = await NestFactory.createMicroservice<MicroserviceOptions>(AppModule, {
+    transport: Transport.REDIS,
+    options: {
+      host: 'localhost',
+      port: 6379,
+    },
+  });
+
+  // Example 3: RabbitMQ (Broker)
+  const rmqApp = await NestFactory.createMicroservice<MicroserviceOptions>(AppModule, {
+    transport: Transport.RMQ,
+    options: {
+      urls: ['amqp://localhost:5672'],
+      queue: 'orders_queue',
+      queueOptions: {
+        durable: false
+      },
+    },
+  });
+
+  await rmqApp.listen();
+}
+```
+
+## Best Practices
+- **Choose the Right Transporter**:
+  - Want to just pass a function call to another server easily? Use **TCP**.
+  - Need extreme performance and strict typing between internal microservices? Use **gRPC**.
+  - Need reliable task queueing (e.g., sending emails) where tasks shouldn't be lost if the server crashes? Use **RabbitMQ**.
+  - Need to broadcast events to dozens of analytical services and replay past events? Use **Kafka**.
+- **Avoid Broker Single Points of Failure**: If you use Redis or RabbitMQ as your transporter, and that broker crashes, your entire microservice architecture stops communicating. Ensure your brokers are deployed in highly available clusters.

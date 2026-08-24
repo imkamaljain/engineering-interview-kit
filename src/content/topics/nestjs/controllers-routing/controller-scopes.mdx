@@ -1,0 +1,76 @@
+---
+title: "Controller Scopes"
+description: "Controller Scopes in NestJS"
+importance: "MEDIUM"
+revisionTime: 11
+category: "NestJS"
+subcategory: "Controllers & Routing"
+order: 380
+---
+
+*Controller Scopes define the lifetime of a controller instance, determining whether it is shared across all requests or newly instantiated per request.*
+
+## Overview
+In NestJS, almost everything is shared across incoming requests. There is a connection pool to the database, singleton services with global state, etc. This is called the `DEFAULT` (Singleton) scope. It is highly performant because object instantiation happens exactly once during application bootstrap.
+
+However, sometimes you need a controller (and its injected services) to hold state specific to a single incoming request. For this, Nest provides different Injection Scopes.
+
+## Key Concepts
+There are three injection scopes available in NestJS:
+- **`DEFAULT` (Singleton)**: A single instance is shared across the entire application. This is the default and provides the best performance.
+- **`REQUEST`**: A new instance of the controller is created exclusively for each incoming HTTP request, and garbage collected when the request completes.
+- **`TRANSIENT`**: A new instance is created every time the provider is injected.
+
+## Code Examples
+
+### Setting a Controller to Request Scope
+
+You change the scope by passing the `scope` property into the `@Controller()` options object.
+
+```typescript
+import { Controller, Get, Scope } from '@nestjs/common';
+
+@Controller({
+  path: 'users',
+  // Change scope to REQUEST
+  scope: Scope.REQUEST, 
+})
+export class UsersController {
+  constructor() {
+    // This will log every single time a request hits /users!
+    console.log('UsersController instantiated');
+  }
+
+  @Get()
+  findAll() {
+    return 'Users';
+  }
+}
+```
+
+### The "Bubbling Up" Effect (Scope Hierarchy)
+Scope bubbles up the dependency chain. If a Controller depends on a Request-scoped Service, the Controller **automatically** becomes Request-scoped as well, even if you didn't explicitly declare it on the controller!
+
+```typescript
+@Injectable({ scope: Scope.REQUEST })
+export class RequestIdService {
+  public id = Math.random();
+}
+
+// Even though this is default (Singleton) scope...
+@Controller('jobs')
+export class JobsController {
+  // ...because it injects a REQUEST scoped service, 
+  // JobsController becomes REQUEST scoped automatically!
+  constructor(private requestIdService: RequestIdService) {}
+  
+  @Get()
+  getJob() {
+    return this.requestIdService.id;
+  }
+}
+```
+
+## Best Practices
+- **Default to Singleton**: Always use the default Singleton scope unless absolutely necessary. Request-scoped controllers and providers require Nest to instantiate classes and resolve dependencies on *every single request*, which will severely impact the performance and memory footprint of your application.
+- **Passing Request Context**: Instead of making a service Request-scoped just to access the `Request` object (e.g., to get the logged-in user), it is usually much more performant to extract the user in the Controller using a custom decorator (`@User()`) and pass it as an argument to the Singleton service method.

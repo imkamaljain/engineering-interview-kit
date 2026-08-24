@@ -1,0 +1,118 @@
+---
+title: "Input Validation"
+description: "Input Validation in NestJS"
+importance: "HIGH"
+revisionTime: 5
+category: "NestJS"
+subcategory: "Security"
+order: 2580
+---
+
+*Input Validation is the first line of defense in any API. It ensures that data sent by the client strictly conforms to expected formats, types, and lengths before it ever reaches your business logic or database.*
+
+## Overview
+Rule #1 of API Security: **Never trust client input.** 
+
+If your endpoint expects an `age` (a number between 1 and 120), and an attacker sends a 10MB SQL Injection string or a malicious JavaScript snippet instead, your application must reject it immediately. 
+
+In NestJS, input validation is handled by **Pipes** (specifically `ValidationPipe`) in conjunction with Data Transfer Objects (DTOs) and the `class-validator` library.
+
+## Key Concepts
+- **Data Transfer Object (DTO)**: A TypeScript class that defines the exact structure and types of the expected incoming JSON payload.
+- **ValidationPipe**: A built-in NestJS pipe that automatically intercepts incoming requests, instantiates the DTO, and runs validation rules before the controller is executed.
+- **Allowlisting / Stripping**: Automatically removing any JSON properties sent by the user that are *not* explicitly defined in the DTO (preventing Mass Assignment attacks).
+
+## Code Examples
+
+### 1. Setting Up Global Validation
+You should enable `ValidationPipe` globally so you don't forget to apply it to individual controllers.
+
+```bash
+npm install class-validator class-transformer
+```
+
+```typescript
+// main.ts
+import { NestFactory } from '@nestjs/core';
+import { ValidationPipe } from '@nestjs/common';
+import { AppModule } from './app.module';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+  
+  app.useGlobalPipes(
+    new ValidationPipe({
+      // Strip out any properties that do not have a @Decorator in the DTO
+      whitelist: true,
+      
+      // Throw an error if non-whitelisted properties are provided
+      forbidNonWhitelisted: true,
+      
+      // Automatically transform payloads to be objects typed according to their DTO classes
+      transform: true, 
+    }),
+  );
+  
+  await app.listen(3000);
+}
+bootstrap();
+```
+
+### 2. Defining a Secure DTO
+Use `class-validator` decorators to enforce strict rules on every field.
+
+```typescript
+import { 
+  IsEmail, 
+  IsString, 
+  IsNotEmpty, 
+  MinLength, 
+  MaxLength, 
+  Matches 
+} from 'class-validator';
+
+export class CreateUserDto {
+  @IsEmail({}, { message: 'Must be a valid email address' })
+  @IsNotEmpty()
+  email: string;
+
+  @IsString()
+  @MinLength(8)
+  @MaxLength(64)
+  // Enforce password complexity (at least 1 upper, 1 lower, 1 number, 1 special)
+  @Matches(/((?=.*\d)|(?=.*\W+))(?![.\n])(?=.*[A-Z])(?=.*[a-z]).*$/, {
+    message: 'Password is too weak',
+  })
+  password: string;
+
+  @IsString()
+  @MaxLength(20)
+  // Prevent script tags or weird characters in the username
+  @Matches(/^[a-zA-Z0-9_]+$/, {
+    message: 'Username can only contain alphanumeric characters and underscores',
+  })
+  username: string;
+}
+```
+
+### 3. Using the DTO in a Controller
+The controller code remains perfectly clean. If the payload is invalid, NestJS automatically returns a `400 Bad Request` with detailed error messages before `registerUser` is even called.
+
+```typescript
+import { Controller, Post, Body } from '@nestjs/common';
+
+@Controller('users')
+export class UsersController {
+  
+  @Post('register')
+  registerUser(@Body() createUserDto: CreateUserDto) {
+    // If execution reaches here, you are 100% guaranteed that 
+    // createUserDto.email is a valid email, and createUserDto.password is strong.
+    return this.usersService.create(createUserDto);
+  }
+}
+```
+
+## Best Practices
+- **Prevent Mass Assignment (Whitelist)**: Always enable `whitelist: true`. If a user sends `{ "email": "a@b.com", "isAdmin": true }` to your registration endpoint, and `isAdmin` is not in the DTO, the `whitelist` option will silently strip `isAdmin` away. If `whitelist` is false, that field might get saved to the database, accidentally making the user an admin!
+- **Validate Everything**: Don't just validate `req.body` (`@Body()`). You must also validate route parameters (`@Param('id', ParseIntPipe)`) and query strings (`@Query()`) to prevent attackers from sending malicious strings where numbers are expected.

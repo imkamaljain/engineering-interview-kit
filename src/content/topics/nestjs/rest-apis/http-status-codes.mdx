@@ -1,0 +1,109 @@
+---
+title: "HTTP Status Codes"
+description: "HTTP Status Codes in NestJS"
+importance: "MEDIUM"
+revisionTime: 12
+category: "NestJS"
+subcategory: "REST APIs"
+order: 1450
+---
+
+*HTTP Status Codes communicate the result of a client's request to the server. NestJS handles standard status codes automatically, but allows fine-grained control via decorators and built-in Exception classes.*
+
+## Overview
+In a RESTful architecture, returning the correct HTTP status code is just as important as returning the correct data. 
+
+If a user tries to access a resource that doesn't exist, returning an empty JSON object with a `200 OK` status is an anti-pattern. You must return a `404 Not Found`. NestJS abstracts the raw response object (like `res.status(404)`) and instead encourages using standard exceptions and decorators.
+
+## Key Concepts
+- **2xx (Success)**: `200 OK` (Standard GET/PUT), `201 Created` (Standard POST), `204 No Content` (Often used for DELETE).
+- **4xx (Client Errors)**: `400 Bad Request` (Validation failed), `401 Unauthorized` (Bad JWT), `403 Forbidden` (Good JWT, lacking permissions), `404 Not Found`.
+- **5xx (Server Errors)**: `500 Internal Server Error` (Unhandled exception).
+- **`@HttpCode()`**: A decorator used to change the default success status code of an endpoint.
+- **HttpException**: The base class used to throw errors with specific status codes.
+
+## Code Examples
+
+### 1. Default Behavior
+By default, NestJS returns `200 OK` for all methods, *except* for POST requests, which return `201 Created`.
+
+```typescript
+@Controller('users')
+export class UsersController {
+  
+  @Get()
+  findAll() {
+    // Automatically returns 200 OK
+    return [];
+  }
+
+  @Post()
+  create() {
+    // Automatically returns 201 Created
+    return { id: 1 };
+  }
+}
+```
+
+### 2. Overriding Success Codes
+Sometimes you want a POST request to return `200 OK` (e.g., a complex search query sent via POST body). Or you want a DELETE request to return `204 No Content`. Use `@HttpCode()`.
+
+```typescript
+import { Controller, Post, HttpCode, HttpStatus, Delete } from '@nestjs/common';
+
+@Controller('users')
+export class UsersController {
+  
+  @Post('search')
+  @HttpCode(HttpStatus.OK) // Changes from 201 to 200
+  search() {
+    return [];
+  }
+
+  @Delete(':id')
+  @HttpCode(HttpStatus.NO_CONTENT) // Returns 204. No body will be sent.
+  remove() {
+    return;
+  }
+}
+```
+
+### 3. Throwing Error Codes
+Never use `@HttpCode()` for errors. To return a 4xx or 5xx error, you `throw` a built-in NestJS exception. Nest's global exception filter catches it and formats the response.
+
+```typescript
+import { 
+  Controller, 
+  Get, 
+  Param, 
+  NotFoundException, 
+  BadRequestException 
+} from '@nestjs/common';
+
+@Controller('users')
+export class UsersController {
+  
+  @Get(':id')
+  findOne(@Param('id') id: string) {
+    if (!id) {
+      // Returns 400 Bad Request
+      throw new BadRequestException('ID is required');
+    }
+
+    const user = null; // simulate database query
+
+    if (!user) {
+      // Returns 404 Not Found
+      // Response body: { "statusCode": 404, "message": "User not found", "error": "Not Found" }
+      throw new NotFoundException(`User with ID ${id} not found`);
+    }
+
+    return user;
+  }
+}
+```
+
+## Best Practices
+- **Use `HttpStatus` Enum**: Instead of hardcoding magic numbers like `204` or `401`, always use the built-in `HttpStatus` enum (e.g., `HttpStatus.NO_CONTENT`). It prevents typos and makes your code self-documenting.
+- **Don't use `@Res()` just for status codes**: You *can* inject the Express response object (`@Res() res`) and do `res.status(404).send()`. However, doing so disables NestJS's automatic response handling (Interceptors won't work on that endpoint). Stick to throwing `Exceptions` and using `@HttpCode()`.
+- **Use Built-in Exceptions**: Nest provides exceptions for almost every 4xx/5xx code (`UnauthorizedException`, `ConflictException`, `PayloadTooLargeException`). Use them instead of the base `HttpException` whenever possible.

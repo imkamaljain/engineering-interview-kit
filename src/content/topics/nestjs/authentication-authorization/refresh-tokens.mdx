@@ -1,0 +1,102 @@
+---
+title: "Refresh Tokens"
+description: "Refresh Tokens in NestJS"
+importance: "MEDIUM"
+revisionTime: 14
+category: "NestJS"
+subcategory: "Authentication & Authorization"
+order: 1190
+---
+
+*Refresh Tokens are long-lived tokens used to securely obtain new, short-lived Access Tokens, solving the security vs. convenience dilemma of JWT architecture.*
+
+## Overview
+If you issue an Access Token (JWT) that lasts for 1 year, the user never has to log in again. However, if a hacker steals that token, they have access for a year, and because JWTs are stateless, you cannot easily revoke it.
+
+If you issue a token that lasts for 15 minutes, it's very secure, but the user will be furiously angry when they are logged out every 15 minutes.
+
+**The Solution**: 
+1. Issue a short-lived **Access Token** (e.g., 15 mins). The client uses this for API calls.
+2. Issue a long-lived **Refresh Token** (e.g., 7 days). The client stores this securely.
+3. When the Access Token expires, the client silently sends the Refresh Token to a specific endpoint (`/auth/refresh`) to get a *new* Access Token, without bothering the user.
+
+## Key Concepts
+- **Revocation**: Because the client only uses the Refresh Token once every 15 minutes to get a new Access Token, the server *can* verify the Refresh Token against a database. If the user was banned, the server deletes the Refresh Token from the DB, and the next refresh attempt fails.
+- **Storage**: Access Tokens are often kept in memory (JS variables) or localStorage. Refresh Tokens should ideally be stored in `httpOnly` cookies to protect against XSS (Cross-Site Scripting).
+
+## Code Examples
+
+### 1. Generating Both Tokens
+Modify your `AuthService.login()` method to generate two distinct tokens.
+
+```typescript
+async login(user: any) {
+  const payload = { sub: user.id, email: user.email };
+
+  // 1. Short-lived Access Token (15m)
+  const accessToken = this.jwtService.sign(payload, { expiresIn: '15m' });
+  
+  // 2. Long-lived Refresh Token (7d)
+  const refreshToken = this.jwtService.sign(payload, { 
+    secret: 'DIFFERENT_REFRESH_SECRET', // Use a separate secret key!
+    expiresIn: '7d' 
+  });
+
+  // 3. Store a hash of the refresh token in the database for revocation capabilities
+  await this.usersService.saveRefreshTokenHash(user.id, refreshToken);
+
+  return { accessToken, refreshToken };
+}
+```
+
+### 2. The Refresh Strategy
+You need a specific Passport strategy just for the `/refresh` endpoint, pointing to the different secret key.
+
+```typescript
+import { ExtractJwt, Strategy } from 'passport-jwt';
+import { PassportStrategy } from '@nestjs/passport';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Request } from 'express';
+
+@Injectable()
+export class JwtRefreshStrategy extends PassportStrategy(Strategy, 'jwt-refresh') {
+  constructor() {
+    super({
+      // The client might send the refresh token in the header, or in a cookie
+      jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
+      secretOrKey: 'DIFFERENT_REFRESH_SECRET',
+      passReqToCallback: true, // We need the request object to extract the raw token
+    });
+  }
+
+  async validate(req: Request, payload: any) {
+    const refreshToken = req.get('Authorization').replace('Bearer', '').trim();
+    
+    // We return both the decoded payload AND the raw token, 
+    // so the controller can verify the token against the database hash
+    return { ...payload, refreshToken };
+  }
+}
+```
+
+### 3. The Refresh Endpoint
+```typescript
+@UseGuards(AuthGuard('jwt-refresh'))
+@Post('refresh')
+async refreshTokens(@Req() req) {
+  // req.user contains the payload and the raw refreshToken
+  const userId = req.user.sub;
+  const refreshToken = req.user.refreshToken;
+
+  // Verify the token matches what is in the database (ensuring it wasn't revoked)
+  const isValid = await this.authService.verifyRefreshTokenHash(userId, refreshToken);
+  
+  if (!isValid) throw new UnauthorizedException('Token has been revoked');
+
+  // Generate a brand new Access Token (and optionally a new Refresh Token - called "Refresh Token Rotation")
+  return this.authService.generateNewAccessToken(userId);
+}
+```
+
+## Best Practices
+- **Refresh Token Rotation**: For maximum security, every time a Refresh Token is used, issue a *new* Access Token AND a *new* Refresh Token, invalidating the old Refresh Token. If a hacker steals a Refresh Token and uses it, the real user's next attempt will fail (because the token rotated), alerting the system to a potential breach.

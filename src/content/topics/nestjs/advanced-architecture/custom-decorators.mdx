@@ -1,0 +1,112 @@
+---
+title: "Custom Decorators"
+description: "Custom Decorators in NestJS"
+importance: "LOW"
+revisionTime: 9
+category: "NestJS"
+subcategory: "Advanced Architecture"
+order: 2760
+---
+
+*Custom Decorators in NestJS allow you to encapsulate repetitive logic, extract custom data from incoming requests, or attach metadata to your classes and methods for reflection.*
+
+## Overview
+Decorators are a core feature of TypeScript and the foundation of NestJS (`@Controller`, `@Get`, `@Injectable`).
+
+NestJS makes it incredibly easy to build your own decorators. There are two primary use cases for Custom Decorators in NestJS:
+1. **Param Decorators**: Extracting specific data from the request object (e.g., `@User()`).
+2. **Metadata Decorators**: Attaching custom settings to a route that Guards or Interceptors can read later (e.g., `@Roles('admin')`).
+
+## Key Concepts
+- **`createParamDecorator`**: A factory function provided by NestJS to build decorators that inject values directly into your route handler arguments.
+- **`SetMetadata`**: A built-in decorator used to attach key-value pairs to a class or method.
+- **Reflection (`Reflector`)**: The mechanism used by Guards and Interceptors to read the metadata you attached via your custom decorators.
+
+## Code Examples
+
+### 1. Creating a Parameter Decorator
+Imagine you have an AuthGuard that validates a JWT and attaches the decoded user to `request.user`. Instead of injecting `@Req() req` into every controller and calling `req.user`, you can build a `@User()` decorator.
+
+```typescript
+// user.decorator.ts
+import { createParamDecorator, ExecutionContext } from '@nestjs/common';
+
+export const User = createParamDecorator(
+  (data: string | undefined, ctx: ExecutionContext) => {
+    // 1. Get the HTTP request
+    const request = ctx.switchToHttp().getRequest();
+    
+    // 2. Extract the user object (set by your AuthGuard)
+    const user = request.user;
+
+    // 3. If the user passed a specific string (e.g. @User('email')), 
+    // return only that property. Otherwise, return the whole object.
+    return data ? user?.[data] : user;
+  },
+);
+```
+
+Using it in a controller:
+```typescript
+@Get('profile')
+getProfile(@User() user: UserEntity, @User('email') email: string) {
+  console.log(email); // 'test@test.com'
+  return user;
+}
+```
+
+### 2. Creating a Metadata Decorator
+You want to restrict certain routes to specific user roles. Instead of using raw `@SetMetadata('roles', ['admin'])`, you should create a strongly-typed custom decorator.
+
+```typescript
+// roles.decorator.ts
+import { SetMetadata } from '@nestjs/common';
+
+// This is the key we will use to look up the metadata later
+export const ROLES_KEY = 'roles';
+
+// The decorator takes an array of strings and attaches it to the ROLES_KEY
+export const Roles = (...roles: string[]) => SetMetadata(ROLES_KEY, roles);
+```
+
+Using it in a controller:
+```typescript
+@Post('users')
+@Roles('admin', 'super-admin') // Attaching the metadata!
+create() {
+  return 'This action adds a new user';
+}
+```
+
+### 3. Reading the Metadata (The other half of the puzzle)
+Attaching metadata does nothing on its own. You need a Guard to read it and enforce it using the `Reflector` class.
+
+```typescript
+// roles.guard.ts
+import { Injectable, CanActivate, ExecutionContext } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
+import { ROLES_KEY } from './roles.decorator';
+
+@Injectable()
+export class RolesGuard implements CanActivate {
+  constructor(private reflector: Reflector) {}
+
+  canActivate(context: ExecutionContext): boolean {
+    // Read the metadata attached by our @Roles() decorator
+    const requiredRoles = this.reflector.getAllAndOverride<string[]>(ROLES_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+
+    if (!requiredRoles) return true; // No @Roles decorator? Allow access.
+
+    const { user } = context.switchToHttp().getRequest();
+    // Check if the user has the required roles
+    return requiredRoles.some((role) => user.roles?.includes(role));
+  }
+}
+```
+
+## Best Practices
+- **Hide `req` from Controllers**: Your route handlers should almost never use `@Req() req: Request`. It ties your code to the underlying HTTP platform (Express) and makes unit testing much harder. Extract exactly what you need using custom Param Decorators (`@User()`, `@IpAddress()`, `@UserAgent()`) so your controllers remain pure and testable.
+- **Compose Multiple Decorators**: If you find yourself always writing `@UseGuards(JwtAuthGuard) @Roles('admin') @ApiBearerAuth()`, you can combine them into one custom decorator using NestJS's `applyDecorators` utility: `export const Auth = (...roles) => applyDecorators(UseGuards(JwtAuthGuard), Roles(...roles), ApiBearerAuth());`

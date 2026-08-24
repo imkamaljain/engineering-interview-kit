@@ -1,0 +1,96 @@
+---
+title: "WebSocket Pipes"
+description: "WebSocket Pipes in NestJS"
+importance: "HIGH"
+revisionTime: 9
+category: "NestJS"
+subcategory: "WebSockets"
+order: 2090
+---
+
+*WebSocket Pipes in NestJS function identically to HTTP Pipes. They are used to validate and transform incoming payload data before it reaches your `@SubscribeMessage()` event handler.*
+
+## Overview
+Just because a client is connected via a WebSocket doesn't mean you should trust the data they send. A malicious client could emit an event with a malformed payload, causing your server to crash or corrupting database records.
+
+By using the standard NestJS `ValidationPipe` alongside Data Transfer Object (DTO) classes decorated with `class-validator`, you can automatically reject malformed WebSocket messages.
+
+## Key Concepts
+- **Validation**: Ensuring the incoming data object matches a strict schema.
+- **Transformation**: Converting raw JSON data (e.g., a string `"42"`) into a proper JavaScript type (e.g., the number `42`), or instantiating a class.
+- **WsException**: When a Pipe fails validation in an HTTP context, it throws a `BadRequestException`. In a WebSocket context, it throws a `WsException` which is returned to the client as an error event.
+
+## Code Examples
+
+### 1. Defining a DTO
+Create a standard class using `class-validator` decorators.
+
+```typescript
+// create-message.dto.ts
+import { IsString, IsNotEmpty, Length, IsInt, Min } from 'class-validator';
+
+export class CreateMessageDto {
+  @IsString()
+  @IsNotEmpty()
+  @Length(1, 255)
+  text: string;
+
+  @IsInt()
+  @Min(1)
+  roomId: number;
+}
+```
+
+### 2. Applying the Validation Pipe
+You can apply the standard NestJS `ValidationPipe` using `@UsePipes()`.
+
+```typescript
+import { WebSocketGateway, SubscribeMessage, MessageBody, UsePipes, ValidationPipe } from '@nestjs/websockets';
+import { CreateMessageDto } from './create-message.dto';
+
+@WebSocketGateway()
+export class ChatGateway {
+
+  @UsePipes(new ValidationPipe({ 
+    transform: true, 
+    whitelist: true 
+  }))
+  @SubscribeMessage('send_message')
+  handleMessage(@MessageBody() payload: CreateMessageDto) {
+    // If the client sends { text: "" }, this method will NEVER execute.
+    // The Pipe intercepts it, fails validation, and throws a WsException.
+    
+    // We are guaranteed that 'payload' is a valid CreateMessageDto!
+    console.log(`Valid message received for room ${payload.roomId}`);
+  }
+}
+```
+
+### 3. Creating a Custom WebSocket Pipe
+If you need complex logic, you can build a custom pipe. It looks exactly like an HTTP pipe.
+
+```typescript
+import { PipeTransform, Injectable, ArgumentMetadata } from '@nestjs/common';
+import { WsException } from '@nestjs/websockets';
+
+@Injectable()
+export class ProfanityFilterPipe implements PipeTransform {
+  transform(value: any, metadata: ArgumentMetadata) {
+    if (typeof value.text === 'string' && value.text.includes('badword')) {
+      // Throw WsException instead of HttpException!
+      throw new WsException('Message contains profanity');
+    }
+    
+    // Transformation: Convert the text to lowercase
+    if (value.text) {
+      value.text = value.text.toLowerCase();
+    }
+    
+    return value;
+  }
+}
+```
+
+## Best Practices
+- **Global Pipes for WebSockets**: Unlike HTTP where `app.useGlobalPipes(new ValidationPipe())` applies to all controllers, that global setting does NOT apply to WebSockets. If you want a ValidationPipe on all your Gateways, you must use `app.useWebSocketAdapter()` or explicitly apply `@UsePipes(new ValidationPipe())` to the top of every `@WebSocketGateway()` class.
+- **Whitelist the Payload**: Always use `whitelist: true` in your WebSocket `ValidationPipe`. Clients can attach extra, unexpected properties to the JSON payload of an event. The whitelist option automatically strips away any properties that aren't explicitly defined in your DTO, preventing Mass Assignment vulnerabilities.

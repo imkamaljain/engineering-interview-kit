@@ -1,0 +1,94 @@
+---
+title: "Custom Configuration"
+description: "Custom Configuration in NestJS"
+importance: "MEDIUM"
+revisionTime: 6
+category: "NestJS"
+subcategory: "Configuration"
+order: 1380
+---
+
+*Custom Configuration allows you to load configuration data from complex files (like JSON, YAML, or TypeScript objects) instead of relying solely on flat `.env` files.*
+
+## Overview
+`.env` files are great, but they are completely flat. If you have a complex application, you might end up with dozens of variables like `AWS_S3_BUCKET`, `AWS_REGION`, `AWS_ACCESS_KEY`. 
+
+Custom Configuration allows you to group these variables into structured JavaScript objects. You write a factory function that returns a nested object (often reading from `process.env` internally), and the `ConfigModule` loads that object into memory.
+
+## Key Concepts
+- **Configuration Factory**: A function that returns an object containing your configuration data.
+- **Nesting**: Grouping related variables together (e.g., all database variables under a `database` key).
+- **TypeScript Benefits**: You can define interfaces for your configuration objects, giving you much better type safety than standard `.env` strings.
+
+## Code Examples
+
+### 1. Creating the Custom Configuration File
+Create a file (e.g., `configuration.ts`) that exports a default factory function.
+
+```typescript
+// src/config/configuration.ts
+
+export default () => ({
+  // We can group environment variables logically
+  port: parseInt(process.env.PORT, 10) || 3000,
+  
+  database: {
+    host: process.env.DATABASE_HOST || 'localhost',
+    port: parseInt(process.env.DATABASE_PORT, 10) || 5432,
+    password: process.env.DATABASE_PASSWORD,
+  },
+  
+  aws: {
+    s3: {
+      bucket: process.env.AWS_BUCKET_NAME,
+      region: process.env.AWS_REGION || 'us-east-1'
+    }
+  }
+});
+```
+
+### 2. Loading the Custom Configuration
+Tell the `ConfigModule` to load your factory function.
+
+```typescript
+// app.module.ts
+import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
+import configuration from './config/configuration';
+
+@Module({
+  imports: [
+    ConfigModule.forRoot({
+      isGlobal: true,
+      // Load the custom configuration file!
+      load: [configuration],
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+### 3. Accessing Nested Properties
+You use dot-notation in the `ConfigService` to access the nested properties.
+
+```typescript
+import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+
+@Injectable()
+export class AwsService {
+  constructor(private configService: ConfigService) {}
+
+  getS3Bucket() {
+    // We use dot-notation to traverse the custom configuration object!
+    const bucket = this.configService.get<string>('aws.s3.bucket');
+    const region = this.configService.get<string>('aws.s3.region');
+    
+    return `Connecting to ${bucket} in ${region}`;
+  }
+}
+```
+
+## Best Practices
+- **Use YAML for complex static config**: If you have configuration that is highly structured but *not* secret (like a list of supported languages, or complex UI feature flags), it is common to write a Custom Configuration factory that reads a `config.yaml` file using the `js-yaml` library and returns that parsed object to NestJS.
+- **Keep Secrets out of Source Control**: Even if you use Custom Configuration files, the actual *values* for passwords or API keys should still be pulled from `process.env` inside the factory function. Never hardcode the actual secret string inside `configuration.ts`, because that file will be committed to Git.

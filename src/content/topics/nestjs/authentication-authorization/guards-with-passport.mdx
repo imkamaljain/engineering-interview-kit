@@ -1,0 +1,100 @@
+---
+title: "Guards with Passport"
+description: "Guards with Passport in NestJS"
+importance: "HIGH"
+revisionTime: 8
+category: "NestJS"
+subcategory: "Authentication & Authorization"
+order: 1150
+---
+
+*While Passport handles the heavy lifting of verifying credentials, Guards are the NestJS mechanism that actively intercepts the request and invokes Passport.*
+
+## Overview
+In a pure Express application, you use Passport as middleware (e.g., `app.use(passport.authenticate('jwt'))`). In NestJS, the Idiomatic way to use Passport is by extending the built-in `AuthGuard` class provided by the `@nestjs/passport` module.
+
+The `AuthGuard` acts as the bridge. When a request hits a protected route, the Guard pauses execution, calls the specified Passport strategy, waits for the `validate()` method to return the user, attaches that user to the request, and *then* resumes execution.
+
+## Key Concepts
+- **`AuthGuard('strategy-name')`**: The factory function that dynamically creates a Guard class wired to a specific Passport strategy.
+- **Extending `AuthGuard`**: Instead of using the factory function directly in your controllers, it is highly recommended to create your own class that extends the `AuthGuard` to provide custom error handling or logging.
+
+## Code Examples
+
+### 1. The Basic (But Brittle) Approach
+You *can* use the factory function directly in your controllers.
+
+```typescript
+import { Controller, Get, UseGuards } from '@nestjs/common';
+import { AuthGuard } from '@nestjs/passport';
+
+@Controller('profile')
+export class ProfileController {
+  
+  // This works, but using 'jwt' as a magic string everywhere is error-prone.
+  // Also, you cannot customize what happens if authentication fails.
+  @UseGuards(AuthGuard('jwt'))
+  @Get()
+  getProfile() {
+    return 'Protected data';
+  }
+}
+```
+
+### 2. The Recommended Approach (Extending the Guard)
+By creating your own class, you eliminate magic strings, create a central place for custom logic, and make your controllers much cleaner.
+
+```typescript
+// jwt-auth.guard.ts
+import { Injectable, ExecutionContext, UnauthorizedException } from '@nestjs/common';
+import { AuthGuard } from '@nestjs/passport';
+
+@Injectable()
+// We pass 'jwt' here ONCE.
+export class JwtAuthGuard extends AuthGuard('jwt') {
+  
+  // Optional: Override the canActivate method to add custom pre-auth logic
+  canActivate(context: ExecutionContext) {
+    // Add custom logic here, like checking if the route is marked as @Public()
+    
+    // Call the parent method to actually trigger Passport
+    return super.canActivate(context);
+  }
+
+  // Optional: Override the handleRequest method to customize the error response
+  handleRequest(err: any, user: any, info: any) {
+    // 'info' contains the specific error from Passport (e.g., "TokenExpiredError")
+    
+    if (err || !user) {
+      if (info?.name === 'TokenExpiredError') {
+        throw new UnauthorizedException('Your session has expired. Please log in again.');
+      }
+      throw err || new UnauthorizedException('You must be logged in to access this resource.');
+    }
+    
+    return user; // This attaches the user to request.user
+  }
+}
+```
+
+### 3. Using the Custom Guard
+Now your controller is clean, readable, and strongly typed.
+
+```typescript
+// profile.controller.ts
+import { Controller, Get, UseGuards } from '@nestjs/common';
+import { JwtAuthGuard } from './jwt-auth.guard'; // Import your custom guard
+
+@Controller('profile')
+export class ProfileController {
+  
+  @UseGuards(JwtAuthGuard) // Much cleaner!
+  @Get()
+  getProfile() {
+    return 'Protected data';
+  }
+}
+```
+
+## Best Practices
+- **Global Guards**: If 95% of your API requires authentication, don't put `@UseGuards(JwtAuthGuard)` on every controller. Register the Guard globally in `app.module.ts` using the `APP_GUARD` provider, and create a custom `@Public()` decorator to explicitly bypass the guard for the 5% of routes (like login/register) that shouldn't be protected.

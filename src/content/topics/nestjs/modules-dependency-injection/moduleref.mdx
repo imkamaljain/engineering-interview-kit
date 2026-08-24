@@ -1,0 +1,71 @@
+---
+title: "ModuleRef"
+description: "ModuleRef in NestJS"
+importance: "MEDIUM"
+revisionTime: 5
+category: "NestJS"
+subcategory: "Modules & Dependency Injection"
+order: 280
+---
+
+*The `ModuleRef` class allows you to navigate the internal provider list and manually resolve dependencies dynamically.*
+
+## Overview
+Normally, dependencies are resolved statically via constructor injection. However, in advanced scenarios, you might need to resolve a dependency dynamically at runtime, *after* the application has started.
+
+NestJS provides the `ModuleRef` class to solve this. It acts as a reference to the current module's IoC container context, allowing you to programmatically fetch providers, instantiate classes, or resolve scoped providers.
+
+## Key Concepts
+- **`ModuleRef.get()`**: Retrieves a provider (singleton) from the current module context. It returns the exact same instance that constructor injection would have provided.
+- **`ModuleRef.resolve()`**: Used specifically for retrieving `REQUEST` or `TRANSIENT` scoped providers. It creates a *new* instance of the provider and its sub-tree.
+- **`ModuleRef.create()`**: Instantiates a class dynamically, completely outside of the normal Nest module tree (it does not have to be registered in the `providers` array).
+
+## Code Examples
+
+### Retrieving a Provider Dynamically
+Useful in factories, dynamic strategies, or when you want to avoid a circular dependency in the constructor.
+
+```typescript
+import { Injectable, OnModuleInit } from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
+import { DynamicService } from './dynamic.service';
+
+@Injectable()
+export class NavigationService implements OnModuleInit {
+  private dynamicService: DynamicService;
+
+  // Inject the ModuleRef itself
+  constructor(private moduleRef: ModuleRef) {}
+
+  // Wait until the module is fully initialized
+  onModuleInit() {
+    // Manually fetch the provider by its class name (or string token)
+    this.dynamicService = this.moduleRef.get(DynamicService);
+  }
+
+  doSomething() {
+    this.dynamicService.execute();
+  }
+}
+```
+
+### Resolving Scoped Providers
+If `TenantConfigService` is request-scoped, `.get()` will fail. You must use `.resolve()`.
+
+```typescript
+@Injectable()
+export class TaskRunner {
+  constructor(private moduleRef: ModuleRef) {}
+
+  async runTask() {
+    // This creates a NEW instance of the request-scoped service
+    const tenantConfig = await this.moduleRef.resolve(TenantConfigService);
+    // ...
+  }
+}
+```
+
+## Best Practices
+- **Use as a Last Resort**: Do not use `ModuleRef` as a replacement for standard constructor injection. It hides dependencies, making code harder to read, harder to mock, and harder to test.
+- **Breaking Circular Dependencies**: If `forwardRef()` isn't working for a complex circular dependency, injecting `ModuleRef` and fetching the conflicting service inside the `onModuleInit()` lifecycle hook is a reliable workaround.
+- **Strict Mode**: By default, `moduleRef.get()` only looks in the *current* module. If the provider is imported from another module, you must pass `{ strict: false }` as the second argument: `this.moduleRef.get(Service, { strict: false })`.

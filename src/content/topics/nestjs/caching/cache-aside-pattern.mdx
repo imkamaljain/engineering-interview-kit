@@ -1,0 +1,103 @@
+---
+title: "Cache-Aside Pattern"
+description: "Cache-Aside Pattern in NestJS"
+importance: "MEDIUM"
+revisionTime: 10
+category: "NestJS"
+subcategory: "Caching"
+order: 2160
+---
+
+*The Cache Aside pattern (also known as Lazy Loading) is the most common caching strategy. The application logic manages the caching, checking the cache first before falling back to the primary datastore.*
+
+## Overview
+In the Cache Aside pattern, the cache does *not* interact directly with the database. The application code sits in the middle.
+
+When data is requested, the application "looks aside" to the cache. If the data is there, it's returned. If it isn't, the application fetches it from the database, stores a copy in the cache, and then returns it. Data is only loaded into the cache *when it is actually requested* (lazily).
+
+## Key Concepts
+- **Lazy Loading**: Only data that is actually requested by users ends up in the cache. This prevents the cache from filling up with data that no one ever looks at.
+- **Stale Data**: Because data is loaded once and sits in the cache until it expires (TTL), there is a window where the database might be updated, but the cache still serves the old data.
+- **Application Responsibility**: The application is fully responsible for coordinating between the cache and the database.
+
+## Code Examples
+
+### 1. The Standard Cache Aside Implementation
+This is the classic implementation you will see in almost every NestJS application.
+
+```typescript
+import { Injectable, Inject } from '@nestjs/common';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import { Cache } from 'cache-manager';
+import { ArticleRepository } from './article.repository';
+
+@Injectable()
+export class ArticleService {
+  constructor(
+    @Inject(CACHE_MANAGER) private cacheManager: Cache,
+    private articleRepository: ArticleRepository
+  ) {}
+
+  async getArticleById(articleId: string) {
+    const cacheKey = `article_${articleId}`;
+
+    // 1. Look aside to the cache
+    const cachedArticle = await this.cacheManager.get(cacheKey);
+    
+    if (cachedArticle) {
+      // CACHE HIT!
+      return cachedArticle;
+    }
+
+    // 2. CACHE MISS! Fetch from the primary datastore
+    const article = await this.articleRepository.findById(articleId);
+
+    if (article) {
+      // 3. Store the result in the cache for future requests
+      await this.cacheManager.set(cacheKey, article, 3600000); // 1 hour TTL
+    }
+
+    // 4. Return the data
+    return article;
+  }
+}
+```
+
+### 2. Handling Cache Failures Gracefully
+If your Redis cluster goes down, your application shouldn't crash. In the Cache Aside pattern, a cache failure should simply be treated as a Cache Miss, falling back to the database.
+
+```typescript
+  async getArticleSafely(articleId: string) {
+    const cacheKey = `article_${articleId}`;
+    let cachedArticle = null;
+
+    try {
+      // Wrap cache access in a try-catch!
+      cachedArticle = await this.cacheManager.get(cacheKey);
+    } catch (error) {
+      // Log the Redis error, but DO NOT throw it to the user
+      this.logger.error(`Cache read failed for ${cacheKey}`, error);
+    }
+
+    if (cachedArticle) {
+      return cachedArticle;
+    }
+
+    // Fallback to database
+    const article = await this.articleRepository.findById(articleId);
+
+    if (article) {
+      try {
+        await this.cacheManager.set(cacheKey, article, 3600000);
+      } catch (error) {
+        this.logger.error(`Cache write failed for ${cacheKey}`, error);
+      }
+    }
+
+    return article;
+  }
+```
+
+## Best Practices
+- **Null Caching**: What if an article doesn't exist? The database query returns `null`. If you don't cache that `null` result, malicious users can repeatedly query a non-existent ID, bypassing the cache entirely and hammering your database (a DDoS attack). Always cache "Not Found" results with a short TTL to protect your database!
+- **Cache Stampede Prevention**: If a highly popular article expires from the cache, 1,000 concurrent requests might all experience a Cache Miss at the exact same millisecond, sending 1,000 identical queries to the database. To prevent this, use a technique like *Mutex Locking* (only letting one request fetch from the DB while the others wait) or *Stale-While-Revalidate* (serving the expired cache while refreshing it in the background).

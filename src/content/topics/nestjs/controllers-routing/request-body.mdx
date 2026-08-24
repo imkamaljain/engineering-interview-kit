@@ -1,0 +1,89 @@
+---
+title: "Request Body"
+description: "Request Body in NestJS"
+importance: "MEDIUM"
+revisionTime: 6
+category: "NestJS"
+subcategory: "Controllers & Routing"
+order: 330
+---
+
+*The Request Body contains data sent by the client to your API, typically used in POST, PUT, and PATCH requests.*
+
+## Overview
+To access the JSON payload sent in an HTTP request, NestJS provides the `@Body()` decorator.
+
+By default, Nest uses the underlying platform (like Express) to parse incoming JSON payloads automatically. To ensure the payload conforms to the expected structure and types, you should always use Data Transfer Objects (DTOs) combined with the `ValidationPipe`.
+
+## Key Concepts
+- **`@Body()`**: Injects the parsed JSON request body into your method.
+- **DTO (Data Transfer Object)**: A TypeScript class (not an interface) that defines how the data will be sent over the network.
+- **Validation**: Nest integrates with `class-validator` and `class-transformer` to validate the incoming body against the DTO before the controller logic executes.
+
+## Code Examples
+
+### Basic Body Extraction
+If you don't use a DTO, you can extract the raw object or specific properties.
+
+```typescript
+import { Controller, Post, Body } from '@nestjs/common';
+
+@Controller('users')
+export class UsersController {
+  
+  // Extract the whole body
+  @Post()
+  create(@Body() body: any) {
+    console.log(body);
+  }
+
+  // Extract a specific property from the body
+  @Post('email')
+  updateEmail(@Body('email') email: string) {
+    console.log(`Updating email to: ${email}`);
+  }
+}
+```
+
+### Validating the Body with a DTO (Standard Approach)
+This is how you should handle request bodies in production applications.
+
+**1. Define the DTO (`create-user.dto.ts`)**
+```typescript
+import { IsString, IsInt, IsEmail, MinLength } from 'class-validator';
+
+export class CreateUserDto {
+  @IsString()
+  @MinLength(3)
+  name: string;
+
+  @IsEmail()
+  email: string;
+
+  @IsInt()
+  age: number;
+}
+```
+
+**2. Use the DTO in the Controller**
+```typescript
+import { Controller, Post, Body } from '@nestjs/common';
+import { CreateUserDto } from './dto/create-user.dto';
+
+@Controller('users')
+export class UsersController {
+  
+  @Post()
+  create(@Body() createUserDto: CreateUserDto) {
+    // If the request body doesn't match the DTO rules, 
+    // ValidationPipe automatically throws a 400 Bad Request
+    // So if we reach here, createUserDto is guaranteed to be valid!
+    return this.usersService.create(createUserDto);
+  }
+}
+```
+
+## Best Practices
+- **Always use Classes for DTOs**: Do not use TypeScript `interfaces` for DTOs. Interfaces disappear during transpilation, meaning Nest has no way to refer to them at runtime for validation. Classes are preserved at runtime, allowing the `ValidationPipe` to inspect them.
+- **Use `whitelist: true`**: When setting up your global `ValidationPipe`, always enable `whitelist: true`. This automatically strips any properties from the incoming JSON body that do not have decorators in the DTO, preventing malicious users from injecting unexpected fields (like `role: "admin"`).
+- **Use `forbidNonWhitelisted: true`**: For even stricter APIs, enable this flag alongside `whitelist: true`. Instead of silently stripping unexpected properties, the API will throw an error if the user sends fields not defined in the DTO.

@@ -1,0 +1,86 @@
+---
+title: "Caching"
+description: "Caching in NestJS"
+importance: "HIGH"
+revisionTime: 12
+category: "NestJS"
+subcategory: "Performance & Scalability"
+order: 2420
+---
+
+*In the context of performance and scalability, caching is the single most effective technique for reducing database load, lowering latency, and increasing the overall throughput of your NestJS application.*
+
+## Overview
+Every time your API processes a request, it consumes CPU cycles (parsing JSON, running business logic) and I/O wait time (querying the database). If 1,000 users request the exact same "Top 10 Products" list within a minute, running the identical SQL query 1,000 times is a massive waste of resources.
+
+Caching intercepts the request, checks if the answer was recently calculated, and if so, returns it immediately from ultra-fast RAM (like Redis or local memory) without touching the database.
+
+## Key Concepts
+- **Throughput**: The number of requests your application can handle per second (RPS). Caching dramatically increases this.
+- **Latency**: The time it takes to serve a single request. Memory access (cache) is orders of magnitude faster than disk or network access (database).
+- **Cache Hit Ratio**: The percentage of requests served from the cache versus requests that had to go to the database (Cache Miss). A higher ratio means better performance.
+
+## Code Examples
+
+### 1. In-Memory vs Distributed Caching
+For single-instance applications, a simple in-memory cache (`@nestjs/cache-manager` with default settings) is sufficient. It is incredibly fast because there is zero network latency.
+
+However, if you scale horizontally (e.g., 5 NestJS instances), an in-memory cache becomes inefficient. Instance A caches the data, but the load balancer routes the next request to Instance B, which has a cold cache and hits the database anyway. 
+
+For scalable performance, you must use a **Distributed Cache** (Redis).
+
+```bash
+npm install @nestjs/cache-manager cache-manager cache-manager-redis-yet
+```
+
+```typescript
+// app.module.ts
+import { Module } from '@nestjs/common';
+import { CacheModule } from '@nestjs/cache-manager';
+import { redisStore } from 'cache-manager-redis-yet';
+
+@Module({
+  imports: [
+    CacheModule.registerAsync({
+      isGlobal: true,
+      useFactory: async () => ({
+        store: await redisStore({
+          socket: {
+            host: 'localhost',
+            port: 6379,
+          },
+          // A global TTL of 60 seconds. Prevents stale data.
+          ttl: 60 * 1000, 
+        }),
+      }),
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+### 2. Auto-Caching Endpoints
+The fastest way to improve API throughput is to slap a `CacheInterceptor` on read-heavy endpoints. This caches the entire HTTP response.
+
+```typescript
+import { Controller, Get, UseInterceptors } from '@nestjs/common';
+import { CacheInterceptor, CacheKey, CacheTTL } from '@nestjs/cache-manager';
+
+@Controller('leaderboard')
+// Applies caching to all GET routes in this controller
+@UseInterceptors(CacheInterceptor) 
+export class LeaderboardController {
+  
+  @Get('global')
+  @CacheKey('global_leaderboard')
+  @CacheTTL(300 * 1000) // Override global TTL: Cache for 5 minutes
+  async getGlobalLeaderboard() {
+    // This heavy aggregation query only runs once every 5 minutes!
+    return this.db.query('SELECT user_id, SUM(points) ... GROUP BY user_id ORDER BY SUM(points) DESC');
+  }
+}
+```
+
+## Best Practices
+- **Never Cache User-Specific Data Globally**: If you apply the `CacheInterceptor` to `/profile`, and User A requests it, their profile gets cached. If User B requests `/profile`, they might receive User A's data! By default, NestJS uses the URL as the cache key. For authenticated endpoints, you must write a custom Cache Interceptor that includes the User ID in the cache key.
+- **The Thundering Herd Problem**: If your 5-minute cache expires, and 1,000 users request the endpoint at that exact millisecond, all 1,000 requests will result in a Cache Miss and hit the database simultaneously, crashing it. To solve this, implement **Cache Stampede Protection** (e.g., using Redis locks so only the first request queries the DB while the other 999 wait).

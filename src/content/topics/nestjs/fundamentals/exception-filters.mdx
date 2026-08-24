@@ -1,0 +1,95 @@
+---
+title: "Exception Filters"
+description: "Exception Filters in NestJS"
+importance: "HIGH"
+revisionTime: 11
+category: "NestJS"
+subcategory: "Fundamentals"
+order: 120
+---
+
+*Exception Filters are responsible for processing all unhandled exceptions across an application.*
+
+## Overview
+Nest comes with a built-in exceptions layer which is responsible for processing all unhandled exceptions. When an exception is not handled by your application code, it is caught by this layer, which then automatically sends an appropriate user-friendly response.
+
+By default, this is performed by a built-in global exception filter that handles exceptions of type `HttpException` (and its subclasses).
+
+## Key Concepts
+- **`HttpException`**: The base class for all HTTP-related exceptions in Nest (e.g., `NotFoundException`, `BadRequestException`). If you throw this, Nest automatically formats it into a standard JSON error response.
+- **Custom Exception Filters**: You can create custom filters to take full control over the exceptions layer. This is useful for adding logging, changing the standard JSON response format, or handling specific types of errors (like Database constraint errors).
+- **`@Catch()` decorator**: Used to specify which type of exceptions a custom filter should catch.
+
+## Code Examples
+
+### Throwing Standard Exceptions
+You don't always need a custom filter. You can just throw built-in exceptions from your Services or Controllers.
+
+```typescript
+@Get(':id')
+async findOne(@Param('id') id: string) {
+  const user = await this.usersService.findOne(+id);
+  
+  if (!user) {
+    // Nest catches this and returns a 404 JSON response automatically
+    throw new NotFoundException(`User #${id} not found`);
+  }
+  
+  return user;
+}
+```
+
+### Creating a Custom Exception Filter
+Let's create a filter that catches `HttpException` but formats the response differently (e.g., adding a timestamp and path).
+
+```typescript
+import { ExceptionFilter, Catch, ArgumentsHost, HttpException } from '@nestjs/common';
+import { Request, Response } from 'express';
+
+// Tell Nest this filter handles HttpExceptions
+@Catch(HttpException)
+export class HttpExceptionFilter implements ExceptionFilter {
+  
+  catch(exception: HttpException, host: ArgumentsHost) {
+    const ctx = host.switchToHttp();
+    const response = ctx.getResponse<Response>();
+    const request = ctx.getRequest<Request>();
+    
+    const status = exception.getStatus();
+    const exceptionResponse = exception.getResponse();
+
+    // Send a custom formatted JSON response
+    response.status(status).json({
+      statusCode: status,
+      timestamp: new Date().toISOString(),
+      path: request.url,
+      // Pass along the original message
+      message: typeof exceptionResponse === 'string' 
+        ? exceptionResponse 
+        : (exceptionResponse as any).message, 
+    });
+  }
+}
+```
+
+### Binding the Filter
+Filters can be bound globally, per-controller, or per-method.
+
+```typescript
+// main.ts (Global Binding)
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+  // Apply globally
+  app.useGlobalFilters(new HttpExceptionFilter()); 
+  await app.listen(3000);
+}
+
+// Or Controller Binding:
+@Controller('users')
+@UseFilters(HttpExceptionFilter)
+export class UsersController {}
+```
+
+## Best Practices
+- **Map External Errors**: Use Exception Filters to map errors from external libraries (like Prisma, TypeORM, or Mongoose) into standard HTTP responses. For example, you can create a `PrismaClientExceptionFilter` that catches Prisma's unique error codes (like `P2002` for unique constraint failures) and returns a `409 Conflict`.
+- **Global Error Handling**: It is highly recommended to have a global Exception Filter to ensure that your API always returns a consistent error format, regardless of where or why the app crashed.

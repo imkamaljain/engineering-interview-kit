@@ -10,6 +10,7 @@ export const categoryIcons: Record<string, string> = {
     'data structures & algorithms': 'https://cdn.jsdelivr.net/gh/devicons/devicon@latest/icons/leetcode/leetcode-plain.svg',
     'system design': 'https://cdn.jsdelivr.net/gh/devicons/devicon@latest/icons/moleculer/moleculer-original.svg',
     'system-design': 'https://cdn.jsdelivr.net/gh/devicons/devicon@latest/icons/moleculer/moleculer-original.svg',
+    'nestjs': 'https://cdn.jsdelivr.net/gh/devicons/devicon@latest/icons/nestjs/nestjs-original.svg',
 };
 
 export const getCategoryIcon = (category: string) => {

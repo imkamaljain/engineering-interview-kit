@@ -1,0 +1,86 @@
+---
+title: "Memory Management"
+description: "Memory Management in NestJS"
+importance: "HIGH"
+revisionTime: 9
+category: "NestJS"
+subcategory: "Performance & Scalability"
+order: 2530
+---
+
+*Memory Management in Node.js revolves around understanding the V8 garbage collector and avoiding memory leaks, ensuring your application doesn't slowly consume all server RAM and crash.*
+
+## Overview
+Unlike C or C++, JavaScript uses a Garbage Collector (GC) to automatically reclaim memory that is no longer in use. However, the GC can only clean up objects if there are *no active references* to them.
+
+A "Memory Leak" occurs when your code accidentally holds onto a reference to an object forever (e.g., pushing data into a global array and never clearing it). Over days or weeks, the memory usage slowly climbs until the Node.js process hits its heap limit (default ~1.5GB) and throws `FATAL ERROR: Ineffective mark-compacts near heap limit Allocation failed - JavaScript heap out of memory`.
+
+## Key Concepts
+- **V8 Engine**: The JavaScript engine underlying Node.js. It manages the heap where objects are stored.
+- **Heap Space**: Memory used for dynamic allocations (objects, arrays, strings).
+- **Garbage Collection**: The periodic pause where V8 scans the heap and deletes unreachable objects.
+
+## Code Examples
+
+### 1. The Classic Memory Leak (Global State)
+In NestJS, providers are Singletons by default. If you store state in a Singleton, that state lives forever.
+
+```typescript
+import { Injectable } from '@nestjs/common';
+
+@Injectable()
+export class BadAnalyticsService {
+  // A global array living inside a Singleton. 
+  // It will grow infinitely until the server crashes.
+  private userActions: any[] = [];
+
+  trackAction(userId: string, action: string) {
+    // We are leaking memory on every request!
+    this.userActions.push({ userId, action, time: Date.now() });
+    
+    // We never process, clear, or delete items from this array.
+  }
+}
+```
+
+### 2. Leaking Listeners (Event Emitters)
+If you add an event listener but never remove it, the EventEmitter holds a reference to your callback, preventing it (and any variables it closes over) from being garbage collected.
+
+```typescript
+import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+
+@Injectable()
+export class WebSocketManager implements OnModuleInit, OnModuleDestroy {
+  constructor(private eventEmitter: EventEmitter2) {}
+
+  onModuleInit() {
+    // Bad if you re-instantiate this class dynamically (e.g., Transient scope)
+    // The event emitter will hold references to thousands of 'handleMessage' instances.
+    this.eventEmitter.on('user.message', this.handleMessage);
+  }
+
+  handleMessage = (msg: string) => {
+    console.log(msg);
+  };
+
+  onModuleDestroy() {
+    // GOOD: Always clean up your listeners when the object is destroyed!
+    this.eventEmitter.removeListener('user.message', this.handleMessage);
+  }
+}
+```
+
+### 3. Increasing the Node.js Memory Limit
+If your application genuinely needs to process a massive dataset (e.g., parsing a 2GB CSV file in memory), you will hit the default ~1.5GB Node.js limit and crash, even without a leak.
+
+You can increase the limit by passing a flag to the V8 engine when starting Node.js.
+
+```bash
+# Increase the Max Old Space Size (Heap Limit) to 4096 MB (4GB)
+node --max-old-space-size=4096 dist/main.js
+```
+
+## Best Practices
+- **Streams for Large Files**: Never read a 1GB file into a string using `fs.readFileSync()`. It will instantly consume 1GB of heap memory. Always use Node.js `Streams` to process data in small chunks (e.g., 64KB at a time), keeping your memory footprint flat regardless of file size.
+- **Avoid Transient Scopes**: NestJS Providers are `Scope.DEFAULT` (Singleton). If you change a provider to `Scope.TRANSIENT` or `Scope.REQUEST`, NestJS creates a brand new instance of that class for *every single HTTP request*. This forces the Garbage Collector to work incredibly hard to clean up thousands of dead objects per second, causing CPU spikes and latency. Use Singletons whenever possible.

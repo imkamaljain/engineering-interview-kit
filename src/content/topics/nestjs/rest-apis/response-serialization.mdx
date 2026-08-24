@@ -1,0 +1,122 @@
+---
+title: "Response Serialization"
+description: "Response Serialization in NestJS"
+importance: "HIGH"
+revisionTime: 8
+category: "NestJS"
+subcategory: "REST APIs"
+order: 1470
+---
+
+*Response Serialization is the process of transforming your internal TypeScript objects (like Database Entities) into the final JSON payload sent to the client. Crucially, it involves stripping out sensitive data (like passwords) before the response goes out.*
+
+## Overview
+When your controller returns a `User` entity from the database, you usually do not want to send all the entity's properties to the client. You might want to hide the `passwordHash`, `verificationToken`, or internal database `id`.
+
+NestJS provides a built-in `ClassSerializerInterceptor` that leverages the `class-transformer` library to automatically filter and transform your outgoing objects based on simple decorators.
+
+## Key Concepts
+- **`ClassSerializerInterceptor`**: The NestJS interceptor that intercepts the response right before it's sent and applies transformation rules.
+- **`@Exclude()`**: A decorator that completely removes a property from the outgoing JSON.
+- **`@Expose()`**: A decorator that explicitly includes a property (or creates a new, computed property).
+- **`@Transform()`**: A decorator that modifies the value of a property before serialization.
+
+## Code Examples
+
+### 1. Enabling the Interceptor
+You can enable the interceptor globally (recommended) or on a per-controller basis.
+
+```typescript
+// main.ts
+import { NestFactory, Reflector } from '@nestjs/core';
+import { ClassSerializerInterceptor } from '@nestjs/common';
+import { AppModule } from './app.module';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+
+  // Enable serialization globally!
+  app.useGlobalInterceptors(new ClassSerializerInterceptor(app.get(Reflector)));
+
+  await app.listen(3000);
+}
+bootstrap();
+```
+
+### 2. Decorating the Entity / Response DTO
+Once the interceptor is active, you simply add `class-transformer` decorators to your class.
+
+```typescript
+// user.entity.ts
+import { Exclude, Expose, Transform } from 'class-transformer';
+
+export class UserEntity {
+  id: number;
+  firstName: string;
+  lastName: string;
+
+  // 1. Never send the password to the client!
+  @Exclude()
+  passwordHash: string;
+
+  // 2. Never send the internal stripe ID
+  @Exclude()
+  stripeCustomerId: string;
+
+  // 3. Create a computed property that isn't in the database
+  @Expose()
+  get fullName(): string {
+    return `${this.firstName} ${this.lastName}`;
+  }
+
+  // 4. Transform a property (e.g., format a date, or map a role enum to a string)
+  @Transform(({ value }) => value.toUpperCase())
+  role: string;
+
+  constructor(partial: Partial<UserEntity>) {
+    Object.assign(this, partial);
+  }
+}
+```
+
+### 3. Returning the Object in the Controller
+**Critical Requirement:** For the `ClassSerializerInterceptor` to work, your controller *must* return actual instances of the class (using the `new` keyword). It will *not* work on plain JavaScript objects.
+
+```typescript
+@Controller('users')
+export class UsersController {
+  
+  @Get(':id')
+  findOne() {
+    // Imagine this came from the database
+    const dbUser = {
+      id: 1,
+      firstName: 'John',
+      lastName: 'Doe',
+      passwordHash: 'secret123',
+      stripeCustomerId: 'cus_xyz',
+      role: 'admin'
+    };
+
+    // MUST return a class instance, not the plain dbUser object!
+    return new UserEntity(dbUser);
+  }
+}
+
+/* 
+  Final JSON sent to client:
+  {
+    "id": 1,
+    "firstName": "John",
+    "lastName": "Doe",
+    "role": "ADMIN",          <-- Transformed
+    "fullName": "John Doe"    <-- Computed (Exposed)
+                              <-- passwordHash EXCLUDED
+                              <-- stripeCustomerId EXCLUDED
+  }
+*/
+```
+
+## Best Practices
+- **Use Response DTOs**: While you *can* put `@Exclude()` directly on your TypeORM Entities, it's often safer to map your Entity to a dedicated `UserResponseDto`. This prevents tightly coupling your database schema decorators to your API presentation logic.
+- **Don't Forget the Class Instance**: The #1 reason `@Exclude()` fails for developers is that they returned a plain object from their service (`return { id: 1, ... }`). The interceptor relies on the prototype chain. You must ensure you are returning instantiated classes.

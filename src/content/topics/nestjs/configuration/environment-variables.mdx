@@ -1,0 +1,70 @@
+---
+title: "Environment Variables"
+description: "Environment Variables in NestJS"
+importance: "HIGH"
+revisionTime: 10
+category: "NestJS"
+subcategory: "Configuration"
+order: 1360
+---
+
+*Environment Variables are key-value pairs stored outside of your source code, allowing your application to behave differently depending on the environment (development, staging, production) without changing the code itself.*
+
+## Overview
+According to the Twelve-Factor App methodology, configuration that varies between deployments (like database URLs, API keys, or port numbers) should **never** be hardcoded in your application. 
+
+Instead, they should be provided via Environment Variables. In Node.js, these variables are typically loaded from a `.env` file during local development and injected directly into the system environment variables when deployed to production (e.g., via Docker, Kubernetes, or Heroku dashboard).
+
+## Key Concepts
+- **`process.env`**: The built-in Node.js object that contains all active environment variables.
+- **`.env` files**: Simple text files storing key-value pairs (e.g., `DATABASE_URL=postgres://...`). These should *never* be committed to version control.
+- **`dotenv`**: A popular Node.js library for loading `.env` files. NestJS wraps this library internally.
+
+## Code Examples
+
+### The Anti-Pattern
+Never do this. It tightly couples your code to a specific environment and leaks secrets.
+
+```typescript
+// BAD: Hardcoded secrets and configuration
+@Injectable()
+export class StripeService {
+  private secretKey = 'sk_live_123456789';
+  private apiVersion = '2023-10-16';
+}
+```
+
+### The Standard Pattern (Using `process.env`)
+While this works, it can be slightly dangerous because `process.env` values are always typed as `string | undefined`.
+
+```typescript
+// Better, but not the NestJS way
+@Injectable()
+export class StripeService {
+  // If STRIPE_SECRET_KEY isn't set, this will be undefined and crash at runtime!
+  private secretKey = process.env.STRIPE_SECRET_KEY;
+}
+```
+
+### The NestJS Way
+NestJS provides the `@nestjs/config` package, which safely loads `.env` files and exposes them via the `ConfigService`.
+
+```typescript
+// Best Practice: Injecting the ConfigService
+import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+
+@Injectable()
+export class StripeService {
+  private secretKey: string;
+
+  constructor(private configService: ConfigService) {
+    // Safely retrieve the variable. You can even provide a fallback.
+    this.secretKey = this.configService.get<string>('STRIPE_SECRET_KEY');
+  }
+}
+```
+
+## Best Practices
+- **Never Commit `.env`**: Ensure your `.env` file is listed in your `.gitignore`. Commit a `.env.example` file instead, containing dummy values, so other developers know what variables the app requires.
+- **Avoid Global `process.env` Usage**: Try to only access environment variables via the NestJS `ConfigService`. This makes your services highly testable because you can easily mock the `ConfigService` in unit tests, whereas mocking `process.env` globally is notoriously tricky and can cause test pollution.

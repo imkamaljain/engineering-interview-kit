@@ -1,0 +1,93 @@
+---
+title: "JWT Strategy"
+description: "JWT Strategy in NestJS"
+importance: "MEDIUM"
+revisionTime: 8
+category: "NestJS"
+subcategory: "Authentication & Authorization"
+order: 1140
+---
+
+*The JWT Strategy (`passport-jwt`) is responsible for intercepting incoming requests, extracting the JWT from the Authorization header, verifying its signature, and returning the user payload.*
+
+## Overview
+While the `AuthService` handles *creating* the JWT upon login, the JWT Strategy handles *reading and verifying* that token on every subsequent request to a protected route.
+
+You create a class extending `PassportStrategy(Strategy, 'jwt')`. NestJS automatically extracts the Bearer token based on your configuration, uses your secret key to ensure it hasn't been tampered with, and if valid, passes the decoded JSON payload to your `validate()` method.
+
+## Key Concepts
+- **Extraction**: Telling the strategy exactly where to look for the token (usually `ExtractJwt.fromAuthHeaderAsBearerToken()`).
+- **Secret Key**: You must provide the exact same secret key used to sign the token.
+- **The `validate()` payload**: Unlike the Local Strategy (which receives a raw email/password), the JWT strategy's `validate()` method receives the *already decoded* JSON payload.
+
+## Code Examples
+
+### A Standard JWT Strategy
+This is the boilerplate required to protect routes using Bearer tokens.
+
+```typescript
+// jwt.strategy.ts
+import { ExtractJwt, Strategy } from 'passport-jwt';
+import { PassportStrategy } from '@nestjs/passport';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { UsersService } from '../users/users.service';
+
+@Injectable()
+export class JwtStrategy extends PassportStrategy(Strategy) { // Defaults to name 'jwt'
+  constructor(
+    private configService: ConfigService,
+    private usersService: UsersService // Optional: Only if you need to hit the DB
+  ) {
+    // Configuration for the passport-jwt library
+    super({
+      // Tell it to look in the "Authorization: Bearer <token>" header
+      jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
+      // Reject tokens that have expired (passport does this automatically!)
+      ignoreExpiration: false,
+      // Provide the secret key to verify the signature
+      secretOrKey: configService.get('JWT_SECRET'),
+    });
+  }
+
+  // If the token is mathematically valid and not expired, this method is called.
+  // The 'payload' is the decoded JSON object (e.g., { sub: 1, email: 'a@a.com' })
+  async validate(payload: any) {
+    
+    // OPTION 1: The fast, stateless way. Just return the payload.
+    // This immediately attaches the data to `request.user`. No DB hit required!
+    return { userId: payload.sub, email: payload.email, role: payload.role };
+    
+    // OPTION 2: The secure, stateful way. Verify the user still exists in the DB.
+    // const user = await this.usersService.findById(payload.sub);
+    // if (!user) throw new UnauthorizedException();
+    // return user;
+  }
+}
+```
+
+### Protecting a Route
+Once the strategy is registered in your Module's `providers`, you use the default `AuthGuard`.
+
+```typescript
+import { Controller, Get, UseGuards, Req } from '@nestjs/common';
+import { AuthGuard } from '@nestjs/passport';
+
+@Controller('profile')
+export class ProfileController {
+  
+  @Get()
+  // Passing 'jwt' tells AuthGuard to look for the JwtStrategy
+  @UseGuards(AuthGuard('jwt')) 
+  getProfile(@Req() req) {
+    // If we reach here, the token was valid!
+    return req.user;
+  }
+}
+```
+
+## Best Practices
+- **To DB or Not to DB**: The great debate in JWT architecture is whether to query the database inside the `validate()` method.
+  - **Stateless (No DB query)**: Incredibly fast. Highly scalable. But if a user is deleted or banned, their token remains valid until it expires.
+  - **Stateful (DB query)**: Slower, as every API request hits the database. But instantly secure; if a user is banned, the next request fails immediately.
+  - **The Compromise**: Keep JWT expiration times very short (15 mins), do not query the DB in `validate()`, and use a separate Refresh Token mechanism that *does* query the DB every 15 minutes.

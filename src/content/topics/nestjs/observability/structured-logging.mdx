@@ -1,0 +1,121 @@
+---
+title: "Structured Logging"
+description: "Structured Logging in NestJS"
+importance: "LOW"
+revisionTime: 10
+category: "NestJS"
+subcategory: "Observability"
+order: 2820
+---
+
+*Structured Logging involves outputting logs in a strict, machine-readable format (typically JSON) rather than plain text strings, enabling powerful querying and alerting in log aggregation platforms.*
+
+## Overview
+When you use `this.logger.log('User 123 purchased item 456 for $50')`, the output is a single, unstructured string. If a developer needs to search Datadog for "all purchases over $100", they have to write a complex, fragile Regex to parse that string.
+
+Structured logging solves this. Instead of a string, you log an object: `{"event": "purchase", "userId": 123, "itemId": 456, "amount": 50}`. The log aggregator automatically indexes every key. Now, the developer just types `event:purchase amount:>100` into the search bar.
+
+## Key Concepts
+- **JSON Format**: The standard format for structured logging. Every log is a valid JSON object.
+- **Indexable Fields**: Key-value pairs that can be filtered and aggregated.
+- **Pino**: The industry standard Node.js logging library for structured logging. It is exceptionally fast and outputs NDJSON (Newline Delimited JSON).
+
+## Code Examples
+
+### 1. The Problem with Unstructured Logs
+```typescript
+// Unstructured - Hard to query
+this.logger.log(`Payment failed for user ${userId} using card ending in ${cardLast4}. Reason: ${error.message}`);
+```
+
+### 2. Switching to Structured Logs
+NestJS's built-in logger is essentially a text logger. To achieve true structured logging, you should replace the default logger with `nestjs-pino`.
+
+```bash
+npm install nestjs-pino pino pino-http
+```
+
+Configure it in your root module:
+
+```typescript
+// app.module.ts
+import { Module } from '@nestjs/common';
+import { LoggerModule } from 'nestjs-pino';
+
+@Module({
+  imports: [
+    LoggerModule.forRoot({
+      pinoHttp: {
+        // Automatically attach these fields to EVERY log
+        customProps: (req, res) => ({
+          context: 'HTTP',
+        }),
+        // In development, pretty-print the JSON into readable text.
+        // In production, leave it as raw JSON!
+        transport: process.env.NODE_ENV !== 'production' 
+          ? { target: 'pino-pretty' } 
+          : undefined, 
+      },
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+Replace the NestJS logger during bootstrap so even framework startup logs are structured:
+
+```typescript
+// main.ts
+import { NestFactory } from '@nestjs/core';
+import { Logger } from 'nestjs-pino';
+import { AppModule } from './app.module';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  
+  // Tell Nest to use Pino for all internal logging
+  app.useLogger(app.get(Logger));
+  
+  await app.listen(3000);
+}
+bootstrap();
+```
+
+### 3. Emitting Structured Logs
+Now, inject the Pino `Logger` (imported from `nestjs-pino`, NOT `@nestjs/common`) and pass objects instead of concatenated strings.
+
+```typescript
+import { Injectable } from '@nestjs/common';
+import { Logger } from 'nestjs-pino';
+
+@Injectable()
+export class PaymentService {
+  constructor(private readonly logger: Logger) {}
+
+  async processPayment(userId: number, amount: number) {
+    try {
+      await this.stripe.charge(amount);
+      
+      // Structured Log!
+      this.logger.info({ 
+        event: 'payment_success', 
+        userId, 
+        amount 
+      }, 'Payment processed successfully');
+      
+    } catch (error) {
+      // Pass the error object, custom fields, and a human message
+      this.logger.error({ 
+        err: error, 
+        event: 'payment_failed',
+        userId,
+        amount
+      }, 'Payment processing failed');
+    }
+  }
+}
+```
+
+## Best Practices
+- **Define a Logging Schema**: Don't let developers make up random keys. If one developer uses `userId`, another uses `user_id`, and another uses `uid`, querying becomes impossible. Create a company-wide typescript interface for common logging payloads.
+- **Log the `event` key**: Every structured log should have a consistent `event` or `action` key (e.g., `user_login`, `item_purchase`, `db_timeout`). This is the primary way you will group and analyze logs.

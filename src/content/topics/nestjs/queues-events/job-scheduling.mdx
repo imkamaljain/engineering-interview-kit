@@ -1,0 +1,109 @@
+---
+title: "Job Scheduling"
+description: "Job Scheduling in NestJS"
+importance: "MEDIUM"
+revisionTime: 10
+category: "NestJS"
+subcategory: "Queues & Events"
+order: 2020
+---
+
+*Job Scheduling involves executing tasks at predetermined times or regular intervals. In NestJS, this is typically handled by the `@nestjs/schedule` package (Cron jobs) or via repeatable jobs in `@nestjs/bull`.*
+
+## Overview
+While a Delayed Job waits for a specific duration *once*, a Scheduled Job runs repeatedly on a fixed schedule (e.g., "Every Monday at 9 AM" or "Every 5 minutes").
+
+NestJS provides a built-in scheduler using `node-cron`. However, for distributed, multi-server applications, relying solely on local Cron jobs is dangerous, and you must combine scheduling with a Redis-backed queue like Bull.
+
+## Key Concepts
+- **Cron Expressions**: A string format used to specify intervals (e.g., `* * * * *` means every minute).
+- **The Multiple-Instance Problem**: If you deploy 3 instances of your NestJS app, and you have a standard `@Cron()` job that charges subscriptions at midnight, *all 3 instances* will run the job at midnight, potentially charging your customers 3 times!
+- **Repeatable Jobs**: Bull solves the multiple-instance problem by storing the schedule in Redis. Only *one* worker will pull the job from Redis at the scheduled time.
+
+## Code Examples
+
+### 1. Basic In-Memory Scheduling (For Single-Instance Apps)
+If you are only running ONE server, you can use `@nestjs/schedule`.
+
+```bash
+npm i @nestjs/schedule
+```
+
+```typescript
+// app.module.ts
+import { Module } from '@nestjs/common';
+import { ScheduleModule } from '@nestjs/schedule';
+
+@Module({
+  imports: [ScheduleModule.forRoot()],
+})
+export class AppModule {}
+```
+
+```typescript
+// billing.service.ts
+import { Injectable } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
+
+@Injectable()
+export class BillingService {
+  
+  // Runs every day at Midnight
+  @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
+  async handleDailyBilling() {
+    console.log('Running daily billing...');
+    // WARNING: If you have 5 servers, this prints 5 times!
+  }
+}
+```
+
+### 2. Distributed Scheduling with Bull (For Multi-Instance Apps)
+To solve the concurrency issue, do NOT use `@Cron` to do the heavy lifting. Use Bull's `repeat` option. You set up a regular queue and consumer, but you push a "Repeatable" job into it.
+
+```typescript
+// billing.service.ts
+import { Injectable, OnApplicationBootstrap } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bull';
+import { Queue } from 'bull';
+
+@Injectable()
+export class BillingService implements OnApplicationBootstrap {
+  constructor(@InjectQueue('billing_queue') private billingQueue: Queue) {}
+
+  // Run this once when the application starts
+  async onApplicationBootstrap() {
+    // 1. Add the repeatable job to Redis. 
+    // Redis guarantees this schedule only exists once, even if 5 servers run this code!
+    await this.billingQueue.add(
+      'daily_billing_job', 
+      {}, // Payload
+      {
+        repeat: {
+          cron: '0 0 * * *', // Every day at midnight
+        },
+        jobId: 'unique_daily_billing_id', // Prevent duplicating the schedule on restart
+      }
+    );
+  }
+}
+```
+
+```typescript
+// billing.processor.ts
+import { Processor, Process } from '@nestjs/bull';
+import { Job } from 'bull';
+
+@Processor('billing_queue')
+export class BillingProcessor {
+  
+  @Process('daily_billing_job')
+  async handleDailyBilling(job: Job) {
+    // 2. Only ONE worker across your entire cluster will execute this!
+    console.log('Safely processing daily billing across cluster...');
+  }
+}
+```
+
+## Best Practices
+- **Always use Bull for Distributed Cron**: Never trust local `@Cron()` decorators for critical business logic if you plan to scale beyond one server instance. Use Bull's `repeat` jobs. If you must use local `@Cron`, use a distributed lock (like `redlock`) to ensure only one instance successfully executes the logic.
+- **Provide a `jobId` for Repeatable Jobs**: If you don't provide a strict `jobId` when creating a repeatable Bull job inside `onApplicationBootstrap`, every time your server restarts/deploys, it will add a *brand new* duplicate schedule to Redis! Always define a custom `jobId` to ensure idempotency.

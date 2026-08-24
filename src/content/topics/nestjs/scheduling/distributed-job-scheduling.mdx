@@ -1,0 +1,109 @@
+---
+title: "Distributed Job Scheduling"
+description: "Distributed Job Scheduling in NestJS"
+importance: "LOW"
+revisionTime: 14
+category: "NestJS"
+subcategory: "Scheduling"
+order: 2260
+---
+
+*Distributed Job Scheduling ensures that background tasks are executed reliably exactly once, even when your application is scaled horizontally across multiple server instances.*
+
+## Overview
+The biggest flaw with `@nestjs/schedule` (`@Cron`) is that it is strictly in-memory. 
+If you run 3 instances of your NestJS application behind a load balancer, and you have a `@Cron(EVERY_DAY_AT_MIDNIGHT)` decorator, at midnight, **all 3 servers will execute the job simultaneously**. If that job sends a daily email, your users will receive 3 identical emails.
+
+To solve this, you must use a Distributed Job Scheduler like **BullMQ** (backed by Redis). 
+
+## Key Concepts
+- **Redis Backing**: The job schedule is stored in a central Redis database, not in the local RAM of a single server.
+- **Producers and Consumers**: One server (Producer) schedules a job in Redis. Another server (Consumer) picks it up. Once picked up, Redis locks the job so no other server can process it.
+- **Persistence & Retries**: If the server crashes halfway through sending the emails, BullMQ knows the job failed and can automatically retry it later. Standard `@Cron` jobs have no memory of failure.
+
+## Code Examples
+
+### 1. Installation
+Instead of `@nestjs/schedule`, we use `@nestjs/bullmq`.
+
+```bash
+npm install @nestjs/bullmq bullmq
+```
+
+### 2. Configuration
+Connect BullMQ to your Redis instance.
+
+```typescript
+// app.module.ts
+import { Module } from '@nestjs/common';
+import { BullModule } from '@nestjs/bullmq';
+
+@Module({
+  imports: [
+    BullModule.forRoot({
+      connection: {
+        host: 'localhost',
+        port: 6379,
+      },
+    }),
+    // Register a specific queue
+    BullModule.registerQueue({
+      name: 'reports', // Name of the queue
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+### 3. Scheduling the Distributed Job (Producer)
+Instead of using `@Cron`, we add a repeatable job to the BullMQ queue. This only needs to happen once (e.g., on application bootstrap).
+
+```typescript
+// schedule.service.ts
+import { Injectable, OnModuleInit } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
+
+@Injectable()
+export class ScheduleService implements OnModuleInit {
+  constructor(@InjectQueue('reports') private reportQueue: Queue) {}
+
+  async onModuleInit() {
+    // Add a repeatable job to Redis. 
+    // If it already exists in Redis, it won't duplicate it.
+    await this.reportQueue.add(
+      'daily_report', // Job name
+      { data: 'some_context' }, // Payload
+      {
+        repeat: {
+          pattern: '0 0 * * *', // Every midnight
+        },
+      },
+    );
+  }
+}
+```
+
+### 4. Executing the Job (Consumer / Worker)
+All 3 of your servers will have this Worker running. However, when midnight strikes, BullMQ guarantees that only *one* of the servers will actually receive the job and execute `process()`.
+
+```typescript
+// report.processor.ts
+import { Processor, WorkerHost } from '@nestjs/bullmq';
+import { Job } from 'bullmq';
+
+@Processor('reports') // Listens to the 'reports' queue
+export class ReportProcessor extends WorkerHost {
+  
+  async process(job: Job<any, any, string>): Promise<any> {
+    if (job.name === 'daily_report') {
+      console.log('Only ONE server is printing this at midnight!');
+      // Execute the heavy report generation logic here
+    }
+  }
+}
+```
+
+## Best Practices
+- **Separate Worker Microservices**: For highly scalable applications, you shouldn't run the BullMQ `@Processor` inside your main web-facing NestJS app. Instead, build a separate NestJS microservice that purely acts as a worker. Your web app handles HTTP requests and pushes jobs to Redis; your worker microservice reads from Redis and executes them without blocking the web servers.
+- **Stalled Jobs**: Configure BullMQ's lock duration appropriately. If a worker picks up a job but the Node.js process crashes, BullMQ will realize the job "stalled" and return it to the queue for another server to process.

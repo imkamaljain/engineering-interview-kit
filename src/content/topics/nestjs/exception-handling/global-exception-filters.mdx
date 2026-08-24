@@ -1,0 +1,98 @@
+---
+title: "Global Exception Filters"
+description: "Global Exception Filters in NestJS"
+importance: "LOW"
+revisionTime: 9
+category: "NestJS"
+subcategory: "Exception Handling"
+order: 940
+---
+
+*Global Exception Filters catch unhandled exceptions across the entire application, providing a single, centralized location to handle critical errors, format standard responses, and log failures.*
+
+## Overview
+While you can apply filters to individual controllers using `@UseFilters()`, you almost always want a safety net that catches everything else.
+
+A Global Exception Filter is typically designed to catch the generic `Error` class (meaning it catches absolutely every crash, typo, and database failure) and ensure the client receives a standardized `500 Internal Server Error` instead of a raw Node.js stack trace.
+
+## Key Concepts
+- **Catch-All**: By using `@Catch()` without any arguments, or `@Catch(Error)`, the filter intercepts everything that wasn't caught by a more specific filter.
+- **`app.useGlobalFilters()`**: The method used in `main.ts` to register the filter globally.
+- **`APP_FILTER`**: An alternative way to register global filters via dependency injection, allowing the filter to inject other services (like a Logger or Database service).
+
+## Code Examples
+
+### 1. Creating the Catch-All Filter
+This filter catches everything, logs it, and returns a generic response so we don't leak sensitive database details to the client.
+
+```typescript
+import { ExceptionFilter, Catch, ArgumentsHost, HttpException, HttpStatus, Logger } from '@nestjs/common';
+
+@Catch() // Empty means it catches EVERYTHING
+export class AllExceptionsFilter implements ExceptionFilter {
+  private readonly logger = new Logger(AllExceptionsFilter.name);
+
+  catch(exception: unknown, host: ArgumentsHost) {
+    const ctx = host.switchToHttp();
+    const response = ctx.getResponse();
+    const request = ctx.getRequest();
+
+    // Determine the status code. 
+    // If it's a known HttpException, use its status. Otherwise, default to 500.
+    const status =
+      exception instanceof HttpException
+        ? exception.getStatus()
+        : HttpStatus.INTERNAL_SERVER_ERROR;
+
+    // Log the error for internal tracking (crucial for 500 errors!)
+    this.logger.error(`HTTP Status: ${status} Error Message: ${exception}`);
+
+    // Send a sanitized, standardized response to the client
+    response.status(status).json({
+      statusCode: status,
+      timestamp: new Date().toISOString(),
+      path: request.url,
+      message: status === 500 ? 'Internal server error' : (exception as HttpException).message,
+    });
+  }
+}
+```
+
+### 2. Registering it Globally (main.ts)
+The simplest way to apply it.
+
+```typescript
+// main.ts
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+  
+  // Apply globally!
+  app.useGlobalFilters(new AllExceptionsFilter());
+  
+  await app.listen(3000);
+}
+```
+
+### 3. Registering via Dependency Injection (APP_FILTER)
+If your `AllExceptionsFilter` needs to inject a `DatabaseLoggingService` via the constructor, you *cannot* use `app.useGlobalFilters(new AllExceptionsFilter())` because it's instantiated outside the IoC container. You must use `APP_FILTER`.
+
+```typescript
+// app.module.ts
+import { Module } from '@nestjs/common';
+import { APP_FILTER } from '@nestjs/core';
+import { AllExceptionsFilter } from './all-exceptions.filter';
+
+@Module({
+  providers: [
+    {
+      provide: APP_FILTER,
+      useClass: AllExceptionsFilter, // Now NestJS manages instantiation and DI!
+    },
+  ],
+})
+export class AppModule {}
+```
+
+## Best Practices
+- **Don't Leak Stack Traces**: The primary job of a Global Exception Filter is to ensure that unhandled 500 errors do not leak stack traces or raw database error messages to the client, which is a major security risk.
+- **Log Everything**: Since this filter catches unexpected crashes, it is the most critical place in your application to integrate with a robust logging solution (like Winston, Datadog, or Sentry) so you are alerted when things go wrong.

@@ -1,0 +1,71 @@
+---
+title: "Request Scope"
+description: "Request Scope in NestJS"
+importance: "HIGH"
+revisionTime: 10
+category: "NestJS"
+subcategory: "Providers & Services"
+order: 440
+---
+
+*The Request Scope (`Scope.REQUEST`) tells NestJS to create a new, exclusive instance of the provider for every incoming HTTP request.*
+
+## Overview
+While the default Singleton scope is shared across all requests, sometimes you need a provider to hold state that is specific to one single request. 
+
+For example, you might want to create a `TenantService` that holds the `tenantId` of the user currently making the API call. Since multiple users are making requests concurrently, a Singleton would overwrite the `tenantId`, resulting in data leakage. Request Scope solves this by giving every request its own private instance of the `TenantService`.
+
+Once the HTTP request completes and the response is sent, the Request-Scoped provider is destroyed (garbage collected).
+
+## Key Concepts
+- **`Scope.REQUEST`**: The enum value used to set this scope.
+- **Garbage Collection**: Instances are ephemeral; they live only as long as the request takes to process.
+- **The "Bubbling Up" Effect**: If any Singleton (like a Controller) injects a Request-Scoped provider, the Singleton *automatically becomes Request-Scoped itself*.
+
+## Code Examples
+
+### Defining a Request-Scoped Service
+```typescript
+import { Injectable, Scope, Inject } from '@nestjs/common';
+import { REQUEST } from '@nestjs/core';
+import { Request } from 'express';
+
+@Injectable({ scope: Scope.REQUEST })
+export class RequestIdService {
+  public id: string;
+
+  constructor(
+    // You can inject the raw Request object into request-scoped providers!
+    @Inject(REQUEST) private request: Request
+  ) {
+    // Generate a unique ID for this specific incoming request
+    this.id = Math.random().toString(36).substring(7);
+    console.log(`Instantiated new RequestIdService with ID: ${this.id}`);
+  }
+}
+```
+
+### The Bubbling Effect
+Because `UsersController` injects `RequestIdService`, the controller will now be re-instantiated on every single request, *even though we didn't explicitly mark the controller as Request-Scoped*.
+
+```typescript
+import { Controller, Get } from '@nestjs/common';
+import { RequestIdService } from './request-id.service';
+
+@Controller('users')
+export class UsersController {
+  
+  // This injection forces UsersController into Scope.REQUEST
+  constructor(private readonly requestIdService: RequestIdService) {}
+
+  @Get()
+  getUsers() {
+    return `Fetching users for request: ${this.requestIdService.id}`;
+  }
+}
+```
+
+## Best Practices
+- **Use Only When Necessary**: Request-scoped providers have a severe negative impact on performance. Instantiating classes, resolving dependencies, and garbage collecting for *every* request is slow and memory-intensive.
+- **Pass Data Instead of Scoping**: Instead of making a service request-scoped just to access the `req.user` object, use a custom `@User()` decorator in the controller and pass the user object as an argument to a standard Singleton service method.
+- **Understand GraphQL Behavior**: In GraphQL applications, a Request-Scoped provider is instantiated once per *GraphQL Request*, not per resolver. This means all resolvers executed during a single query share the same request-scoped instances.

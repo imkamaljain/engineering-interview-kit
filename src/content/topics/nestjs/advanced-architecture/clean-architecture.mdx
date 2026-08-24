@@ -1,0 +1,123 @@
+---
+title: "Clean Architecture"
+description: "Clean Architecture in NestJS"
+importance: "HIGH"
+revisionTime: 9
+category: "NestJS"
+subcategory: "Advanced Architecture"
+order: 2660
+---
+
+*Clean Architecture is a software design philosophy, heavily popularized by Robert C. Martin ("Uncle Bob"), that emphasizes the separation of concerns by dividing software into ringed layers.*
+
+## Overview
+The primary goal of Clean Architecture is **Independence**. The core business logic of your application should not know or care about what database you use, what UI framework you use, or whether the app is exposed via REST, GraphQL, or CLI.
+
+NestJS's dependency injection system and modularity make it a perfect framework for implementing Clean Architecture. By using interfaces and Custom Providers, you can ensure dependencies point inward toward the core domain.
+
+## Key Concepts (The Rings)
+Clean Architecture is typically visualized as concentric circles:
+1. **Entities (Enterprise Business Rules)**: The innermost circle. These are pure TypeScript classes that encapsulate your most critical business logic (e.g., `User`, `Account`, `Order`). They have zero dependencies on any external framework.
+2. **Use Cases (Application Business Rules)**: The next ring out. These orchestrate the flow of data to and from the entities (e.g., `CreateUserUseCase`, `CheckoutOrderUseCase`).
+3. **Interface Adapters**: Controllers, Gateways, and Presenters. They convert data from the format most convenient for the Use Cases, to the format most convenient for the external agency (like the Web).
+4. **Frameworks & Drivers**: The outermost ring. The database, the UI, external APIs.
+
+## The Dependency Rule
+*Dependencies must only point inward.* Code in an inner ring can have no knowledge of anything in an outer ring. 
+
+A Use Case cannot import `TypeOrmUserRepository`. If it did, it would be tied to TypeORM. Instead, it imports an interface (`IUserRepository`), and the outer ring implements that interface.
+
+## Code Examples
+
+### 1. The Core Domain (Entities & Interfaces)
+This is the innermost ring. It has NO imports from `@nestjs/common` or `typeorm`.
+
+```typescript
+// src/domain/entities/user.ts
+export class User {
+  constructor(
+    public readonly id: string,
+    public readonly email: string,
+    private passwordHash: string,
+  ) {}
+
+  // Pure business logic
+  public updatePassword(newHash: string) {
+    this.passwordHash = newHash;
+  }
+}
+
+// src/domain/repositories/user-repository.interface.ts
+import { User } from '../entities/user';
+
+export const IUserRepository = Symbol('IUserRepository');
+
+export interface IUserRepository {
+  findById(id: string): Promise<User | null>;
+  save(user: User): Promise<void>;
+}
+```
+
+### 2. The Application Layer (Use Cases)
+This layer orchestrates the logic. It knows about the Domain, but nothing about HTTP or SQL.
+
+```typescript
+// src/application/use-cases/update-password.use-case.ts
+import { Injectable, Inject } from '@nestjs/common';
+import { IUserRepository } from '../../domain/repositories/user-repository.interface';
+
+@Injectable() // The only NestJS decorator allowed here!
+export class UpdatePasswordUseCase {
+  
+  // We inject the INTERFACE, not the TypeORM class!
+  constructor(
+    @Inject(IUserRepository) 
+    private readonly userRepository: IUserRepository
+  ) {}
+
+  async execute(userId: string, newHash: string): Promise<void> {
+    const user = await this.userRepository.findById(userId);
+    if (!user) throw new Error('User not found'); // Domain error
+    
+    user.updatePassword(newHash);
+    await this.userRepository.save(user);
+  }
+}
+```
+
+### 3. The Infrastructure Layer (Adapters)
+This is the outermost layer. It depends on everything else. It implements the interfaces defined by the Domain.
+
+```typescript
+// src/infrastructure/database/typeorm-user.repository.ts
+import { Injectable } from '@nestjs/common';
+import { Repository } from 'typeorm';
+import { InjectRepository } from '@nestjs/typeorm';
+import { IUserRepository } from '../../domain/repositories/user-repository.interface';
+import { User } from '../../domain/entities/user';
+import { UserEntity } from './user.entity'; // TypeORM specific entity
+
+@Injectable()
+export class TypeOrmUserRepository implements IUserRepository {
+  constructor(
+    @InjectRepository(UserEntity)
+    private readonly ormRepo: Repository<UserEntity>,
+  ) {}
+
+  async findById(id: string): Promise<User | null> {
+    const ormUser = await this.ormRepo.findOneBy({ id });
+    if (!ormUser) return null;
+    
+    // Map the TypeORM entity back to the pure Domain Entity
+    return new User(ormUser.id, ormUser.email, ormUser.password);
+  }
+
+  async save(user: User): Promise<void> {
+    // Map Domain Entity to TypeORM entity and save...
+  }
+}
+```
+
+## Best Practices
+- **Use CQRS**: Clean Architecture pairs perfectly with CQRS. Your Use Cases often become your `CommandHandlers` and `QueryHandlers`.
+- **Don't Over-Engineer**: Clean Architecture introduces a lot of boilerplate (mapping Database Entities to Domain Entities, defining massive Interface files). If you are building a simple CRUD API for a blog, do not use Clean Architecture. Use it for complex domains (Banking, ERPs, Healthcare) where business rules are critical and frequently changing independently of the database.

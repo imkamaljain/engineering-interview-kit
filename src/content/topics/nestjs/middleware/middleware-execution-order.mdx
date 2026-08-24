@@ -1,0 +1,82 @@
+---
+title: "Middleware Execution Order"
+description: "Middleware Execution Order in NestJS"
+importance: "LOW"
+revisionTime: 10
+category: "NestJS"
+subcategory: "Middleware"
+order: 560
+---
+
+*Understanding the execution order of middleware is critical when multiple middlewares mutate the request or depend on each other.*
+
+## Overview
+When a request enters a NestJS application, it passes through middleware before hitting any Guards, Interceptors, Pipes, or Controllers. 
+
+If you apply multiple middleware functions, Nest executes them sequentially. The order in which they execute depends entirely on how and where they are registered.
+
+## Key Concepts
+- **Global vs Module**: Global middleware always executes before module-bound middleware.
+- **Registration Order**: Within a module's `configure()` method, middleware executes in the exact order it is passed to the `apply()` method.
+- **The Onion Model**: Request lifecycle flows "inward" (middleware -> guards -> controller), and the response flows "outward" (controller -> interceptor -> middleware).
+
+## Execution Order Rules
+
+1.  **Global Functional Middleware**: Anything registered with `app.use()` in `main.ts` runs absolutely first.
+2.  **Global Module Middleware**: Middleware bound to the root `AppModule` via `forRoutes('*')` runs second.
+3.  **Feature Module Middleware**: Middleware bound to specific feature modules runs next. If `UsersModule` imports `AuthModule`, the `AuthModule` middleware runs *before* the `UsersModule` middleware.
+4.  Within the same `configure()` block, execution follows the array order passed to `apply()`.
+
+## Code Examples
+
+### Controlling Order within a Module
+In this example, `HelmetMiddleware` will run, followed by `LoggerMiddleware`, and finally `AuthMiddleware`.
+
+```typescript
+import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
+
+@Module({})
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    
+    // Approach 1: Comma separated in a single apply()
+    consumer
+      .apply(HelmetMiddleware, LoggerMiddleware, AuthMiddleware)
+      .forRoutes('*');
+      
+    // Approach 2: Chaining apply() calls (Identical result)
+    consumer
+      .apply(HelmetMiddleware)
+      .forRoutes('*')
+      .apply(LoggerMiddleware)
+      .forRoutes('*')
+      .apply(AuthMiddleware)
+      .forRoutes('*');
+  }
+}
+```
+
+### Mutating the Response (Post-Controller Execution)
+Because middleware wraps the entire request-response cycle (similar to Express), any code written *after* the `next()` call executes on the way *out*, after the Controller has sent the response!
+
+```typescript
+@Injectable()
+export class TimingMiddleware implements NestMiddleware {
+  use(req: Request, res: Response, next: NextFunction) {
+    const start = Date.now();
+    
+    // 1. Wait for the rest of the application to finish...
+    next(); 
+    
+    // 2. This code runs AFTER the controller has finished!
+    res.on('finish', () => {
+      const duration = Date.now() - start;
+      console.log(`${req.method} ${req.url} took ${duration}ms`);
+    });
+  }
+}
+```
+
+## Best Practices
+- **Authentication First**: If you use middleware for authentication/session parsing, ensure it is the very first middleware registered in your module (or registered globally). Other middleware might depend on the `req.user` object being populated.
+- **Debugging Order**: If you suspect an execution order issue, add a simple `console.log('Middleware A')` at the very top of each middleware's `use` method to easily visualize the sequence in your terminal.

@@ -1,0 +1,87 @@
+---
+title: "Task Scheduling"
+description: "Task Scheduling in NestJS"
+importance: "LOW"
+revisionTime: 6
+category: "NestJS"
+subcategory: "Scheduling"
+order: 2200
+---
+
+*Task Scheduling allows your application to execute arbitrary code (tasks/jobs) at specific points in time, at recurring intervals, or after a specific delay.*
+
+## Overview
+Not everything in a web application happens as a direct response to a user clicking a button. Many critical operations happen in the background, based on time.
+
+Examples of Task Scheduling:
+- Generating and emailing a weekly summary report to all users every Sunday at midnight.
+- Pinging an external health-check API every 30 seconds.
+- Cleaning up expired session tokens from the database once a day.
+
+NestJS provides the `@nestjs/schedule` package, which integrates the popular `node-cron` package, offering a declarative way to manage these background tasks.
+
+## Key Concepts
+- **Cron Jobs**: Tasks scheduled using standard cron expressions (e.g., `0 0 * * *` for midnight). They run repeatedly based on the calendar/clock.
+- **Intervals**: Tasks that run repeatedly, but simply based on a fixed time delay between executions (e.g., "run every 5 minutes"), irrespective of the clock time.
+- **Timeouts**: Tasks that run exactly *once*, after a specified delay (e.g., "run this 30 minutes from now").
+
+## Code Examples
+
+### 1. Installation and Setup
+First, install the required packages.
+
+```bash
+npm install @nestjs/schedule
+```
+
+Then, import the `ScheduleModule` into your root `AppModule`.
+
+```typescript
+// app.module.ts
+import { Module } from '@nestjs/common';
+import { ScheduleModule } from '@nestjs/schedule';
+
+@Module({
+  imports: [
+    // Must be imported at the root level!
+    ScheduleModule.forRoot()
+  ],
+})
+export class AppModule {}
+```
+
+### 2. Basic Usage
+Once the module is imported, you can use the `@Cron`, `@Interval`, and `@Timeout` decorators in any provider/service.
+
+```typescript
+import { Injectable, Logger } from '@nestjs/common';
+import { Cron, Interval, Timeout } from '@nestjs/schedule';
+
+@Injectable()
+export class TasksService {
+  private readonly logger = new Logger(TasksService.name);
+
+  // Runs exactly once, 5 seconds after application startup
+  @Timeout(5000)
+  handleTimeout() {
+    this.logger.debug('One-time task executed');
+  }
+
+  // Runs repeatedly, every 10 seconds
+  @Interval(10000)
+  handleInterval() {
+    this.logger.debug('Interval task executed');
+  }
+
+  // Runs every day at 45 seconds past the minute, every hour
+  @Cron('45 * * * * *')
+  handleCron() {
+    this.logger.debug('Cron task executed');
+  }
+}
+```
+
+## Best Practices
+- **Idempotency**: Scheduled tasks must be idempotent (safe to run multiple times). If your cron job emails users, ensure it checks a `last_emailed_date` in the database before sending. If the server restarts and the job accidentally runs twice, users shouldn't get duplicate emails.
+- **Error Handling**: An unhandled exception inside a Cron job will crash the entire Node.js process! Always wrap your scheduled task logic in `try/catch` blocks.
+- **The Multiple Instance Problem**: If you deploy 5 instances of your NestJS app behind a load balancer, and you have a `@Cron` job that runs at midnight, *all 5 instances* will execute the job simultaneously! To solve this, you must use Distributed Job Scheduling (like BullMQ + Redis) instead of the standard `@nestjs/schedule`.

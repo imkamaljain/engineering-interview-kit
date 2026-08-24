@@ -1,0 +1,65 @@
+---
+title: "Whitelisting"
+description: "Whitelisting in NestJS"
+importance: "LOW"
+revisionTime: 14
+category: "NestJS"
+subcategory: "Validation & DTOs"
+order: 1050
+---
+
+*Whitelisting is a critical security feature that automatically filters out unknown or unexpected properties from incoming requests before they reach your controller logic.*
+
+## Overview
+By default, if a client sends a JSON payload containing fields that are *not* defined in your DTO, the `ValidationPipe` will still let the request through, and those extra properties will remain on the object.
+
+This leads to a severe security vulnerability known as **Mass Assignment**. If you pass the entire DTO directly to your ORM (e.g., `this.usersRepository.save(dto)`), a malicious user might include `{ "isAdmin": true }` in their registration request and unintentionally grant themselves administrative privileges.
+
+## Key Concepts
+- **`whitelist: true`**: A configuration option for the `ValidationPipe`.
+- **Property Stripping**: When enabled, the pipe looks at the DTO class. Any property in the incoming JSON that does not have at least one `class-validator` decorator applied to it is silently removed.
+- **Security by Default**: It ensures your controllers only ever process the exact data contract you designed.
+
+## Code Examples
+
+### The Vulnerability (Without Whitelisting)
+```typescript
+// The DTO
+export class UpdateUserDto {
+  @IsString()
+  username: string;
+}
+
+// The Controller
+@Patch(':id')
+update(@Body() dto: UpdateUserDto) {
+  // If the client sends: { "username": "hacker", "role": "admin" }
+  // Without whitelisting, 'dto.role' equals "admin"!
+  // If you save this directly to the DB, you are compromised.
+  return this.db.updateUser(id, dto); 
+}
+```
+
+### Enabling Whitelisting
+Enable it globally in your `main.ts` so you never have to think about it again.
+
+```typescript
+// main.ts
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true, // Enable whitelisting globally!
+    }),
+  );
+
+  await app.listen(3000);
+}
+```
+
+With `whitelist: true` enabled, if the client sends `{ "username": "hacker", "role": "admin" }`, the `ValidationPipe` intercepts it, compares it to `UpdateUserDto`, sees that `role` has no decorators, and strips it. The controller receives: `{ "username": "hacker" }`.
+
+## Best Practices
+- **Always Enable It**: There is rarely a good reason to turn `whitelist: true` off in a production API.
+- **The `@Allow()` Decorator**: If you have a property in your DTO that you *do* want to accept from the client, but you don't actually need to validate it (e.g., a generic `metadata` JSON object), you must use the `@Allow()` decorator from `class-validator`. If a property has zero decorators, the whitelister will delete it. `@Allow()` tells the whitelister "this property is expected, leave it alone".

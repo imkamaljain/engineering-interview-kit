@@ -1,0 +1,91 @@
+---
+title: "Mocking Dependencies"
+description: "Mocking Dependencies in NestJS"
+importance: "LOW"
+revisionTime: 12
+category: "NestJS"
+subcategory: "Testing"
+order: 2330
+---
+
+*Mocking Dependencies is the process of replacing real, complex external systems (like databases, APIs, or message queues) with fake, controllable objects during unit testing to isolate the code being tested.*
+
+## Overview
+When you write a Unit Test for a `UserService`, you only want to test the logic *inside* `UserService`. 
+
+If `UserService` requires a `DatabaseRepository` and an `EmailService`, using the real versions of those classes would require a running database and an internet connection. Worse, the test would be slow and brittle (failing if the network goes down).
+
+By "Mocking" those dependencies, you provide fake versions that return predictable data instantly.
+
+## Key Concepts
+- **Mock**: An object that mimics the interface of a real dependency but has fake behavior controlled by the test.
+- **Stubbing**: Telling a mock what to return when a specific method is called (e.g., "When `findUser` is called, return `{id: 1}`").
+- **Verification**: Asserting that the code under test called the mock correctly (e.g., "Assert that `sendEmail` was called exactly once with 'welcome@test.com'").
+
+## Code Examples
+
+### 1. The Manual Mock (The easy way)
+If you don't use NestJS's `TestingModule` for simple unit tests, you can manually instantiate your service and pass in standard JavaScript objects containing `jest.fn()`.
+
+```typescript
+// user.service.spec.ts
+import { UserService } from './user.service';
+
+describe('UserService', () => {
+  let service: UserService;
+  
+  // 1. Create a mock object that matches the shape of the required dependencies
+  let mockRepository = {
+    findOne: jest.fn(),
+    save: jest.fn(),
+  };
+  
+  let mockEmailService = {
+    sendWelcomeEmail: jest.fn(),
+  };
+
+  beforeEach(() => {
+    // Clear the call history before each test
+    jest.clearAllMocks();
+    
+    // 2. Manually inject the mocks into the constructor
+    service = new UserService(mockRepository as any, mockEmailService as any);
+  });
+
+  it('should create a user and send an email', async () => {
+    // 3. Stub the behavior: when save() is called, return this object.
+    mockRepository.save.mockResolvedValue({ id: 1, email: 'test@test.com' });
+    
+    // Act
+    const result = await service.register('test@test.com');
+    
+    // Assert Return Value
+    expect(result.id).toBe(1);
+    
+    // 4. Verify the mock was called correctly
+    expect(mockRepository.save).toHaveBeenCalledWith({ email: 'test@test.com' });
+    expect(mockEmailService.sendWelcomeEmail).toHaveBeenCalledWith('test@test.com');
+  });
+});
+```
+
+### 2. Handling Rejections and Errors
+You must also test how your service handles failures from its dependencies.
+
+```typescript
+it('should throw an error if the database fails', async () => {
+  // Stub the mock to throw an error
+  mockRepository.save.mockRejectedValue(new Error('Database Connection Lost'));
+  
+  // Act & Assert
+  // We expect the UserService to throw a specific error when the DB fails
+  await expect(service.register('test@test.com')).rejects.toThrow('Failed to register user');
+  
+  // Ensure the email was NEVER sent because the DB failed
+  expect(mockEmailService.sendWelcomeEmail).not.toHaveBeenCalled();
+});
+```
+
+## Best Practices
+- **Only Mock External Boundaries**: Mock databases, APIs, file systems, and time (`Date.now()`). Do *not* mock internal helper functions or data classes within the same module, as this leads to "over-mocking" where your tests become rigidly tied to the implementation details rather than the behavior.
+- **Use `mockResolvedValue` for Async**: NestJS is heavily asynchronous. Almost all services and repositories return Promises. Use `jest.fn().mockResolvedValue(data)` instead of `jest.fn().mockReturnValue(Promise.resolve(data))` for cleaner code. If the method is synchronous, use `mockReturnValue(data)`.

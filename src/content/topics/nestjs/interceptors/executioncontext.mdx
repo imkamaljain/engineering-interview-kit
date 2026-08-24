@@ -1,0 +1,73 @@
+---
+title: "ExecutionContext"
+description: "ExecutionContext in NestJS"
+importance: "HIGH"
+revisionTime: 14
+category: "NestJS"
+subcategory: "Interceptors"
+order: 800
+---
+
+*The `ExecutionContext` is a powerful object passed to Interceptors (and Guards) that provides deep introspection into the current execution process, including details about the Controller and Method being invoked.*
+
+## Overview
+NestJS is designed to work across multiple protocols: standard HTTP (Express/Fastify), Microservices (TCP, Redis, RabbitMQ), and WebSockets.
+
+Because Interceptors can be used in all of these contexts, the framework provides the `ExecutionContext`. This class extends `ArgumentsHost` and acts as a generic wrapper around the underlying platform's specific request/response objects, while also providing metadata about the NestJS classes being executed.
+
+## Key Concepts
+- **`switchToHttp()`**: Converts the generic context into an HTTP context, allowing you to access the standard `Request` and `Response` objects.
+- **`getClass()`**: Returns the `Type` of the Controller class which the current route handler belongs to.
+- **`getHandler()`**: Returns a reference to the specific handler method (the function itself) that is about to be executed.
+- **Reflection**: By passing `getClass()` or `getHandler()` to Nest's `Reflector` utility, you can read custom decorators/metadata attached to those elements.
+
+## Code Examples
+
+### Accessing Request Data
+To log or mutate the request inside an interceptor, you must unpack it from the context.
+
+```typescript
+import { Injectable, NestInterceptor, ExecutionContext, CallHandler } from '@nestjs/common';
+import { Observable } from 'rxjs';
+
+@Injectable()
+export class AuditInterceptor implements NestInterceptor {
+  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+    
+    // 1. Switch to HTTP context
+    const httpContext = context.switchToHttp();
+    
+    // 2. Extract the Express Request object
+    const request = httpContext.getRequest();
+    
+    console.log(`Auditing request by user ${request.user.id} to ${request.url}`);
+
+    return next.handle();
+  }
+}
+```
+
+### Introspecting the Controller and Method
+You can log exactly which class and method are handling the request.
+
+```typescript
+@Injectable()
+export class DebugInterceptor implements NestInterceptor {
+  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+    
+    // Get the name of the Controller class (e.g., 'UsersController')
+    const className = context.getClass().name;
+    
+    // Get the name of the method (e.g., 'findAll')
+    const handlerName = context.getHandler().name;
+
+    console.log(`[DEBUG] Invoking ${className}.${handlerName}()`);
+
+    return next.handle();
+  }
+}
+```
+
+## Best Practices
+- **Protocol Agnosticism**: If you are writing an interceptor that will be used in both HTTP and WebSocket controllers, you must check the context type before extracting the request. Use `context.getType() === 'http'` to ensure you safely extract the correct objects.
+- **Use for Metadata**: The `ExecutionContext` is primarily used in Interceptors (and Guards) in conjunction with the `Reflector` to read metadata. For example, a caching interceptor can use `context.getHandler()` to read a `@CacheTTL(60)` decorator attached to a specific route, allowing it to know exactly how long to cache the response.

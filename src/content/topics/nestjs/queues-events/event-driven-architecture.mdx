@@ -1,0 +1,82 @@
+---
+title: "Event-driven Architecture"
+description: "Event-driven Architecture in NestJS"
+importance: "HIGH"
+revisionTime: 14
+category: "NestJS"
+subcategory: "Queues & Events"
+order: 1930
+---
+
+*Event-Driven Architecture (EDA) is a software design pattern where decoupled applications or system components asynchronously communicate by publishing and reacting to events.*
+
+## Overview
+In a standard Request-Driven architecture, Component A commands Component B to do something (e.g., `UserService` calls `EmailService.sendEmail()`). Component A is deeply aware of Component B's existence and purpose.
+
+In an Event-Driven architecture, Component A simply states a fact that occurred in the past (e.g., "A user was created"). It has no idea who is listening. Component B listens for that fact and decides to send an email. This is known as **Choreography**.
+
+## Key Concepts
+- **Events are Historical Facts**: An event name should always be past tense (`user.registered`, `order.paid`, `invoice.generated`). It is something that has already happened.
+- **Decoupling**: Services can be built, deployed, and scaled completely independently. You can add a new `AnalyticsService` tomorrow that listens to `user.registered` without ever touching the `UserService` code.
+- **Asynchronicity**: EDA implies that the system is eventually consistent. When a user registers, they might not receive the welcome email for 5 minutes if the `EmailService` is backed up.
+
+## Implementing EDA in NestJS
+
+NestJS provides three primary ways to implement EDA, depending on your scaling needs:
+
+### 1. In-Memory (Monoliths)
+For a standard single-server API, use the `@nestjs/event-emitter`. It provides the architectural decoupling of EDA without the operational complexity of managing a message broker.
+* **Pros**: Zero infrastructure, extremely fast, easy to test.
+* **Cons**: Events are lost if the server crashes. Cannot share events across multiple servers.
+
+### 2. Durable Queues (Background Jobs)
+When you have tasks that absolutely *must* succeed (like generating a PDF or charging a card), use `@nestjs/bull` (Redis-backed queues).
+* **Pros**: Tasks survive server restarts. Automatic retries. Built-in rate limiting.
+* **Cons**: Requires a Redis server.
+
+### 3. Distributed Message Brokers (Microservices)
+When you have an architecture broken into multiple distinct NestJS applications, use `@nestjs/microservices` with an Event transporter (Kafka, RabbitMQ, or NATS).
+* **Pros**: Allows different microservices (even written in different languages) to react to events.
+* **Cons**: Massive operational complexity (monitoring brokers, handling dead-letter queues, managing distributed tracing).
+
+## Code Example: The Mental Shift
+
+**Bad (Request-Driven / Tightly Coupled):**
+```typescript
+@Injectable()
+export class CheckoutService {
+  constructor(
+    private inventory: InventoryService,
+    private billing: BillingService,
+    private email: EmailService,
+  ) {}
+
+  async processOrder(order: Order) {
+    await this.billing.charge(order);
+    await this.inventory.decrease(order);
+    await this.email.sendReceipt(order);
+    // If we want to add an SMS notification later, we have to modify THIS file!
+  }
+}
+```
+
+**Good (Event-Driven / Loosely Coupled):**
+```typescript
+@Injectable()
+export class CheckoutService {
+  constructor(private eventEmitter: EventEmitter2) {}
+
+  async processOrder(order: Order) {
+    await this.billing.charge(order); // Core logic is still synchronous
+    
+    // Everything else is an event!
+    this.eventEmitter.emit('order.paid', new OrderPaidEvent(order));
+    // If we want to add SMS later, we just create a new SmsService with @OnEvent('order.paid').
+    // The CheckoutService never changes!
+  }
+}
+```
+
+## Best Practices
+- **Beware the "Distributed Monolith"**: If `Service A` emits an event, and `Service B` listens to it but immediately makes a synchronous HTTP request *back* to `Service A` for more data, you haven't built a decoupled EDA. You've built a highly complex, slow monolith. Events should contain all the data necessary (Event-Carried State Transfer) for the subscriber to do its job.
+- **Handling Failures**: In EDA, if the `EmailService` fails, the `UserService` doesn't know. You must build robust alerting and Dead Letter Queues (DLQs) to catch and retry failed event handlers manually.

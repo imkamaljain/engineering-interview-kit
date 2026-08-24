@@ -1,0 +1,85 @@
+---
+title: "Pipes"
+description: "Pipes in NestJS"
+importance: "HIGH"
+revisionTime: 6
+category: "NestJS"
+subcategory: "Fundamentals"
+order: 80
+---
+
+*Pipes are classes annotated with the `@Injectable()` decorator that implement the `PipeTransform` interface. They operate on the arguments being processed by a route handler.*
+
+## Overview
+Pipes have two typical use cases in NestJS:
+1. **Transformation**: Transform input data to the desired form (e.g., parsing a string to an integer).
+2. **Validation**: Evaluate input data and if valid, simply pass it through unchanged; otherwise, throw an exception.
+
+Pipes run **inside the exceptions zone**. This means that if a Pipe throws an exception (like a `BadRequestException` for invalid data), the exception layer (Exception Filters) catches it automatically, and the route handler is never executed.
+
+## Key Concepts
+- **Built-in Pipes**: Nest comes with several built-in pipes out of the box (e.g., `ValidationPipe`, `ParseIntPipe`, `ParseBoolPipe`, `ParseUUIDPipe`).
+- **Binding Pipes**: Pipes can be bound globally, at the controller level, at the method level, or at the parameter level.
+- **`class-validator` integration**: The built-in `ValidationPipe` works seamlessly with the `class-validator` and `class-transformer` libraries to validate incoming JSON payloads against DTO classes.
+
+## Code Examples
+
+### Transformation (ParseIntPipe)
+Using a built-in pipe to ensure a route parameter is converted to a JavaScript number.
+
+```typescript
+import { Controller, Get, Param, ParseIntPipe } from '@nestjs/common';
+
+@Controller('users')
+export class UsersController {
+  
+  @Get(':id')
+  async findOne(@Param('id', ParseIntPipe) id: number) {
+    // 'id' is guaranteed to be a number here.
+    // If the user passes GET /users/abc, ParseIntPipe throws a 400 Bad Request
+    return this.usersService.findOne(id);
+  }
+}
+```
+
+### Validation (Using ValidationPipe and DTOs)
+This is the most common use of pipes in NestJS.
+
+**1. Create the DTO with validation decorators:**
+```typescript
+import { IsString, IsInt, Min, Max } from 'class-validator';
+
+export class CreateUserDto {
+  @IsString()
+  name: string;
+
+  @IsInt()
+  @Min(18)
+  @Max(100)
+  age: number;
+}
+```
+
+**2. Enable the pipe globally (in `main.ts`):**
+```typescript
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+  // Enable validation globally
+  app.useGlobalPipes(new ValidationPipe({ whitelist: true }));
+  await app.listen(3000);
+}
+```
+
+**3. Use the DTO in the Controller:**
+```typescript
+@Post()
+create(@Body() createUserDto: CreateUserDto) {
+  // If the payload is invalid, a 400 response is returned automatically.
+  return this.usersService.create(createUserDto);
+}
+```
+
+## Best Practices
+- **Use `ValidationPipe` globally**: You almost always want to validate incoming payloads. Bind the `ValidationPipe` globally in your `main.ts` rather than adding it to every controller.
+- **Use `whitelist: true`**: When configuring the `ValidationPipe`, pass `{ whitelist: true }`. This will automatically strip any properties from the incoming JSON that do not have any decorators in the DTO, preventing injection of malicious unexpected properties.
+- **Fail Fast**: Pipes are the perfect place to "fail fast". If the input is wrong, throw a 400 error before the controller or service logic even begins.

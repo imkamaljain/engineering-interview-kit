@@ -1,0 +1,87 @@
+---
+title: "Interceptors"
+description: "Interceptors in NestJS"
+importance: "HIGH"
+revisionTime: 8
+category: "NestJS"
+subcategory: "Fundamentals"
+order: 100
+---
+
+*Interceptors are classes annotated with the `@Injectable()` decorator that implement the `NestInterceptor` interface. They have access to both the incoming request and the outgoing response.*
+
+## Overview
+Interceptors are highly powerful and versatile. They are inspired by the Aspect-Oriented Programming (AOP) technique.
+
+They allow you to:
+- Bind **extra logic** before or after method execution.
+- **Transform** the result returned from a function.
+- **Transform** the exception thrown from a function.
+- **Extend** basic function behavior.
+- **Completely override** a function depending on specific conditions (e.g., for caching).
+
+## Key Concepts
+- **`NestInterceptor` Interface**: Requires implementing the `intercept()` method.
+- **`ExecutionContext`**: Provides details about the current request (same as Guards).
+- **`CallHandler`**: Provides the `handle()` method, which returns an RxJS `Observable`. If you do not call `handle()`, the route handler will not be executed.
+- **RxJS Observables**: Because `handle()` returns an Observable, you can use RxJS operators (like `map()`, `tap()`, `catchError()`) to manipulate the response after the controller has finished executing.
+
+## Code Examples
+
+### A Logging Interceptor (Pre & Post execution)
+This interceptor measures how long a request takes to process.
+
+```typescript
+import { Injectable, NestInterceptor, ExecutionContext, CallHandler, Logger } from '@nestjs/common';
+import { Observable } from 'rxjs';
+import { tap } from 'rxjs/operators';
+
+@Injectable()
+export class LoggingInterceptor implements NestInterceptor {
+  private readonly logger = new Logger(LoggingInterceptor.name);
+
+  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+    const req = context.switchToHttp().getRequest();
+    const method = req.method;
+    const url = req.url;
+    
+    // This runs BEFORE the route handler
+    const now = Date.now();
+    this.logger.log(`[REQ] ${method} ${url}`);
+
+    // Call next.handle() to execute the route handler
+    // The tap() operator runs AFTER the route handler finishes
+    return next
+      .handle()
+      .pipe(
+        tap(() => this.logger.log(`[RES] ${method} ${url} - ${Date.now() - now}ms`)),
+      );
+  }
+}
+```
+
+### Response Transformation
+A common use case is wrapping all API responses in a standard JSON structure like `{ data: [...] }`.
+
+```typescript
+import { Injectable, NestInterceptor, ExecutionContext, CallHandler } from '@nestjs/common';
+import { Observable } from 'rxjs';
+import { map } from 'rxjs/operators';
+
+export interface Response<T> {
+  data: T;
+}
+
+@Injectable()
+export class TransformInterceptor<T> implements NestInterceptor<T, Response<T>> {
+  intercept(context: ExecutionContext, next: CallHandler): Observable<Response<T>> {
+    // Map the returned value from the controller to a { data: value } object
+    return next.handle().pipe(map(data => ({ data })));
+  }
+}
+```
+
+## Best Practices
+- **Use Interceptors for Cross-Cutting Concerns**: Things like global logging, response serialization, timeouts, and caching are perfect for Interceptors because they apply cleanly across many routes without modifying business logic.
+- **Understand the RxJS learning curve**: Interceptors rely heavily on RxJS Observables for the post-controller logic. Brush up on common operators like `map`, `tap`, and `catchError`.
+- **Don't use them for Validation/Auth**: Use Pipes for validation and Guards for authentication/authorization. While Interceptors *can* do those things, they execute at a different stage in the request lifecycle and using the specialized tools is cleaner.

@@ -1,0 +1,97 @@
+---
+title: "Provider Tokens"
+description: "Provider Tokens in NestJS"
+importance: "HIGH"
+revisionTime: 10
+category: "NestJS"
+subcategory: "Modules & Dependency Injection"
+order: 210
+---
+
+*Provider Tokens are the unique identifiers NestJS uses to register and retrieve dependencies from the IoC container.*
+
+## Overview
+When you inject a dependency in NestJS, the framework uses a "Token" to look up the correct provider in its registry. 
+
+Most of the time, this happens invisibly because Nest uses the actual class name/type as the token. However, when you need to inject plain values, factory functions, or interface-based implementations, you must explicitly define and use custom tokens.
+
+## Key Concepts
+- **Class-based Tokens (Default)**: When you use standard constructor injection (`constructor(private service: MyService)`), Nest uses the `MyService` class itself as the token.
+- **String Tokens**: You can use a string literal as a token (e.g., `'API_KEY'`).
+- **Symbol Tokens**: You can use ES6 Symbols as tokens (e.g., `Symbol('API_KEY')`). This is safer than strings because Symbols prevent naming collisions.
+- **`@Inject()` decorator**: When using string or symbol tokens, TypeScript cannot automatically infer the token from the constructor type. You must explicitly tell Nest which token to look up using the `@Inject('TOKEN')` decorator.
+
+## Code Examples
+
+### Class-based Token (Standard)
+Behind the scenes, this shorthand:
+```typescript
+@Module({
+  providers: [UsersService]
+})
+```
+Is actually translated into this full syntax, where the class itself is the token (`provide`):
+```typescript
+@Module({
+  providers: [
+    {
+      provide: UsersService, // The Token
+      useClass: UsersService // The Implementation
+    }
+  ]
+})
+```
+
+### String Tokens (Custom Providers)
+If you want to provide a plain value (like an API key or a configuration object), a class doesn't make sense as a token. We use a string.
+
+```typescript
+// In your module
+@Module({
+  providers: [
+    {
+      provide: 'STRIPE_API_KEY', // The Token
+      useValue: 'sk_test_123456789', // The Value
+    }
+  ]
+})
+export class PaymentModule {}
+```
+
+To retrieve it, you must use `@Inject()`:
+
+```typescript
+import { Injectable, Inject } from '@nestjs/common';
+
+@Injectable()
+export class PaymentService {
+  constructor(
+    // Tell Nest to look for the 'STRIPE_API_KEY' token
+    @Inject('STRIPE_API_KEY') private apiKey: string,
+  ) {}
+
+  charge() {
+    console.log('Charging with key:', this.apiKey);
+  }
+}
+```
+
+### Symbol Tokens
+String tokens can collide if two different modules use the token `'CONFIG'`. Symbols fix this.
+
+```typescript
+export const STRIPE_CONFIG = Symbol('STRIPE_CONFIG');
+
+@Module({
+  providers: [
+    {
+      provide: STRIPE_CONFIG,
+      useValue: { secret: '123' }
+    }
+  ]
+})
+```
+
+## Best Practices
+- **Export your Custom Tokens**: If you use a String or Symbol token, define it as a constant in a separate file (e.g., `constants.ts`) and export it. Use the constant in both the `@Module` registration and the `@Inject()` decorator to prevent typo-related bugs.
+- **Prefer Classes for Services**: Always use Class-based tokens for services and complex objects. Only drop down to String/Symbol tokens when injecting primitives, configuration objects, or third-party libraries that don't export a class.

@@ -1,0 +1,93 @@
+---
+title: "JWT Security"
+description: "JWT Security in NestJS"
+importance: "MEDIUM"
+revisionTime: 5
+category: "NestJS"
+subcategory: "Security"
+order: 2610
+---
+
+*JSON Web Tokens (JWT) are a stateless authentication mechanism. Because they are stateless, securing them requires careful configuration regarding secret management, token lifespans, and revocation strategies.*
+
+## Overview
+When a user logs in, the server generates a JWT containing the user's ID and signs it with a secret key. The server sends the JWT to the client. For all subsequent requests, the client sends the JWT back. 
+
+Because the JWT is cryptographically signed, the server can verify it hasn't been tampered with *without* querying the database. However, if an attacker steals the JWT, they can impersonate the user until the token expires.
+
+## Key Concepts
+- **Symmetric vs Asymmetric Signing**: 
+  - *HS256 (Symmetric)*: Uses a single secret string to sign and verify. Easy, but if the secret leaks, the system is fully compromised.
+  - *RS256 (Asymmetric)*: Uses a Private Key to sign, and a Public Key to verify. Much more secure for distributed microservices.
+- **Expiration (EXP)**: JWTs should have a short lifespan (e.g., 15 minutes) to minimize the damage if stolen.
+- **Refresh Tokens**: A long-lived token (stored securely) used to obtain a new short-lived JWT when it expires.
+
+## Code Examples
+
+### 1. Secure JWT Configuration in NestJS
+Do not hardcode secrets. Always use environment variables, and configure a strict expiration time.
+
+```bash
+npm install @nestjs/jwt @nestjs/passport passport-jwt
+```
+
+```typescript
+import { Module } from '@nestjs/common';
+import { JwtModule } from '@nestjs/jwt';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+
+@Module({
+  imports: [
+    JwtModule.registerAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: async (configService: ConfigService) => ({
+        // MUST be a strong, random string (e.g., 64 characters)
+        secret: configService.get<string>('JWT_SECRET'), 
+        signOptions: { 
+          // Short expiration! 15 minutes.
+          expiresIn: '15m', 
+          // Enforce the signing algorithm
+          algorithm: 'HS256', 
+          // Specify who issued the token
+          issuer: 'my-nestjs-api', 
+        },
+      }),
+    }),
+  ],
+})
+export class AuthModule {}
+```
+
+### 2. Validating the JWT (Passport Strategy)
+When validating the JWT, NestJS `@nestjs/passport` automatically checks the signature and the `exp` (expiration) claim. If the token is expired or tampered with, it automatically throws a `401 Unauthorized`.
+
+```typescript
+import { ExtractJwt, Strategy } from 'passport-jwt';
+import { PassportStrategy } from '@nestjs/passport';
+import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+
+@Injectable()
+export class JwtStrategy extends PassportStrategy(Strategy) {
+  constructor(configService: ConfigService) {
+    super({
+      // Extract the JWT from the Authorization: Bearer <token> header
+      jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
+      ignoreExpiration: false, // ALWAYS false in production
+      secretOrKey: configService.get<string>('JWT_SECRET'),
+    });
+  }
+
+  async validate(payload: any) {
+    // The payload is the decoded JSON from the token.
+    // Attach the user ID to the Request object (req.user)
+    return { userId: payload.sub, role: payload.role };
+  }
+}
+```
+
+## Best Practices
+- **Storage on the Client**: Never store JWTs in `localStorage` if your app is vulnerable to XSS (Cross-Site Scripting). Any malicious script can read `localStorage`. It is more secure to store the JWT in an `HttpOnly`, `Secure` cookie, though this requires CSRF protections.
+- **Don't put sensitive data in the payload**: JWTs are encoded (Base64), not encrypted. Anyone can decode a JWT and read its contents. Never put passwords, SSNs, or PII inside the JWT payload. Only put identifiers (User ID) and non-sensitive claims (Roles).
+- **Handling Revocation (Log Out)**: Because JWTs are stateless, you cannot "delete" a JWT from the server. If a user clicks "Log out", you delete it from their browser, but the token itself is technically still valid until it expires. To solve this, you must implement a "Denylist" in Redis (store the token's ID/JTI in Redis upon logout, and check Redis in your `JwtStrategy`).

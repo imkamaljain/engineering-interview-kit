@@ -1,0 +1,141 @@
+---
+title: "GraphQL Federation"
+description: "GraphQL Federation in NestJS"
+importance: "MEDIUM"
+revisionTime: 8
+category: "NestJS"
+subcategory: "GraphQL"
+order: 1760
+---
+
+*Apollo Federation is an architecture for building a distributed GraphQL graph across multiple microservices. Instead of one monolithic server handling the entire schema, multiple smaller servers handle their own domain, and a "Gateway" stitches them together into a single API.*
+
+## Overview
+As a NestJS GraphQL application grows, keeping all resolvers and database connections in a single monolithic codebase becomes unmanageable. 
+
+Federation allows you to split the application into microservices (e.g., a `Users` service and a `Posts` service). The `Users` service owns the `User` type. The `Posts` service owns the `Post` type, but can *reference* the `User` type to say "This post belongs to User ID 1". An Apollo Gateway sits in front of these services, acting as a router. The client queries the Gateway, and the Gateway requests data from the underlying microservices, merging the result.
+
+## Key Concepts
+- **Gateway**: The router that exposes the unified GraphQL endpoint to the outside world.
+- **Subgraph (Microservice)**: A NestJS application running `@nestjs/graphql` with the `ApolloFederationDriver`. It owns a slice of the schema.
+- **`@Directive('@key(...)')`**: Tells the Gateway the primary key of an Object Type, so other services can reference it.
+- **`@ResolveReference()`**: A method you implement so the Gateway can fetch a specific entity by its ID when another service references it.
+
+## Code Examples
+
+### 1. The Users Subgraph (Microservice A)
+This service owns the `User` type. We configure it as a Federation Subgraph.
+
+```typescript
+// users/app.module.ts
+import { Module } from '@nestjs/common';
+import { GraphQLModule } from '@nestjs/graphql';
+import { ApolloFederationDriver, ApolloFederationDriverConfig } from '@nestjs/apollo';
+
+@Module({
+  imports: [
+    GraphQLModule.forRoot<ApolloFederationDriverConfig>({
+      // 1. MUST use the Federation Driver, not the standard Apollo Driver!
+      driver: ApolloFederationDriver, 
+      autoSchemaFile: true,
+    }),
+  ],
+})
+export class UsersModule {}
+```
+
+We must mark the `User` object so it can be referenced by its `id`.
+
+```typescript
+// users/user.model.ts
+import { Directive, Field, ID, ObjectType } from '@nestjs/graphql';
+
+@ObjectType()
+// Tell the Gateway that 'id' is the primary key for resolving a User
+@Directive('@key(fields: "id")') 
+export class User {
+  @Field(() => ID)
+  id: string;
+
+  @Field()
+  name: string;
+}
+```
+
+We must provide a way for the Gateway to fetch a User when another service just provides an ID.
+
+```typescript
+// users/users.resolver.ts
+import { Resolver, ResolveReference } from '@nestjs/graphql';
+
+@Resolver(() => User)
+export class UsersResolver {
+  
+  // The Gateway will call this method internally to stitch data together!
+  @ResolveReference()
+  resolveReference(reference: { __typename: string; id: string }) {
+    return this.usersService.findById(reference.id);
+  }
+}
+```
+
+### 2. The Posts Subgraph (Microservice B)
+This service owns `Posts`, but a Post needs an Author (`User`). This service doesn't have the User database!
+
+```typescript
+// posts/post.model.ts
+@ObjectType()
+export class Post {
+  @Field(() => ID)
+  id: string;
+
+  @Field()
+  title: string;
+
+  // We have the ID in our database
+  authorId: string;
+
+  // We declare the relationship, but we don't resolve it here!
+  @Field(() => User)
+  author: User; 
+}
+```
+
+We create a "stub" of the User object in Microservice B so it compiles.
+
+```typescript
+// posts/user.model.ts
+import { Directive, ObjectType, Field, ID } from '@nestjs/graphql';
+
+// 1. We declare we are EXTENDING the User type owned by another service
+@ObjectType()
+@Directive('@extends')
+@Directive('@key(fields: "id")')
+export class User {
+  
+  // 2. We declare this field comes from outside
+  @Field(() => ID)
+  @Directive('@external')
+  id: string;
+}
+```
+
+In the Posts Resolver, we tell the Gateway *how* to find the author: "Here is the ID, go ask the Users service to resolve the rest!"
+
+```typescript
+// posts/posts.resolver.ts
+@Resolver(() => Post)
+export class PostsResolver {
+  
+  @ResolveField(() => User)
+  author(@Parent() post: Post) {
+    // We don't fetch the user. We just return the ID reference!
+    // The Gateway intercepts this, calls the UsersService @ResolveReference, and stitches it!
+    return { __typename: 'User', id: post.authorId };
+  }
+}
+```
+
+## Best Practices
+- **Use Apollo Gateway / Router**: To make the above code work, you need a third application (The Gateway) running `@apollo/gateway` or the Rust-based Apollo Router. NestJS has a wrapper for the Node Gateway (`@nestjs/apollo` using `ApolloGatewayDriver`), but Apollo officially recommends using their pre-compiled Rust Router for production due to massive performance gains.
+- **Don't Federate Prematurely**: Federation adds significant operational complexity (managing multiple deployments, schema registries, and network latency between microservices). Build a monolithic GraphQL API using standard Modules until your team size or scaling requirements force you to adopt microservices.

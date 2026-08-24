@@ -1,0 +1,79 @@
+---
+title: "SQL Injection Prevention"
+description: "SQL Injection Prevention in NestJS"
+importance: "LOW"
+revisionTime: 7
+category: "NestJS"
+subcategory: "Security"
+order: 2590
+---
+
+*SQL Injection (SQLi) is a vulnerability where an attacker manipulates application input to interfere with the backend database queries, allowing them to view, modify, or delete data they are not authorized to access.*
+
+## Overview
+SQL Injection occurs when developers concatenate un-sanitized user input directly into a SQL query string. 
+
+Imagine an endpoint: `GET /users?username=admin`
+If the code does: `query = "SELECT * FROM users WHERE username = '" + req.query.username + "'"`
+
+An attacker can pass: `?username=admin' OR '1'='1`
+The resulting query becomes: `SELECT * FROM users WHERE username = 'admin' OR '1'='1'`
+Because `1=1` is always true, the database returns *every single user* in the system, bypassing authentication entirely!
+
+## Key Concepts
+- **Parameterized Queries (Prepared Statements)**: The definitive solution to SQLi. The database driver treats the SQL query and the user data as two completely separate entities, guaranteeing that the user data is treated strictly as a string, never as executable SQL code.
+- **ORMs**: Object-Relational Mappers (like TypeORM, Prisma, Sequelize) automatically use Parameterized Queries under the hood for their standard methods, making them highly resistant to SQLi by default.
+
+## Code Examples
+
+### 1. The Vulnerable Way (DO NOT DO THIS)
+If you use TypeORM's `query()` method or raw SQL strings, you are bypassing the ORM's built-in protections.
+
+```typescript
+@Injectable()
+export class UsersService {
+  constructor(@InjectDataSource() private dataSource: DataSource) {}
+
+  // FATAL VULNERABILITY
+  async getUserByEmailVulnerable(email: string) {
+    // If email is:  "admin@b.com'; DROP TABLE users; --"
+    // The database is gone.
+    return this.dataSource.query(`SELECT * FROM users WHERE email = '${email}'`);
+  }
+}
+```
+
+### 2. The Secure Way (Raw SQL with Parameters)
+If you *must* write raw SQL for performance or complex joins, you must use parameters (`$1`, `?`).
+
+```typescript
+@Injectable()
+export class UsersService {
+  constructor(@InjectDataSource() private dataSource: DataSource) {}
+
+  async getUserByEmailSecure(email: string) {
+    // The database driver safely escapes the `email` string. 
+    // It is impossible for SQL injection to occur here.
+    return this.dataSource.query(`SELECT * FROM users WHERE email = $1`, [email]);
+  }
+}
+```
+
+### 3. The Secure Way (TypeORM QueryBuilder)
+When using the QueryBuilder, you must pass variables as a separate object.
+
+```typescript
+// BAD: String concatenation in QueryBuilder
+this.userRepo.createQueryBuilder('user')
+  .where(`user.email = '${email}'`) // VULNERABLE!
+  .getOne();
+
+// GOOD: Parameterized QueryBuilder
+this.userRepo.createQueryBuilder('user')
+  .where('user.email = :email', { email }) // SECURE!
+  .getOne();
+```
+
+## Best Practices
+- **Never trust Order By**: A common mistake is parameterizing the `WHERE` clause, but concatenating the `ORDER BY` clause. You cannot parameterize column names in SQL. If you allow users to sort by a column (e.g., `?sortBy=email`), you must explicitly validate that the `sortBy` string exactly matches a known, safe column name (e.g., using a DTO `Enum`) before appending it to the query.
+- **Use the ORM correctly**: Stick to standard ORM methods like `this.userRepo.findOneBy({ email })` whenever possible. They are inherently safe. Only drop down to raw SQL when absolutely necessary, and heavily scrutinize it during code reviews.

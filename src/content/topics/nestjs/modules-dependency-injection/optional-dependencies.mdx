@@ -1,0 +1,75 @@
+---
+title: "Optional Dependencies"
+description: "Optional Dependencies in NestJS"
+importance: "LOW"
+revisionTime: 11
+category: "NestJS"
+subcategory: "Modules & Dependency Injection"
+order: 260
+---
+
+*Optional Dependencies allow a class to declare that it can function even if a specific dependency cannot be found in the IoC container.*
+
+## Overview
+By default, if NestJS cannot resolve a dependency requested in a constructor (because it wasn't provided in the module's `providers` or `imports`), it will throw a fatal error and the application will fail to start.
+
+However, sometimes a dependency is truly optional. For example, a `HttpService` might optionally use a `CacheService`. If the `CacheService` is provided, it caches responses; if not, it skips caching but still makes HTTP calls.
+
+## Key Concepts
+- **`@Optional()` Decorator**: This decorator is applied to a constructor parameter. It tells NestJS: "If you can't find this provider, don't crash. Just pass `undefined`."
+- **Null Checking**: If a dependency is optional, the consuming class is responsible for checking if the dependency is `undefined` before trying to call methods on it.
+
+## Code Examples
+
+### Using `@Optional()`
+
+```typescript
+import { Injectable, Optional } from '@nestjs/common';
+
+@Injectable()
+export class CacheService {
+  get(key: string) { return null; }
+  set(key: string, val: any) {}
+}
+
+@Injectable()
+export class HttpService {
+  constructor(
+    // Marking the dependency as optional
+    @Optional() private cacheService: CacheService,
+  ) {}
+
+  async fetchData(url: string) {
+    // 1. We must check if the service exists before using it
+    if (this.cacheService) {
+      const cached = this.cacheService.get(url);
+      if (cached) return cached;
+    }
+
+    // 2. Fetch data normally
+    const data = await fetch(url).then(res => res.json());
+
+    // 3. Cache it if the service is available
+    if (this.cacheService) {
+      this.cacheService.set(url, data);
+    }
+
+    return data;
+  }
+}
+```
+
+### Module Configuration
+In the module, we can now safely omit the `CacheService` if we don't want caching, and the app will still compile and run perfectly.
+
+```typescript
+@Module({
+  // It works fine without CacheService!
+  providers: [HttpService],
+})
+export class AppModule {}
+```
+
+## Best Practices
+- **Library Development**: `@Optional()` is most commonly used when authoring reusable libraries (NestJS packages). It allows users of your library to opt-in to advanced features by providing specific tokens, without forcing them to configure everything.
+- **Graceful Degradation**: Always provide fallback logic or null-checks when dealing with optional dependencies. Using optional dependencies without checking for `undefined` will lead to runtime `TypeError: Cannot read properties of undefined` crashes.

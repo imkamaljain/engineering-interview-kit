@@ -1,0 +1,105 @@
+---
+title: "NestJS Microservices"
+description: "NestJS Microservices in NestJS"
+importance: "MEDIUM"
+revisionTime: 10
+category: "NestJS"
+subcategory: "Interview Patterns"
+order: 3020
+---
+
+*NestJS Microservices is a built-in architecture that allows Nest applications to communicate with each other over various transport layers (TCP, Redis, Kafka, RabbitMQ, gRPC) instead of traditional HTTP REST APIs.*
+
+## Overview
+While standard NestJS applications listen for HTTP requests on a port, a NestJS Microservice binds to a message broker or a custom transport layer. 
+
+The beauty of the NestJS Microservices package is that the developer experience is almost identical to writing a REST API. You still use Controllers, Guards, Interceptors, and Pipes. The only difference is that instead of decorating a method with `@Get('/users')`, you decorate it with `@MessagePattern('get_users')`.
+
+## Key Concepts
+- **MessagePattern (Request-Response)**: The client sends a message and waits for a response (like HTTP). Useful for queries (e.g., `getUser`).
+- **EventPattern (Publish-Subscribe)**: The client fires an event and immediately forgets about it. Multiple microservices can listen to the event simultaneously. Useful for asynchronous workflows (e.g., `userCreated`).
+- **Transporters**: The underlying technology used for communication. Redis and RabbitMQ are popular for Pub/Sub, while gRPC is highly performant for direct microservice-to-microservice RPC calls.
+
+## Code Examples
+
+### 1. Bootstrapping a Microservice
+Instead of `NestFactory.create()`, you use `createMicroservice()`.
+
+```typescript
+// main.ts
+import { NestFactory } from '@nestjs/core';
+import { Transport, MicroserviceOptions } from '@nestjs/microservices';
+import { AppModule } from './app.module';
+
+async function bootstrap() {
+  const app = await NestFactory.createMicroservice<MicroserviceOptions>(
+    AppModule,
+    {
+      transport: Transport.REDIS, // We are using Redis as our broker
+      options: {
+        host: 'localhost',
+        port: 6379,
+      },
+    },
+  );
+  await app.listen(); // Begins listening to Redis channels
+}
+bootstrap();
+```
+
+### 2. The Microservice Controller (Receiver)
+This microservice listens for messages on the Redis broker.
+
+```typescript
+import { Controller } from '@nestjs/common';
+import { MessagePattern, EventPattern, Payload } from '@nestjs/microservices';
+
+@Controller()
+export class MathController {
+  
+  // Request-Response pattern
+  @MessagePattern('sum') 
+  accumulate(@Payload() data: number[]): number {
+    return (data || []).reduce((a, b) => a + b, 0);
+  }
+
+  // Publish-Subscribe pattern
+  @EventPattern('user_created')
+  async handleUserCreated(@Payload() data: Record<string, unknown>) {
+    // Send welcome email... no response is returned to the caller
+    console.log(`Sending email to ${data.email}`);
+  }
+}
+```
+
+### 3. The Client (Sender)
+Another NestJS application (perhaps your public-facing HTTP API Gateway) uses a `ClientProxy` to send messages to the broker.
+
+```typescript
+import { Injectable, Inject } from '@nestjs/common';
+import { ClientProxy } from '@nestjs/microservices';
+import { firstValueFrom } from 'rxjs';
+
+@Injectable()
+export class GatewayService {
+  // Inject the Redis client (configured in the module)
+  constructor(@Inject('MATH_SERVICE') private client: ClientProxy) {}
+
+  async getSum() {
+    // Send a message pattern 'sum' with the payload [1, 2, 3]
+    // The client.send() method returns an RxJS Observable, which we convert to a Promise.
+    const result = await firstValueFrom(this.client.send('sum', [1, 2, 3]));
+    return result; // Returns 6
+  }
+
+  async notifyUserCreated(email: string) {
+    // Emit an event. This doesn't wait for a response.
+    this.client.emit('user_created', { email });
+  }
+}
+```
+
+## Best Practices
+- **Hybrid Applications**: A single NestJS application can simultaneously be an HTTP REST API and a Microservice listener. You configure this by calling `app.connectMicroservice()` before `app.listen(3000)`. This is highly useful for Monoliths that also need to listen to Kafka events.
+- **Serialization/Deserialization**: When switching from HTTP to a broker like RabbitMQ, remember that data is serialized across the wire. Dates and complex objects might lose their prototype and turn into plain strings or JSON objects.
+- **gRPC for Performance**: If two microservices need to communicate synchronously (Request-Response) at high volume, do not use Redis or TCP. Use gRPC. NestJS has excellent built-in support for compiling Protocol Buffers (.proto) into TypeScript interfaces.

@@ -1,0 +1,106 @@
+---
+title: "Correlation IDs"
+description: "Correlation IDs in NestJS"
+importance: "HIGH"
+revisionTime: 7
+category: "NestJS"
+subcategory: "Observability"
+order: 2900
+---
+
+*A Correlation ID is a unique identifier attached to every log message, allowing you to easily filter and group all logs associated with a specific HTTP request or transaction.*
+
+## Overview
+When 100 users are hitting your API simultaneously, your log stream becomes an interleaved mess:
+
+```text
+[User Service] Checking password for bob
+[Order Service] Creating order for alice
+[User Service] Password valid for bob
+[Payment Service] Charging card for alice
+[Order Service] Order failed
+```
+
+If the order failed, how do you find the logs that led up to it? A Correlation ID solves this. Every request gets a unique ID (e.g., a UUID), and that ID is appended to *every* log line generated during that request.
+
+## Key Concepts
+- **Generation**: Created by an edge gateway, load balancer, or middleware at the very beginning of a request.
+- **Propagation**: Passed through the application. In Node.js, this is famously difficult because of the asynchronous event loop.
+- **AsyncLocalStorage (ALS)**: A built-in Node.js feature that allows you to store data (like a Correlation ID) that is accessible across asynchronous boundaries, without having to manually pass it to every function.
+
+## Code Examples
+
+### 1. The AsyncLocalStorage Solution
+Historically, developers had to pass the `req` object or a `correlationId` string to *every single function* (e.g., `this.db.save(user, correlationId)`). This polluted business logic. 
+
+NestJS (via Node.js) now supports `AsyncLocalStorage`. We can use the popular `nestjs-cls` (Continuation Local Storage) library to manage this.
+
+```bash
+npm install nestjs-cls uuid
+```
+
+### 2. Setting up CLS
+Configure the module to automatically generate a UUID for every incoming request.
+
+```typescript
+// app.module.ts
+import { Module } from '@nestjs/common';
+import { ClsModule } from 'nestjs-cls';
+import { v4 as uuidv4 } from 'uuid';
+
+@Module({
+  imports: [
+    ClsModule.forRoot({
+      global: true,
+      middleware: { 
+        mount: true,
+        // Automatically generate a Correlation ID for every request
+        generateId: true, 
+        idGenerator: (req: Request) => req.headers['x-correlation-id'] || uuidv4(),
+      },
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+### 3. Integrating with the Logger
+Now, you can create a custom logger that automatically pulls the Correlation ID out of the CLS context and attaches it to the log message, *without* the business logic needing to know about it.
+
+```typescript
+// custom.logger.ts
+import { Injectable, ConsoleLogger } from '@nestjs/common';
+import { ClsService } from 'nestjs-cls';
+
+@Injectable()
+export class CorrelationLogger extends ConsoleLogger {
+  constructor(private readonly cls: ClsService) {
+    super();
+  }
+
+  log(message: any, context?: string) {
+    // Pull the ID out of thin air!
+    const correlationId = this.cls.getId(); 
+    super.log(`[${correlationId || 'N/A'}] ${message}`, context);
+  }
+}
+```
+
+Usage in a service:
+```typescript
+@Injectable()
+export class OrdersService {
+  // Inject our custom logger
+  constructor(private logger: CorrelationLogger) {}
+
+  async createOrder() {
+    // We don't have to pass the correlation ID here! 
+    // The logger grabs it from AsyncLocalStorage automatically.
+    this.logger.log('Creating order...'); 
+  }
+}
+```
+
+## Best Practices
+- **Accept Incoming IDs**: If a client (e.g., a frontend React app or another microservice) passes an `X-Correlation-ID` header, use *their* ID instead of generating a new one. This allows you to trace the request all the way from the user's browser.
+- **Return the ID**: Always return the Correlation ID in the HTTP response headers. If a user encounters an error (500 Internal Server Error), they can give customer support that ID. Support can then search Datadog for that exact ID and see the exact stack trace that caused the user's error.

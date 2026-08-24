@@ -1,0 +1,93 @@
+---
+title: "Pipes vs Interceptors"
+description: "Pipes vs Interceptors in NestJS"
+importance: "MEDIUM"
+revisionTime: 8
+category: "NestJS"
+subcategory: "Interview Patterns"
+order: 3000
+---
+
+*Interviewers often ask candidates to contrast Pipes and Interceptors because both can mutate incoming request data. However, their internal mechanics, capabilities, and intended use cases are fundamentally different.*
+
+## Overview
+
+### Pipes
+- **Primary Goal**: Validation and Transformation of *arguments*.
+- **Scope**: They operate strictly on the arguments being passed into a controller method (e.g., `@Body()`, `@Query()`, `@Param()`).
+- **Timing**: They run *before* the route handler is executed.
+- **Limitation**: They cannot touch the HTTP response.
+
+### Interceptors
+- **Primary Goal**: Adding extra logic before and/or after the method execution using RxJS.
+- **Scope**: They wrap the entire route handler execution.
+- **Timing**: They run *before* the handler executes, AND they intercept the data returned *after* the handler executes.
+- **Superpower**: They can completely mutate the HTTP response, swallow errors, or even cancel the request entirely and return cached data.
+
+## When to use which?
+
+### Scenario 1: Validating a User Registration payload
+**Use a Pipe.** 
+You receive a JSON body and need to ensure `password` is a strong string and `age` is a number. The built-in `ValidationPipe` (using `class-validator`) is specifically designed for this. An Interceptor would be the wrong tool because Interceptors don't have built-in access to the `ArgumentMetadata` needed to easily infer the DTO type.
+
+### Scenario 2: Wrapping all responses in `{ data: ... }`
+**Use an Interceptor.** 
+You want every single endpoint in your API to return data wrapped in a specific JSON structure. A Pipe is impossible here, because Pipes cannot mutate responses. You use a global Interceptor to hook into the `map` operator of the RxJS stream returned by the controller.
+
+### Scenario 3: Trimming whitespace from all incoming strings
+**Use a Pipe.**
+If you want to recursively loop through the incoming `@Body()` and trim whitespace from all string properties *before* the DTO validation happens, a custom `TrimPipe` is the perfect solution.
+
+### Scenario 4: Measuring how long a request takes
+**Use an Interceptor.**
+You need to record the `Date.now()` *before* the handler runs, let the handler run, and then calculate `Date.now() - start` *after* it finishes. Only Interceptors (and Middleware) can wrap execution like this.
+
+## Code Examples
+
+### The Pipe (Mutates the Argument)
+```typescript
+import { PipeTransform, Injectable, BadRequestException } from '@nestjs/common';
+
+@Injectable()
+export class ParseIntPipe implements PipeTransform<string, number> {
+  // Only receives the specific value (e.g., "123") from the @Param
+  transform(value: string): number {
+    const val = parseInt(value, 10);
+    if (isNaN(val)) {
+      // It can throw errors to stop the request
+      throw new BadRequestException('Validation failed');
+    }
+    // It returns the mutated value which is passed to the Controller
+    return val;
+  }
+}
+```
+
+### The Interceptor (Mutates the Response)
+```typescript
+import { Injectable, NestInterceptor, ExecutionContext, CallHandler } from '@nestjs/common';
+import { Observable } from 'rxjs';
+import { map } from 'rxjs/operators';
+
+@Injectable()
+export class TransformResponseInterceptor implements NestInterceptor {
+  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+    
+    // Code here runs BEFORE the controller
+    console.log('Request started...');
+
+    // next.handle() executes the Controller method. 
+    // We pipe into the result AFTER the controller finishes.
+    return next.handle().pipe(
+      map(data => {
+        // We take whatever the controller returned, and wrap it in { data }
+        return { data: data, success: true };
+      }),
+    );
+  }
+}
+```
+
+## Best Practices
+- **Never do Validation in an Interceptor**: While an Interceptor technically *can* read `context.switchToHttp().getRequest().body` and throw an error if it's invalid, you are fighting the framework. Use `ValidationPipe`.
+- **Interceptors are for Aspect-Oriented Programming (AOP)**: Think of Interceptors for cross-cutting concerns that apply to many routes regardless of their specific business logic: Logging, Caching, Timeout handling, and Response Formatting.

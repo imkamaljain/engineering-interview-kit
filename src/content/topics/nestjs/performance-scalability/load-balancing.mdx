@@ -1,0 +1,88 @@
+---
+title: "Load Balancing"
+description: "Load Balancing in NestJS"
+importance: "LOW"
+revisionTime: 5
+category: "NestJS"
+subcategory: "Performance & Scalability"
+order: 2490
+---
+
+*Load Balancing is the process of distributing incoming network traffic across multiple backend servers to ensure no single server becomes overwhelmed, maximizing responsiveness and availability.*
+
+## Overview
+When you scale your NestJS application horizontally, you might have 10 identical servers running on different IP addresses. You cannot give your users 10 different IP addresses.
+
+You give your users one IP address—the IP of the Load Balancer. The Load Balancer acts as a traffic cop. When it receives a request, it uses an algorithm to decide which of the 10 backend servers has the most capacity, and forwards the request there.
+
+## Key Concepts
+- **Reverse Proxy**: A server that sits in front of web servers and forwards client requests to them (e.g., Nginx, HAProxy).
+- **Algorithms**: 
+  - **Round Robin**: Distributes requests sequentially (Server 1, then Server 2, then Server 3, then back to 1).
+  - **Least Connections**: Sends the request to the server with the fewest currently active connections.
+- **Health Checks**: The load balancer continuously pings the backend servers. If a server stops responding (crashes), the load balancer stops sending traffic to it until it recovers.
+
+## Code Examples
+
+### 1. The Role of the NestJS Application
+Load balancing is primarily an infrastructure concern, not an application code concern. The Load Balancer lives *outside* of NestJS (e.g., an AWS ALB, or an Nginx server).
+
+However, your NestJS application must provide a reliable Health Check endpoint so the Load Balancer knows it is alive.
+
+```bash
+npm install @nestjs/terminus
+```
+
+```typescript
+// health.controller.ts
+import { Controller, Get } from '@nestjs/common';
+import { HealthCheck, HealthCheckService, TypeOrmHealthIndicator } from '@nestjs/terminus';
+
+@Controller('health')
+export class HealthController {
+  constructor(
+    private health: HealthCheckService,
+    private db: TypeOrmHealthIndicator,
+  ) {}
+
+  @Get()
+  @HealthCheck()
+  check() {
+    // If the database connection is lost, return 503.
+    // The Load Balancer will see the 503 and route traffic to a different instance 
+    // that might still have a working DB connection.
+    return this.health.check([
+      () => this.db.pingCheck('database'),
+    ]);
+  }
+}
+```
+
+### 2. Handling Proxy Headers (Crucial for NestJS)
+When an Nginx Load Balancer forwards a request to NestJS, the TCP connection is technically between Nginx and NestJS, *not* the User and NestJS.
+
+If you call `req.ip` in NestJS, it will return the IP address of the Load Balancer, not the user! To fix this, you must configure NestJS (Express) to trust the proxy, allowing it to read the `X-Forwarded-For` header.
+
+```typescript
+// main.ts
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from './app.module';
+import { NestExpressApplication } from '@nestjs/platform-express';
+
+async function bootstrap() {
+  // Explicitly type the app as an Express application
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  
+  // CRITICAL: Tell Express to trust the reverse proxy.
+  // Now, req.ip will correctly return the user's real IP address,
+  // and rate limiting will work properly!
+  app.set('trust proxy', 1);
+
+  await app.listen(3000);
+}
+bootstrap();
+```
+
+## Best Practices
+- **SSL Termination**: Do not configure SSL/HTTPS certificates inside your NestJS application. It wastes Node.js CPU cycles. Install the SSL certificate on the Load Balancer. The Load Balancer decrypts the HTTPS traffic ("SSL Termination") and forwards plain HTTP traffic to your backend NestJS instances over a secure private network.
+- **WebSocket Load Balancing**: If your NestJS app uses WebSockets (`@nestjs/websockets`), standard Round Robin load balancing will break them. WebSockets require a persistent TCP connection. You must configure your load balancer to support long-lived connections, and you must use a Redis Adapter in NestJS to sync websocket events across the different server instances.

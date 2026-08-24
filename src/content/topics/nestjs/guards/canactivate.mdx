@@ -1,0 +1,88 @@
+---
+title: "CanActivate"
+description: "CanActivate in NestJS"
+importance: "LOW"
+revisionTime: 8
+category: "NestJS"
+subcategory: "Guards"
+order: 720
+---
+
+*The `CanActivate` interface is the core contract that every Guard must fulfill. It requires a single method: `canActivate()`.*
+
+## Overview
+When you bind a guard using `@UseGuards()`, the NestJS request lifecycle pauses right before entering the controller. Nest looks at the bound guard, instantiates it, and calls its `canActivate()` method.
+
+This method must return a boolean (or a Promise/Observable resolving to a boolean). A return value of `true` allows the request to continue. A return value of `false` aborts the request.
+
+## Key Concepts
+- **Synchronous or Asynchronous**: `canActivate()` can return a synchronous `boolean`, a `Promise<boolean>`, or an `Observable<boolean>`. Nest will wait for asynchronous checks (like querying a database) to resolve.
+- **The `ExecutionContext`**: The only argument passed to `canActivate()` is the `ExecutionContext`. This is an immensely powerful object inherited from `ArgumentsHost` that provides details about the current request and the specific controller method being targeted.
+
+## Code Examples
+
+### An Asynchronous `canActivate`
+Often, authorization requires checking a database. For example, checking if the current user is actually the owner of the document they are trying to delete.
+
+```typescript
+import { Injectable, CanActivate, ExecutionContext, ForbiddenException } from '@nestjs/common';
+import { DocumentsService } from './documents.service';
+
+@Injectable()
+export class DocumentOwnerGuard implements CanActivate {
+  // Inject services to help make the decision
+  constructor(private docsService: DocumentsService) {}
+
+  // Return a Promise<boolean>
+  async canActivate(context: ExecutionContext): Promise<boolean> {
+    const request = context.switchToHttp().getRequest();
+    
+    // Assume authentication middleware already populated req.user
+    const user = request.user; 
+    const documentId = request.params.id; // from /documents/:id
+
+    // Asynchronously look up the document
+    const document = await this.docsService.findById(documentId);
+
+    if (!document) {
+      // You can throw specific errors instead of returning false!
+      throw new ForbiddenException('Document does not exist'); 
+    }
+
+    // The core boolean check
+    return document.ownerId === user.id;
+  }
+}
+```
+
+### Using the `ExecutionContext` for Reflection
+Because `canActivate` receives the `ExecutionContext`, we can use Nest's `Reflector` utility to read custom metadata attached to the controller method.
+
+```typescript
+import { Injectable, CanActivate, ExecutionContext } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
+
+@Injectable()
+export class RolesGuard implements CanActivate {
+  constructor(private reflector: Reflector) {}
+
+  canActivate(context: ExecutionContext): boolean {
+    // Read the metadata attached to the specific method that is about to execute!
+    const roles = this.reflector.get<string[]>('roles', context.getHandler());
+    
+    if (!roles) {
+      return true; // No roles defined? Allow access.
+    }
+    
+    const request = context.switchToHttp().getRequest();
+    const user = request.user;
+    
+    // Check if the user has one of the required roles
+    return roles.includes(user.role);
+  }
+}
+```
+
+## Best Practices
+- **Keep it Fast**: Guards block the execution of the request. Avoid doing heavy computation or overly complex database queries inside `canActivate()`. If a guard takes 500ms to resolve, every single API request protected by that guard will be delayed by 500ms.
+- **Throwing Exceptions**: Returning `false` throws a generic `403 Forbidden` error. If you need to return a `401 Unauthorized` or a `403` with a highly specific error message, throw an `HttpException` directly inside the `canActivate` method instead of returning `false`.

@@ -1,0 +1,87 @@
+---
+title: "Custom Exceptions"
+description: "Custom Exceptions in NestJS"
+importance: "LOW"
+revisionTime: 12
+category: "NestJS"
+subcategory: "Exception Handling"
+order: 920
+---
+
+*While NestJS provides many built-in exceptions, complex applications often require Custom Exceptions to represent specific business logic failures.*
+
+## Overview
+As your application grows, throwing generic `BadRequestException`s everywhere makes debugging difficult. If a user creation fails, was it because the email is taken? Was the password too weak? Did a third-party billing API fail?
+
+Creating Custom Exceptions allows you to define a clear, typed hierarchy of errors specific to your domain (e.g., `UserAlreadyExistsException`, `InsufficientFundsException`).
+
+## Key Concepts
+- **Extending `HttpException`**: If you want your custom exception to be handled directly by Nest's default HTTP layer, it should extend `HttpException` (or one of its built-in subclasses like `ConflictException`).
+- **Extending `Error`**: If you are writing a clean Service layer that shouldn't know anything about HTTP status codes, your custom exceptions should extend the native JavaScript `Error` class. You then use an Exception Filter to map them to HTTP responses later.
+
+## Code Examples
+
+### 1. Extending Built-in HTTP Exceptions (Simple Approach)
+If your exception maps perfectly to a standard HTTP status code, simply extend an existing built-in exception.
+
+```typescript
+import { ConflictException } from '@nestjs/common';
+
+// user-exists.exception.ts
+export class UserAlreadyExistsException extends ConflictException {
+  constructor(email: string) {
+    // Call the parent constructor with a customized message
+    super(`A user with the email address '${email}' already exists.`);
+  }
+}
+```
+
+```typescript
+// users.controller.ts
+@Post()
+async create(@Body() dto: CreateUserDto) {
+  const existingUser = await this.db.findUser(dto.email);
+  if (existingUser) {
+    // Much more readable than throwing a generic ConflictException!
+    throw new UserAlreadyExistsException(dto.email);
+  }
+  return this.db.createUser(dto);
+}
+```
+
+### 2. Domain Exceptions (Clean Architecture Approach)
+In heavily layered architectures, the Service layer shouldn't import `@nestjs/common` or know about HTTP status codes.
+
+```typescript
+// insufficient-funds.exception.ts
+// Notice it extends the native Error, not HttpException!
+export class InsufficientFundsException extends Error {
+  constructor(public accountId: string, public deficit: number) {
+    super(`Account ${accountId} has insufficient funds. Short by ${deficit}.`);
+    this.name = 'InsufficientFundsException';
+  }
+}
+```
+
+*To use this approach, you must create a Custom Exception Filter to catch it:*
+
+```typescript
+@Catch(InsufficientFundsException)
+export class InsufficientFundsFilter implements ExceptionFilter {
+  catch(exception: InsufficientFundsException, host: ArgumentsHost) {
+    const ctx = host.switchToHttp();
+    const response = ctx.getResponse();
+
+    // Map the domain exception to a 400 Bad Request HTTP response
+    response.status(400).json({
+      statusCode: 400,
+      message: exception.message,
+      deficitAmount: exception.deficit // Include custom data
+    });
+  }
+}
+```
+
+## Best Practices
+- **Name Properly**: Always append `Exception` or `Error` to your class names to make it immediately obvious what they are.
+- **Keep Services Pure**: If you are building a large application, prefer Domain Exceptions (extending `Error`) in your Services, and use Exception Filters or Interceptors to map them to HTTP codes. This allows you to reuse your Services in Microservices or WebSockets without worrying about HTTP logic.

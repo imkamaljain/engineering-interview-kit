@@ -1,0 +1,85 @@
+---
+title: "Job Queues"
+description: "Job Queues in NestJS"
+importance: "LOW"
+revisionTime: 9
+category: "NestJS"
+subcategory: "Queues & Events"
+order: 1960
+---
+
+*Job Queues are used to offload time-consuming, resource-intensive, or unreliable tasks to the background, freeing up your main HTTP server to respond to user requests instantly.*
+
+## Overview
+If a user clicks "Generate Annual Report", building a massive PDF could take 30 seconds. If you do this synchronously, the user's browser hangs, and your Node.js thread is blocked, preventing other users from being served.
+
+Instead, you use a Job Queue. The HTTP endpoint immediately creates a "Job" (e.g., `generate_pdf`, `userId: 123`), places it in a queue, and returns a `202 Accepted` response. A separate background process (a Worker) continuously checks the queue, pulls the job, and generates the PDF.
+
+## Key Concepts
+- **Queue**: A First-In-First-Out (FIFO) data structure stored in a durable datastore (like Redis or Postgres).
+- **Producer**: The code that creates the job and pushes it onto the queue (usually an HTTP Controller).
+- **Consumer (Worker)**: The code that pulls the job off the queue and actually performs the heavy lifting.
+- **Durability**: Unlike `EventEmitter`, if your server crashes while a job is in the queue, the job is not lost. The queue remembers it, and another worker will pick it up later.
+
+## NestJS Solutions for Job Queues
+NestJS officially recommends and natively integrates with **Bull** and **BullMQ**, which are high-performance queue systems backed by Redis.
+
+### 1. Simple vs. Complex Tasks
+Not every background task needs a Job Queue.
+- **Use `EventEmitter` or Promises** for fast, local tasks (like sending a Slack notification) where occasional failure is acceptable.
+- **Use Job Queues (BullMQ)** for tasks that require retries, take a long time (image processing), interact with flaky third-party APIs, or require strict rate limiting.
+
+## Code Examples
+
+### The Workflow of a Job Queue
+
+**1. The Producer creates the job:**
+```typescript
+@Injectable()
+export class ReportService {
+  constructor(@InjectQueue('reports') private reportQueue: Queue) {}
+
+  async requestAnnualReport(userId: number) {
+    // Push the job to the queue. 
+    // This takes 1 millisecond.
+    const job = await this.reportQueue.add('generate_annual', { userId });
+    
+    // Return immediately to the user!
+    return { jobId: job.id, status: 'processing' };
+  }
+}
+```
+
+**2. The User polls for status (Optional):**
+Because the request returns immediately, the frontend might poll an endpoint to check if the PDF is done.
+```typescript
+@Get('status/:id')
+async checkStatus(@Param('id') id: string) {
+  const job = await this.reportQueue.getJob(id);
+  if (job.isCompleted()) return { status: 'done', url: job.returnvalue.url };
+  return { status: 'processing', progress: job.progress() };
+}
+```
+
+**3. The Worker processes the job:**
+This runs in the background, entirely separate from the HTTP request cycle.
+```typescript
+@Processor('reports')
+export class ReportProcessor {
+  
+  @Process('generate_annual')
+  async handleReport(job: Job<{ userId: number }>) {
+    console.log(`Starting massive PDF generation for user ${job.data.userId}...`);
+    
+    // Do heavy lifting...
+    await generateMassivePdf();
+    
+    // The return value is saved back to Redis so the user can fetch it later!
+    return { url: 'https://storage.com/report.pdf' }; 
+  }
+}
+```
+
+## Best Practices
+- **Separate Worker Processes**: In a small application, the Producer and the Worker can run in the exact same NestJS instance. In a large production application, you should deploy two separate NestJS instances: one that only runs HTTP Controllers (the Web process), and one that only runs `@Processor` classes (the Worker process). This prevents heavy background jobs from starving your Web servers of CPU.
+- **Idempotency**: Workers can fail, and queues will retry the job. Ensure your job logic is idempotent (e.g., if a job charges a credit card and fails on step 2, the retry shouldn't charge the card a second time).

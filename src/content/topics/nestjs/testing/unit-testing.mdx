@@ -1,0 +1,105 @@
+---
+title: "Unit Testing"
+description: "Unit Testing in NestJS"
+importance: "HIGH"
+revisionTime: 11
+category: "NestJS"
+subcategory: "Testing"
+order: 2270
+---
+
+*Unit Testing is the practice of testing individual functions, methods, or classes in complete isolation from the rest of the application and external systems (like databases or APIs).*
+
+## Overview
+The goal of a Unit Test is to execute a small piece of code extremely fast, providing immediate feedback to the developer. 
+
+If a Unit Test connects to a database, reads a file from disk, or makes a network request, **it is not a Unit Test**. It is an Integration Test. In a NestJS application, Unit Tests form the base of the Testing Pyramid and should make up roughly 70-80% of your total test suite.
+
+## Key Concepts
+- **Isolation**: Ensuring that a failure in the database does not cause a test in the `UserService` to fail. You achieve isolation through Mocking.
+- **Speed**: A suite of 1,000 unit tests should run in under 5 seconds. This speed allows developers to run them continuously (e.g., `npm run test:watch`) while coding.
+- **Test Coverage**: A metric (usually generated via `jest --coverage`) indicating what percentage of your source code is executed during tests.
+
+## Code Examples
+
+### 1. Testing a Pure Utility Function
+Not everything in NestJS is a class. Sometimes you have pure helper functions. These are the easiest to unit test because they require no mocking or dependency injection.
+
+```typescript
+// string-utils.ts
+export function capitalize(str: string): string {
+  if (!str) return '';
+  return str.charAt(0).toUpperCase() + str.slice(1).toLowerCase();
+}
+```
+
+```typescript
+// string-utils.spec.ts
+import { capitalize } from './string-utils';
+
+describe('capitalize', () => {
+  it('should capitalize a lowercase word', () => {
+    expect(capitalize('hello')).toBe('Hello');
+  });
+
+  it('should correct strange casing', () => {
+    expect(capitalize('nEsTjS')).toBe('Nestjs');
+  });
+
+  it('should handle empty strings gracefully', () => {
+    expect(capitalize('')).toBe('');
+  });
+});
+```
+
+### 2. Unit Testing a NestJS Service
+When testing a NestJS class, you use the `TestingModule` to isolate it from its database dependencies.
+
+```typescript
+// users.service.spec.ts
+import { Test } from '@nestjs/testing';
+import { UsersService } from './users.service';
+import { getRepositoryToken } from '@nestjs/typeorm';
+import { User } from './user.entity';
+
+describe('UsersService', () => {
+  let service: UsersService;
+  
+  // Create an isolated fake repository
+  const mockRepo = {
+    find: jest.fn(),
+  };
+
+  beforeEach(async () => {
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        UsersService, // The unit we are testing
+        {
+          provide: getRepositoryToken(User), // The external dependency to isolate
+          useValue: mockRepo,
+        },
+      ],
+    }).compile();
+
+    service = moduleRef.get(UsersService);
+  });
+
+  it('should return all active users', async () => {
+    // Arrange
+    const activeUsers = [{ id: 1, name: 'Active', status: 'ACTIVE' }];
+    mockRepo.find.mockResolvedValue(activeUsers);
+
+    // Act
+    const result = await service.getActiveUsers();
+
+    // Assert
+    expect(result).toEqual(activeUsers);
+    // Verify our service queried the DB correctly
+    expect(mockRepo.find).toHaveBeenCalledWith({ where: { status: 'ACTIVE' } }); 
+  });
+});
+```
+
+## Best Practices
+- **Focus on the Public API**: Do not write unit tests for `private` methods. Test the `public` methods that call those private methods. If the private method is too complex to test via the public method, it is a sign that the private method should be extracted into its own separate utility class.
+- **Don't Chase 100% Coverage**: Aiming for 100% test coverage often leads to writing meaningless tests just to satisfy the coverage tool (e.g., testing that a DTO class can be instantiated). Aim for 80% coverage, focusing heavily on complex business logic, edge cases, and error handling.

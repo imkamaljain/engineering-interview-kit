@@ -1,0 +1,88 @@
+---
+title: "Singleton Scope"
+description: "Singleton Scope in NestJS"
+importance: "LOW"
+revisionTime: 7
+category: "NestJS"
+subcategory: "Providers & Services"
+order: 430
+---
+
+*The Singleton Scope (`Scope.DEFAULT`) is the default injection behavior in NestJS, where a single instance of a provider is shared across the entire application.*
+
+## Overview
+When a provider is defined as a singleton, the Nest IoC container instantiates it exactly once during the application bootstrap phase. The container then caches this instance. 
+
+Any subsequent requests to inject this provider (by controllers, other services, or modules) will receive the exact same cached instance.
+
+## Key Concepts
+- **Default Behavior**: If you use `@Injectable()` without any arguments, it is automatically a Singleton.
+- **Shared State**: Because it's the exact same instance in memory, any class properties you mutate will affect all other consumers of that service.
+- **Performance**: Singletons are highly performant because object instantiation only happens once at startup, not on every request.
+
+## Code Examples
+
+### Shared State in Singletons
+Because the instance is shared, we can use it to store application-wide state (though usually, you should use Redis or a DB for this).
+
+```typescript
+import { Injectable } from '@nestjs/common';
+
+@Injectable() // Defaults to Scope.DEFAULT
+export class CounterService {
+  // This state is shared across the entire app
+  private count = 0;
+
+  increment() {
+    this.count++;
+    return this.count;
+  }
+}
+```
+
+```typescript
+import { Controller, Get } from '@nestjs/common';
+import { CounterService } from './counter.service';
+
+@Controller('first')
+export class FirstController {
+  constructor(private counter: CounterService) {}
+  
+  @Get()
+  hit() {
+    // Calling this endpoint will increment the shared count
+    return this.counter.increment();
+  }
+}
+
+@Controller('second')
+export class SecondController {
+  constructor(private counter: CounterService) {}
+  
+  @Get()
+  hit() {
+    // Calling THIS endpoint will also increment the SAME shared count!
+    return this.counter.increment();
+  }
+}
+```
+
+### The `onModuleInit` Lifecycle Hook
+Because singletons are instantiated once at startup, they can hook into the application lifecycle.
+
+```typescript
+import { Injectable, OnModuleInit } from '@nestjs/common';
+
+@Injectable()
+export class ConnectionService implements OnModuleInit {
+  onModuleInit() {
+    // This runs exactly once when the app starts
+    console.log('Establishing connection pool...');
+  }
+}
+```
+*(Note: Request and Transient scoped providers DO NOT trigger the `onModuleInit` hook because they aren't created at startup).*
+
+## Best Practices
+- **Stateless Services**: The golden rule of Node.js and NestJS backend development is that Singletons should generally be **stateless**. Do not store user-specific data (like a shopping cart or authentication token) in a class property of a Singleton service, or user A will end up seeing user B's data!
+- **Default Choice**: Always use Singleton scope unless you have a specific, undeniable reason to use Request or Transient scope. The performance benefits are massive.

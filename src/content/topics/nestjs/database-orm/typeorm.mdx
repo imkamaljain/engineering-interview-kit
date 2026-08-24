@@ -1,0 +1,95 @@
+---
+title: "TypeORM"
+description: "TypeORM in NestJS"
+importance: "HIGH"
+revisionTime: 12
+category: "NestJS"
+subcategory: "Database & ORM"
+order: 1220
+---
+
+*TypeORM is arguably the most mature and widely used Object-Relational Mapper (ORM) in the NestJS ecosystem. It heavily utilizes TypeScript decorators to map classes to database tables.*
+
+## Overview
+TypeORM supports the Active Record and Data Mapper patterns (NestJS strongly favors the Data Mapper pattern via Repositories). It supports almost every relational database (PostgreSQL, MySQL, SQLite, SQL Server) and even MongoDB (though Mongoose is usually preferred for Mongo).
+
+NestJS provides the `@nestjs/typeorm` package, which abstracts away connection management and provides easy dependency injection for repositories.
+
+## Key Concepts
+- **Entities**: A TypeScript class decorated with `@Entity()`. Every property decorated with `@Column()` becomes a column in the database table.
+- **Repositories**: A class that handles database operations (CRUD) for a specific Entity. You don't usually write Repositories yourself; TypeORM generates them dynamically, and you inject them into your services.
+- **QueryBuilder**: A powerful, programmatic SQL builder used when standard Repository methods (`find()`, `save()`) aren't expressive enough for complex joins or aggregations.
+
+## Code Examples
+
+### 1. Defining an Entity
+Entities use decorators to define schema rules (types, lengths, defaults, nullability).
+
+```typescript
+// user.entity.ts
+import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn } from 'typeorm';
+
+@Entity('users') // explicitly name the table 'users'
+export class User {
+  
+  // Creates an auto-incrementing integer (or UUID if configured) primary key
+  @PrimaryGeneratedColumn()
+  id: number;
+
+  @Column({ type: 'varchar', length: 50 })
+  firstName: string;
+
+  @Column({ type: 'varchar', length: 50 })
+  lastName: string;
+
+  // Defaults to false, stored as a boolean (or tinyint depending on DB)
+  @Column({ default: true })
+  isActive: boolean;
+
+  // Automatically sets the timestamp when the row is inserted
+  @CreateDateColumn()
+  createdAt: Date;
+}
+```
+
+### 2. Basic CRUD Operations (Data Mapper Pattern)
+Inject the repository and use its built-in methods.
+
+```typescript
+import { Injectable } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { User } from './user.entity';
+
+@Injectable()
+export class UsersService {
+  constructor(
+    @InjectRepository(User)
+    private usersRepository: Repository<User>,
+  ) {}
+
+  async create(userData: Partial<User>): Promise<User> {
+    // 1. Create a class instance (does NOT save to DB yet)
+    const newUser = this.usersRepository.create(userData);
+    
+    // 2. Save the instance to the DB (INSERT query)
+    return this.usersRepository.save(newUser);
+  }
+
+  async findActiveUsers(): Promise<User[]> {
+    // SELECT * FROM users WHERE isActive = true
+    return this.usersRepository.find({
+      where: { isActive: true }
+    });
+  }
+
+  async remove(id: string): Promise<void> {
+    // DELETE FROM users WHERE id = ?
+    await this.usersRepository.delete(id);
+  }
+}
+```
+
+## Best Practices
+- **Avoid Active Record**: TypeORM allows you to extend `BaseEntity` and write `User.find()`. In NestJS, this is considered an anti-pattern because it bypasses Dependency Injection, making your code harder to unit test. Always use the Data Mapper pattern (injecting `Repository<T>`).
+- **Use `save()` vs `insert()`**: `save()` will trigger TypeORM lifecycle hooks (e.g., `@BeforeInsert()`) and handle cascading relationships, but it often does a `SELECT` before the `INSERT/UPDATE`. `insert()` and `update()` are raw SQL commands that are faster but skip lifecycle hooks and cascades. Use `insert()` for bulk operations where performance matters.

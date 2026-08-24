@@ -1,0 +1,102 @@
+---
+title: "TTL"
+description: "TTL in NestJS"
+importance: "LOW"
+revisionTime: 13
+category: "NestJS"
+subcategory: "Caching"
+order: 2170
+---
+
+*TTL (Time-To-Live) dictates exactly how long a cached item should remain valid before it is automatically evicted from the cache store.*
+
+## Overview
+Without a TTL, data in a cache lives forever. This is dangerous for two reasons:
+1. **Stale Data**: If a blog post is updated, but the cache never expires, users will see the old version indefinitely.
+2. **Memory Exhaustion**: The cache will continuously grow until the server runs out of RAM and crashes.
+
+TTL ensures that cache entries are ephemeral. Once the TTL timer reaches zero, the cache store (whether in-memory or Redis) automatically deletes the key.
+
+## Key Concepts
+- **Milliseconds vs Seconds**: This is a major "gotcha" in NestJS. In `cache-manager` v4 (NestJS 9 and below), TTL was defined in *seconds*. In `cache-manager` v5 (NestJS 10+), TTL is defined in *milliseconds*.
+- **Global TTL**: A default expiration time applied to every item placed in the cache.
+- **Route/Item-level TTL**: Overriding the global TTL for specific, highly volatile, or highly static data.
+
+## Code Examples
+
+### 1. Setting a Global TTL
+You configure the global TTL when importing the `CacheModule`.
+
+```typescript
+// app.module.ts
+import { Module } from '@nestjs/common';
+import { CacheModule } from '@nestjs/cache-manager';
+
+@Module({
+  imports: [
+    CacheModule.register({
+      isGlobal: true,
+      // Default TTL for ALL cache entries is 5 minutes (300,000 ms)
+      ttl: 300000, 
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+### 2. Overriding TTL at the Route Level
+Using the `CacheInterceptor`, you can use the `@CacheTTL()` decorator to override the global setting for specific endpoints.
+
+```typescript
+import { Controller, Get, UseInterceptors } from '@nestjs/common';
+import { CacheInterceptor, CacheTTL } from '@nestjs/cache-manager';
+
+@Controller('reports')
+@UseInterceptors(CacheInterceptor)
+export class ReportsController {
+
+  @Get('realtime')
+  // Highly volatile data: Cache only for 5 seconds (5000 ms)
+  @CacheTTL(5000)
+  getRealtimeStats() {
+    return this.service.getLiveStats();
+  }
+
+  @Get('annual')
+  // Highly static data: Cache for 24 hours (86,400,000 ms)
+  @CacheTTL(86400000)
+  getAnnualReport() {
+    return this.service.getHeavyAnnualReport();
+  }
+}
+```
+
+### 3. Overriding TTL at the Service Level
+When manually interacting with the `CACHE_MANAGER`, you pass the TTL as the third argument to `.set()`.
+
+```typescript
+import { Injectable, Inject } from '@nestjs/common';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import { Cache } from 'cache-manager';
+
+@Injectable()
+export class ConfigService {
+  constructor(@Inject(CACHE_MANAGER) private cache: Cache) {}
+
+  async saveConfig(key: string, value: any) {
+    // Standard save using the global TTL
+    await this.cache.set(key, value);
+
+    // Save with a specific TTL (10 seconds)
+    await this.cache.set(`temp_${key}`, value, 10000);
+
+    // Disable expiration entirely (Item lives forever)
+    // Warning: Use carefully to avoid memory leaks!
+    await this.cache.set(`permanent_${key}`, value, 0); 
+  }
+}
+```
+
+## Best Practices
+- **Never Use TTL = 0 (Infinity) for Dynamic Data**: Setting a TTL of `0` means the cache never expires. Only do this for absolute static data (like a list of countries). If you use `0` for user sessions or API responses, your server will eventually run out of memory.
+- **Jittering (Fuzzing) TTLs**: If a heavy database query takes 5 seconds, and you cache it for exactly 60 minutes, then exactly 60 minutes from now, 100 concurrent users might trigger a Cache Miss simultaneously (Cache Stampede). To prevent this, add "jitter" to your TTLs. Instead of exactly 60 minutes, cache it for a random time between 55 and 65 minutes (`Math.floor(Math.random() * 10 * 60 * 1000) + 55 * 60 * 1000`). This ensures multiple heavily-accessed keys don't expire at the exact same millisecond.

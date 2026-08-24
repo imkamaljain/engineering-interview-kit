@@ -1,0 +1,81 @@
+---
+title: "Guards"
+description: "Guards in NestJS"
+importance: "HIGH"
+revisionTime: 7
+category: "NestJS"
+subcategory: "Fundamentals"
+order: 90
+---
+
+*Guards are classes annotated with the `@Injectable()` decorator that implement the `CanActivate` interface. They determine whether a given request will be handled by the route handler or not.*
+
+## Overview
+In traditional Express applications, authentication and authorization are typically handled by middleware. However, middleware is "dumb"—it doesn't know which route handler will be executed next. 
+
+Guards, on the other hand, have access to the `ExecutionContext`. They know exactly what's going to be executed next (the specific controller class and the specific method). This makes them the perfect place to implement Authorization and Authentication logic.
+
+## Key Concepts
+- **`CanActivate` Interface**: A Guard must implement this interface, which requires a single `canActivate()` method.
+- **Return Value**: `canActivate()` must return a boolean (or a Promise/Observable resolving to a boolean). If it returns `true`, the request is processed. If `false`, Nest denies the request and throws a `403 Forbidden` exception.
+- **Execution Context**: Guards are provided with the `ExecutionContext`, allowing them to inspect the request, response, and metadata about the target route.
+
+## Code Examples
+
+### A Simple Auth Guard
+A basic guard that checks if the request has an `Authorization` header.
+
+```typescript
+import { Injectable, CanActivate, ExecutionContext, UnauthorizedException } from '@nestjs/common';
+import { Observable } from 'rxjs';
+
+@Injectable()
+export class AuthGuard implements CanActivate {
+  canActivate(
+    context: ExecutionContext,
+  ): boolean | Promise<boolean> | Observable<boolean> {
+    const request = context.switchToHttp().getRequest();
+    
+    // Check if the header exists (simplified logic)
+    if (!request.headers.authorization) {
+      throw new UnauthorizedException('Missing authorization token');
+    }
+    
+    // Attach user info to request (optional, usually done here)
+    request.user = { id: 1, role: 'admin' }; 
+    
+    return true; // Allow the request to proceed
+  }
+}
+```
+
+### Binding Guards
+Guards can be controller-scoped, method-scoped, or global-scoped.
+
+```typescript
+import { Controller, Get, UseGuards } from '@nestjs/common';
+import { AuthGuard } from './auth.guard';
+import { RolesGuard } from './roles.guard';
+
+// Apply AuthGuard to ALL routes in this controller
+@Controller('users')
+@UseGuards(AuthGuard) 
+export class UsersController {
+  
+  @Get()
+  findAll() {
+    return [];
+  }
+
+  // Apply an additional guard only to this route
+  @Get('admin-stats')
+  @UseGuards(RolesGuard)
+  getAdminStats() {
+    return 'Admin stats';
+  }
+}
+```
+
+## Best Practices
+- **Guards are for Authorization**: Use Guards specifically for Authentication (who are you?) and Authorization (are you allowed to do this?). Do not use them for data validation (use Pipes) or data transformation (use Interceptors).
+- **Use Reflector for Metadata**: To build dynamic guards (like a `RolesGuard`), use custom decorators to attach metadata to routes (e.g., `@Roles('admin')`), and use the `Reflector` class inside the guard to read that metadata and compare it against the user's role.

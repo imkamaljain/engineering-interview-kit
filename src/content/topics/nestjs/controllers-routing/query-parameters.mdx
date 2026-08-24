@@ -1,0 +1,96 @@
+---
+title: "Query Parameters"
+description: "Query Parameters in NestJS"
+importance: "LOW"
+revisionTime: 14
+category: "NestJS"
+subcategory: "Controllers & Routing"
+order: 320
+---
+
+*Query parameters are used to pass optional filtering, sorting, or pagination data in the URL.*
+
+## Overview
+Unlike Route Parameters (which are part of the path, e.g., `/users/1`), Query Parameters are appended to the end of the URL after a question mark (e.g., `/users?limit=10&page=2`).
+
+In NestJS, you extract query string parameters using the `@Query()` decorator.
+
+## Key Concepts
+- **`@Query(key?: string)`**: Extracts the query parameter matching the given key. If no key is provided, it extracts the entire query object.
+- **String Types**: Just like route parameters, all query parameters are initially strings (or arrays of strings).
+- **Validation and Transformation**: You can use DTOs (Data Transfer Objects) and `ValidationPipe` to automatically transform and validate query strings.
+
+## Code Examples
+
+### Extracting Specific Query Parameters
+
+```typescript
+import { Controller, Get, Query } from '@nestjs/common';
+
+@Controller('products')
+export class ProductsController {
+  
+  // GET /products?limit=20&sort=asc
+  @Get()
+  findAll(
+    @Query('limit') limit: string,
+    @Query('sort') sort: string,
+  ) {
+    return `Fetching ${limit} products sorted by ${sort}`;
+  }
+}
+```
+
+### Type Transformation
+Because query params are strings, you should use Pipes to convert them if you need numbers or booleans.
+
+```typescript
+import { ParseIntPipe, ParseBoolPipe, DefaultValuePipe } from '@nestjs/common';
+
+@Get()
+findAll(
+  // Use DefaultValuePipe so it doesn't throw if the user omits the query param
+  @Query('limit', new DefaultValuePipe(10), ParseIntPipe) limit: number,
+  @Query('active', new DefaultValuePipe(true), ParseBoolPipe) active: boolean,
+) {
+  // 'limit' is a number, 'active' is a boolean
+  return this.productsService.findAll(limit, active);
+}
+```
+
+### Using DTOs for Complex Queries (Recommended)
+When you have multiple query parameters (pagination, filtering, sorting), it is much cleaner to use a DTO class with `class-validator` and `class-transformer`.
+
+```typescript
+// pagination.dto.ts
+import { IsInt, IsOptional, Min } from 'class-validator';
+import { Type } from 'class-transformer';
+
+export class PaginationQueryDto {
+  @IsOptional()
+  @Type(() => Number) // Transforms the string to a number!
+  @IsInt()
+  @Min(1)
+  limit?: number = 10; // Default value
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number = 1;
+}
+```
+
+```typescript
+// products.controller.ts
+@Get()
+findAll(@Query() query: PaginationQueryDto) {
+  // query is now a fully typed and validated object
+  return this.productsService.findAll(query.limit, query.page);
+}
+```
+*Note: To make `@Type(() => Number)` work automatically, ensure `transform: true` is set in your global `ValidationPipe`.*
+
+## Best Practices
+- **Use DTOs for Pagination/Filtering**: If a route accepts more than two query parameters, always use a DTO. It keeps your controller signature clean and centralizes validation rules.
+- **Enable `transform: true`**: When setting up your global `ValidationPipe` in `main.ts`, pass `{ transform: true }`. This enables the `class-transformer` library to automatically convert query string values into the correct types based on your DTO class definitions.

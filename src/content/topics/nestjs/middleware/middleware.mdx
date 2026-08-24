@@ -1,0 +1,72 @@
+---
+title: "Middleware"
+description: "Middleware in NestJS"
+importance: "HIGH"
+revisionTime: 8
+category: "NestJS"
+subcategory: "Middleware"
+order: 510
+---
+
+*Middleware is a function that executes before the route handler (controller method) is called.*
+
+## Overview
+Middleware functions have access to the request and response objects, and the `next()` middleware function in the application's request-response cycle. 
+
+NestJS middleware is equivalent to Express middleware. If you're familiar with Express, you already know how Nest middleware works.
+
+## Key Concepts
+- **Request-Response Cycle**: Middleware sits at the very beginning of the cycle, before Guards, Interceptors, Pipes, and Controllers.
+- **Capabilities**:
+  - Execute any code.
+  - Make changes to the request and the response objects (e.g., adding headers).
+  - End the request-response cycle (e.g., returning early).
+  - Call the next middleware function in the stack.
+- **The `next()` Function**: If the current middleware doesn't end the request-response cycle, it *must* call `next()` to pass control to the next middleware. Otherwise, the request will hang indefinitely.
+
+## Code Examples
+
+### A Simple Logger Middleware (Class-based)
+This is a standard class-based middleware that logs the incoming request.
+
+```typescript
+import { Injectable, NestMiddleware } from '@nestjs/common';
+import { Request, Response, NextFunction } from 'express';
+
+@Injectable()
+export class LoggerMiddleware implements NestMiddleware {
+  // Must implement the 'use' method
+  use(req: Request, res: Response, next: NextFunction) {
+    console.log(`Incoming request: ${req.method} ${req.url}`);
+    
+    // CRITICAL: You must call next() to continue!
+    next();
+  }
+}
+```
+
+### Modifying the Request Object
+Middleware is often used to parse cookies, extract IP addresses, or establish correlation IDs early in the request lifecycle.
+
+```typescript
+@Injectable()
+export class TraceMiddleware implements NestMiddleware {
+  use(req: Request, res: Response, next: NextFunction) {
+    // Generate a trace ID
+    const traceId = Math.random().toString(36).substring(7);
+    
+    // Mutate the request object (attaching the data)
+    req['traceId'] = traceId;
+    
+    // Also attach it to the response header
+    res.setHeader('X-Trace-Id', traceId);
+    
+    next();
+  }
+}
+```
+
+## Best Practices
+- **Use Guards for Authentication**: While you *can* use Middleware for authentication (and historically in Express, you did), in NestJS you should use **Guards** instead. Guards have access to the `ExecutionContext`, meaning they know exactly which Controller and Method is about to be executed, whereas Middleware only knows the raw URL path.
+- **Integration with Express**: Nest middleware is fully compatible with the massive ecosystem of Express middleware (e.g., `helmet`, `cors`, `cookie-parser`). You can apply them directly!
+- **Always Call `next()`**: The number one bug developers encounter with middleware is forgetting to call `next()`, causing the API to hang and eventually time out.

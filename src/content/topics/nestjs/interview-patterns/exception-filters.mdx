@@ -1,0 +1,107 @@
+---
+title: "Exception Filters"
+description: "Exception Filters in NestJS"
+importance: "HIGH"
+revisionTime: 8
+category: "NestJS"
+subcategory: "Interview Patterns"
+order: 3010
+---
+
+*Exception Filters act as the ultimate safety net for your application. They catch any unhandled exceptions thrown during the request lifecycle and format them into a consistent, user-friendly HTTP response.*
+
+## Overview
+In a standard Express application, if you throw an error and forget to wrap it in a `try/catch` block, the server crashes, or the client hangs indefinitely.
+
+NestJS has a built-in Global Exception Filter. If your code throws a `NotFoundException` (or a generic `Error`), NestJS catches it at the very end of the lifecycle and automatically translates it into a standard JSON response (`{ "statusCode": 404, "message": "Not Found" }`). 
+
+Custom Exception Filters allow you to override this behavior, standardizing error formats for your specific frontend or catching underlying database errors (like TypeORM unique constraint violations) and translating them into HTTP 400 errors.
+
+## Key Concepts
+- **`@Catch()`**: A decorator that tells the filter which specific classes of exceptions it should intercept. If left empty (`@Catch()`), it catches absolutely everything.
+- **`ArgumentsHost`**: An object containing the raw request and response objects, allowing you to manually construct the HTTP response sent to the client.
+
+## Code Examples
+
+### 1. Creating a Custom Global Filter
+This filter catches all standard `HttpException` instances, adds a timestamp, and logs the error before returning it to the client.
+
+```typescript
+// http-exception.filter.ts
+import { ExceptionFilter, Catch, ArgumentsHost, HttpException } from '@nestjs/common';
+import { Request, Response } from 'express';
+
+// Only catch exceptions that inherit from HttpException
+@Catch(HttpException) 
+export class HttpExceptionFilter implements ExceptionFilter {
+  
+  catch(exception: HttpException, host: ArgumentsHost) {
+    const ctx = host.switchToHttp();
+    const response = ctx.getResponse<Response>();
+    const request = ctx.getRequest<Request>();
+    
+    const status = exception.getStatus();
+    const exceptionResponse = exception.getResponse();
+
+    // Log the error to your central logging system
+    console.error(`[${request.method}] ${request.url} failed:`, exception.message);
+
+    // Construct a custom, standardized JSON response
+    response.status(status).json({
+      success: false,
+      statusCode: status,
+      timestamp: new Date().toISOString(),
+      path: request.url,
+      // Pass through the original error message
+      error: typeof exceptionResponse === 'object' ? exceptionResponse : { message: exceptionResponse },
+    });
+  }
+}
+```
+
+### 2. Catching Database Errors (Prisma / TypeORM)
+You should never leak raw SQL errors to the frontend. You can create a filter that specifically catches TypeORM `QueryFailedError`s and translates them.
+
+```typescript
+import { ExceptionFilter, Catch, ArgumentsHost, HttpStatus } from '@nestjs/common';
+import { QueryFailedError } from 'typeorm';
+import { Response } from 'express';
+
+@Catch(QueryFailedError)
+export class TypeOrmExceptionFilter implements ExceptionFilter {
+  catch(exception: QueryFailedError, host: ArgumentsHost) {
+    const response = host.switchToHttp().getResponse<Response>();
+
+    // Check for PostgreSQL unique constraint violation (Error Code 23505)
+    if ((exception as any).code === '23505') {
+      return response.status(HttpStatus.CONFLICT).json({
+        statusCode: HttpStatus.CONFLICT,
+        message: 'A record with this data already exists.',
+      });
+    }
+
+    // Generic fallback for other DB errors
+    return response.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
+      statusCode: HttpStatus.INTERNAL_SERVER_ERROR,
+      message: 'Internal Database Error',
+    });
+  }
+}
+```
+
+### 3. Applying the Filter
+Filters can be applied at the method, controller, or global level.
+
+```typescript
+// main.ts (Global application)
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+  // Apply globally to all routes
+  app.useGlobalFilters(new HttpExceptionFilter(), new TypeOrmExceptionFilter());
+  await app.listen(3000);
+}
+```
+
+## Best Practices
+- **Never Throw 500s intentionally**: If you find yourself writing `throw new InternalServerErrorException()`, you are probably doing something wrong. Let unexpected errors naturally bubble up to the global filter, which will automatically convert them to 500s and log them. You should only manually throw `400 Bad Request`, `401 Unauthorized`, `403 Forbidden`, and `404 Not Found`.
+- **Dependency Injection in Filters**: If your Exception Filter requires the `LoggerService` to send errors to Datadog, you cannot apply it in `main.ts` using `new MyFilter()`. Instead, you must register it as a provider inside `AppModule` using `{ provide: APP_FILTER, useClass: MyFilter }`.

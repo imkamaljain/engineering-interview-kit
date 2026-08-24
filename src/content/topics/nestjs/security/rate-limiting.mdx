@@ -1,0 +1,90 @@
+---
+title: "Rate Limiting"
+description: "Rate Limiting in NestJS"
+importance: "HIGH"
+revisionTime: 13
+category: "NestJS"
+subcategory: "Security"
+order: 2570
+---
+
+*In a security context, Rate Limiting is used specifically to mitigate brute-force attacks, credential stuffing, and application-layer DDoS attacks by strictly throttling sensitive endpoints.*
+
+## Overview
+While general rate limiting (e.g., 100 requests/minute) is great for performance and preventing noisy neighbors, it is entirely insufficient for security. 
+
+If your `/login` endpoint allows 100 requests per minute, an attacker can attempt 144,000 passwords a day against a single user account. They will inevitably guess weak passwords. Security-focused rate limiting requires much tighter constraints on specific, sensitive routes.
+
+## Key Concepts
+- **Brute Force Attacks**: Systematically guessing passwords or OTPs (One Time Passwords).
+- **Credential Stuffing**: Using lists of leaked passwords from other breaches to try and log into your application.
+- **Progressive Delays (Tarpitting)**: Instead of just blocking the user, intentionally slowing down the response time for each failed attempt to frustrate automated scripts.
+
+## Code Examples
+
+### 1. Strict Limiting on Authentication Routes
+Using `@nestjs/throttler`, you should configure a distinct, highly restrictive limit for login and password reset endpoints.
+
+```typescript
+// auth.controller.ts
+import { Controller, Post, UseGuards } from '@nestjs/common';
+import { ThrottlerGuard, Throttle } from '@nestjs/throttler';
+
+@Controller('auth')
+// Apply the guard to this controller
+@UseGuards(ThrottlerGuard) 
+export class AuthController {
+  
+  // Security Limit: Maximum 5 login attempts per 15 minutes!
+  // This completely neutralizes brute-force attacks.
+  @Throttle({ default: { limit: 5, ttl: 900000 } }) // ttl is in milliseconds (900s = 15m)
+  @Post('login')
+  async login() {
+    return this.authService.login();
+  }
+
+  // Security Limit: Maximum 3 password reset requests per hour!
+  // Prevents email spam / harassment.
+  @Throttle({ default: { limit: 3, ttl: 3600000 } }) 
+  @Post('forgot-password')
+  async forgotPassword() {
+    return this.authService.sendResetEmail();
+  }
+}
+```
+
+### 2. Rate Limiting by User Identifier (Not IP)
+Attackers performing Credential Stuffing don't use a single IP address. They use a botnet of 10,000 different IP addresses. If you only rate limit by IP, they will still succeed!
+
+You must write a custom Throttler guard that tracks failed attempts against the specific *email address* being attacked.
+
+```typescript
+import { Injectable, ExecutionContext } from '@nestjs/common';
+import { ThrottlerGuard } from '@nestjs/throttler';
+
+@Injectable()
+export class LoginThrottlerGuard extends ThrottlerGuard {
+  // Override the method that generates the tracking key in Redis
+  protected async getTracker(req: Record<string, any>): Promise<string> {
+    // If the request has an email (e.g., a login attempt), track by email!
+    if (req.body && req.body.email) {
+      // The attacker cannot bypass this by changing their IP address.
+      return `login-throttle:${req.body.email}`;
+    }
+    
+    // Fallback to IP address tracking
+    return req.ip;
+  }
+}
+```
+
+Apply this custom guard to your login endpoint:
+```typescript
+@UseGuards(LoginThrottlerGuard)
+@Post('login')
+async login(@Body() body: LoginDto) { ... }
+```
+
+## Best Practices
+- **Lockouts vs Rate Limits**: Rate limiting rejects requests with a `429 Too Many Requests`. Account Lockout actually modifies the database (`is_locked = true`) after 5 failed attempts, requiring the user to click an email link to unlock. Account lockouts are more secure, but create a vector for Denial of Service (an attacker intentionally locking out legitimate users). Rate limiting is generally preferred unless lockouts are a strict compliance requirement.
+- **Fail Uniformly**: Whether a login fails because the username doesn't exist, or because the password was wrong, always return the exact same generic error message: `"Invalid credentials"`. Furthermore, ensure the request takes the exact same amount of time to process in both cases (to prevent Time-Based Enumeration attacks).

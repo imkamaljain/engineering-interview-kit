@@ -1,0 +1,111 @@
+---
+title: "Filtering"
+description: "Filtering in NestJS"
+importance: "LOW"
+revisionTime: 6
+category: "NestJS"
+subcategory: "REST APIs"
+order: 1500
+---
+
+*Filtering allows API clients to narrow down a large dataset by specifying criteria (e.g., "only show users who are active and live in New York") via URL query parameters.*
+
+## Overview
+A `GET /users` endpoint that returns millions of records is useless. Filtering allows the client to define exactly which subset of data they need.
+
+In REST APIs, filters are passed as Query Parameters (`?isActive=true&city=NewYork`). The NestJS backend parses these strings, validates them, and translates them into an ORM `WHERE` clause.
+
+## Key Concepts
+- **Exact Match**: `?status=ACTIVE` translates to `WHERE status = 'ACTIVE'`.
+- **Range Queries**: `?minPrice=10&maxPrice=50` translates to `WHERE price >= 10 AND price <= 50`.
+- **Dynamic Where Clauses**: Because query parameters are optional, the backend must dynamically build the `WHERE` clause, only adding conditions if the parameter was actually provided.
+
+## Code Examples
+
+### 1. The Validation DTO
+Define exactly which fields the client is allowed to filter by. Use `class-validator` to ensure the strings from the URL are cast to the correct data types (booleans, numbers).
+
+```typescript
+// user-filter.dto.ts
+import { IsOptional, IsBoolean, IsString, IsNumber } from 'class-validator';
+import { Type, Transform } from 'class-transformer';
+
+export class UserFilterDto {
+  @IsOptional()
+  @IsString()
+  role?: string;
+
+  @IsOptional()
+  // URL query params are ALWAYS strings. We must transform "true" to a real boolean.
+  @Transform(({ value }) => value === 'true') 
+  @IsBoolean()
+  isActive?: boolean;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  minAge?: number;
+}
+```
+
+### 2. The Controller
+Extract the query object using `@Query()`.
+
+```typescript
+// users.controller.ts
+import { Controller, Get, Query } from '@nestjs/common';
+
+@Controller('users')
+export class UsersController {
+  constructor(private usersService: UsersService) {}
+
+  @Get()
+  // Example Request: GET /users?role=admin&isActive=true&minAge=25
+  findAll(@Query() filterDto: UserFilterDto) {
+    return this.usersService.findAll(filterDto);
+  }
+}
+```
+
+### 3. The Service (Dynamic Query Building in TypeORM)
+You cannot simply pass `where: filterDto` to TypeORM because it contains custom keys like `minAge` that don't exist in the database schema. You must map the DTO to a valid TypeORM query object.
+
+```typescript
+// users.service.ts
+import { Injectable } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository, MoreThanOrEqual } from 'typeorm';
+
+@Injectable()
+export class UsersService {
+  constructor(@InjectRepository(User) private repo: Repository<User>) {}
+
+  async findAll(filters: UserFilterDto) {
+    // 1. Initialize an empty dynamic Where clause
+    const whereConfig: any = {};
+
+    // 2. Conditionally add properties ONLY if they were provided in the URL
+    if (filters.role) {
+      whereConfig.role = filters.role; // WHERE role = 'admin'
+    }
+
+    if (filters.isActive !== undefined) {
+      whereConfig.isActive = filters.isActive; // WHERE isActive = true
+    }
+
+    if (filters.minAge) {
+      // TypeORM's MoreThanOrEqual helper for range queries
+      whereConfig.age = MoreThanOrEqual(filters.minAge); // WHERE age >= 25
+    }
+
+    // 3. Execute the dynamically built query
+    return this.repo.find({
+      where: whereConfig,
+    });
+  }
+}
+```
+
+## Best Practices
+- **Transform Query Strings**: Remember that everything in a URL query string (`?isActive=true&age=18`) arrives in NestJS as a string (`"true"`, `"18"`). If your DTO expects a boolean or a number, you MUST use `class-transformer` (`@Type(() => Number)` or `@Transform`) so validation doesn't fail.
+- **Use QueryBuilder for Complex Logic**: The object literal approach (`where: { ... }`) is great for simple `AND` conditions. However, if your filtering requires complex `OR` logic (e.g., "Role is Admin OR Age > 30"), it is much safer and easier to use TypeORM's `QueryBuilder` (`this.repo.createQueryBuilder().andWhere(...).orWhere(...)`).

@@ -7,7 +7,7 @@ import { visit } from 'unist-util-visit';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import remarkBreaks from 'remark-breaks';
-import { unified } from '@astrojs/markdown-remark';
+
 
 function remarkMermaid() {
   return (tree) => {
@@ -28,10 +28,8 @@ export default defineConfig({
     plugins: [tailwindcss()]
   },
   markdown: {
-    processor: unified({
-      remarkPlugins: [remarkMermaid, remarkMath, remarkBreaks],
-      rehypePlugins: [rehypeKatex],
-    }),
+    remarkPlugins: [remarkMermaid, remarkMath, remarkBreaks],
+    rehypePlugins: [rehypeKatex],
   },
   integrations: [mdx()],
   adapter: netlify()

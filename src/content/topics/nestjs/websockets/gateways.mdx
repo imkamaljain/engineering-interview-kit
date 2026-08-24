@@ -1,0 +1,95 @@
+---
+title: "Gateways"
+description: "Gateways in NestJS"
+importance: "HIGH"
+revisionTime: 6
+category: "NestJS"
+subcategory: "WebSockets"
+order: 2050
+---
+
+*In NestJS, a Gateway is simply a class annotated with `@WebSocketGateway()`. It encapsulates WebSocket logic, acting as the real-time equivalent of an HTTP `@Controller()`.*
+
+## Overview
+Gateways bridge the gap between the raw WebSocket protocol and the structured NestJS dependency injection system. They allow you to define event listeners (`@SubscribeMessage()`), utilize lifecycle hooks, and inject providers (like Database Services) seamlessly.
+
+Because Gateways participate in the NestJS DI container, they act exactly like normal Providers. This means you can inject them into Controllers, inject Services into them, and apply Guards, Pipes, and Interceptors to them.
+
+## Key Concepts
+- **`@WebSocketGateway()`**: The class-level decorator that instantiates a WebSocket server. You can pass options here (like port number, namespace, or CORS settings).
+- **`@SubscribeMessage('event')`**: The method-level decorator that listens for a specific incoming event name from the client.
+- **Lifecycle Interfaces**: `OnGatewayInit`, `OnGatewayConnection`, and `OnGatewayDisconnect` allow you to hook into the fundamental stages of a socket connection.
+
+## Code Examples
+
+### 1. Gateway Lifecycle Hooks
+Implementing these interfaces allows you to run setup logic, authenticate users on connection, or clean up memory on disconnect.
+
+```typescript
+import { 
+  WebSocketGateway, 
+  OnGatewayInit, 
+  OnGatewayConnection, 
+  OnGatewayDisconnect,
+  WebSocketServer
+} from '@nestjs/websockets';
+import { Server, Socket } from 'socket.io';
+import { Logger } from '@nestjs/common';
+
+@WebSocketGateway()
+export class AppGateway implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect {
+  
+  @WebSocketServer() server: Server;
+  private logger: Logger = new Logger('AppGateway');
+
+  // 1. Fires once when the WebSocket server starts up
+  afterInit(server: Server) {
+    this.logger.log('WebSocket Server Initialized');
+  }
+
+  // 2. Fires every time a new client connects
+  handleConnection(client: Socket, ...args: any[]) {
+    this.logger.log(`Client connected: ${client.id}`);
+    
+    // You can parse authentication tokens here!
+    const token = client.handshake.auth.token;
+    if (!token) {
+      client.disconnect(); // Reject the connection
+    }
+  }
+
+  // 3. Fires every time a client disconnects (or the connection drops)
+  handleDisconnect(client: Socket) {
+    this.logger.log(`Client disconnected: ${client.id}`);
+    // Good place to update user status to "Offline" in the DB
+  }
+}
+```
+
+### 2. Injecting Services into Gateways
+Gateways are Providers, so you inject business logic into them just like you would a Controller.
+
+```typescript
+import { WebSocketGateway, SubscribeMessage, MessageBody } from '@nestjs/websockets';
+import { MessagesService } from './messages.service';
+
+@WebSocketGateway()
+export class ChatGateway {
+  
+  // Inject the database service!
+  constructor(private readonly messagesService: MessagesService) {}
+
+  @SubscribeMessage('send_message')
+  async handleMessage(@MessageBody() payload: { userId: number; text: string }) {
+    
+    // Save the message to the database BEFORE broadcasting it
+    const savedMessage = await this.messagesService.create(payload.userId, payload.text);
+    
+    return savedMessage;
+  }
+}
+```
+
+## Best Practices
+- **Keep Gateways Lean**: Just like Controllers, a Gateway should not contain complex business logic or SQL queries. The Gateway should receive the event, perhaps extract the user ID from the socket, and immediately hand off the payload to a dedicated Service class.
+- **Same Port by Default**: If you do not specify a port in `@WebSocketGateway()`, NestJS will bind the WebSocket server to the exact same port as your HTTP server. This is highly recommended as it simplifies deployment (you only need to expose one port on your Docker container or Load Balancer).

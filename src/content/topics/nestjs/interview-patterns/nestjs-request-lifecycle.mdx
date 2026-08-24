@@ -1,0 +1,72 @@
+---
+title: "NestJS Request Lifecycle"
+description: "NestJS Request Lifecycle in NestJS"
+importance: "HIGH"
+revisionTime: 11
+category: "NestJS"
+subcategory: "Interview Patterns"
+order: 2910
+---
+
+*The NestJS Request Lifecycle defines the exact sequence of components an incoming HTTP request passes through before returning a response. Memorizing this pipeline is essential for debugging and architectural design.*
+
+## Overview
+In a plain Node.js/Express application, the lifecycle is simple: Middleware -> Route Handler. 
+
+NestJS introduces a highly opinionated, multi-layered pipeline. Understanding *where* in the pipeline you are executing logic dictates what context you have access to, and whether you can modify the request/response.
+
+## The Complete Lifecycle Order
+When a request hits a NestJS server, it resolves in the following strict order:
+
+1. **Incoming Request**
+2. **Middleware**: (Global -> Module-bound)
+3. **Guards**: (Global -> Controller -> Method)
+4. **Interceptors (Pre-Controller)**: (Global -> Controller -> Method)
+5. **Pipes**: (Global -> Controller -> Method -> Route Parameter)
+6. **Controller Handler**: (The actual route method, e.g., `@Get()`)
+7. **Service Layer**: (Business logic execution)
+8. **Interceptors (Post-Controller)**: (Method -> Controller -> Global)
+9. **Exception Filters**: (Catches exceptions thrown in any of the above steps)
+10. **Server Response**
+
+## Visualizing the Flow
+
+### 1. The "Way In" (Steps 1-5)
+The request is evaluated to see if it should even be allowed to reach the Controller.
+- **Middleware** parses the raw body (`bodyParser`) or logs the IP address.
+- **Guards** check the headers for a JWT token and verify roles. If unauthorized, the lifecycle halts here and throws a 403.
+- **Interceptors** start a stopwatch to measure request duration.
+- **Pipes** take the JSON body, validate it against a DTO using `class-validator`, and transform string IDs into integers.
+
+### 2. Execution (Steps 6-7)
+The Controller receives the fully validated, typed data and delegates work to the Service layer (which talks to the Database).
+
+### 3. The "Way Out" (Steps 8-10)
+The data is returned from the Controller back up the chain.
+- **Interceptors** intercept the returned data, calculate the stopwatch duration, and wrap the data in a `{ data: ..., meta: { duration: '12ms' } }` JSON structure.
+- **Filters**: If *anything* failed (e.g., the Guard threw a 403, or the Database threw a unique constraint error), the Exception Filter catches it at the very end, formatting the error into a consistent JSON payload before sending it to the client.
+
+## Code Examples (Architectural Placements)
+If you need to execute logic, where should it go?
+
+```typescript
+// 1. Need to log the raw IP address of every request? -> MIDDLEWARE
+export class LoggerMiddleware implements NestMiddleware { ... }
+
+// 2. Need to check if a user is an Admin? -> GUARD
+export class AdminGuard implements CanActivate { ... }
+
+// 3. Need to cache responses in Redis? -> INTERCEPTOR
+export class CacheInterceptor implements NestInterceptor { ... }
+
+// 4. Need to ensure the password is > 8 characters? -> PIPE
+export class ValidationPipe implements PipeTransform { ... }
+
+// 5. Need to translate a TypeOrm Error into a 409 Conflict? -> FILTER
+export class DBExceptionFilter implements ExceptionFilter { ... }
+```
+
+## Best Practices / Interview Tips
+- **The "Global to Method" Rule**: Notice that Guards, Interceptors, and Pipes execute from the outside-in: Global level first, then Controller level, then Method level. However, Post-Controller Interceptors execute inside-out (Method first, then Controller, then Global).
+- **Guards Cannot Modify Data**: A common beginner mistake is trying to format data or modify the request body inside a Guard. Guards should *strictly* return booleans. Use Pipes or Interceptors to mutate data.
+- **Where does Passport.js fit?**: The popular `@nestjs/passport` library uses **Guards** (e.g., `AuthGuard('jwt')`). Under the hood, it reaches out to Passport strategies to validate tokens.

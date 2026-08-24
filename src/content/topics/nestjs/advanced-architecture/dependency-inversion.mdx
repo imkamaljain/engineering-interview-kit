@@ -1,0 +1,128 @@
+---
+title: "Dependency Inversion"
+description: "Dependency Inversion in NestJS"
+importance: "LOW"
+revisionTime: 13
+category: "NestJS"
+subcategory: "Advanced Architecture"
+order: 2740
+---
+
+*The Dependency Inversion Principle (DIP) is the 'D' in SOLID. It dictates that high-level modules should not depend on low-level modules; both should depend on abstractions.*
+
+## Overview
+In traditional programming, a `UserService` (high-level policy) might directly import and instantiate a `PostgresUserRepository` (low-level detail). This tightly couples the business logic to PostgreSQL.
+
+Dependency Inversion flips this. The `UserService` declares an interface (`IUserRepository`) that it *requires* to function. The `PostgresUserRepository` implements that interface. Now, both the high-level policy and the low-level detail depend on the abstract interface.
+
+NestJS's entire core is built around a Dependency Injection (DI) container, which makes implementing Dependency Inversion incredibly easy using Custom Providers.
+
+## Key Concepts
+- **High-Level Modules**: Code that handles complex business logic (Use Cases, Services).
+- **Low-Level Modules**: Code that handles infrastructure details (Database connections, HTTP clients, File system access).
+- **Abstractions**: Interfaces or abstract classes that define *what* needs to be done, without caring *how* it gets done.
+
+## Code Examples
+
+### 1. The Violation (Tight Coupling)
+This code violates the Dependency Inversion Principle. The high-level `PaymentService` is permanently glued to the low-level `StripeClient`. If you want to switch to PayPal, you have to rewrite the `PaymentService`.
+
+```typescript
+// BAD EXAMPLE
+import { StripeClient } from 'stripe'; // Hard dependency!
+
+@Injectable()
+export class PaymentService {
+  constructor(private readonly stripeClient: StripeClient) {}
+
+  async processCheckout(amount: number) {
+    // We are locked into Stripe's specific method signatures
+    await this.stripeClient.charges.create({ amount, currency: 'usd' });
+  }
+}
+```
+
+### 2. The Abstraction (The Contract)
+First, define an abstraction. TypeScript interfaces don't exist at runtime, so we create a Symbol (or an abstract class) to use as the NestJS Injection Token.
+
+```typescript
+// payment-provider.interface.ts
+
+// This is the Token we will use for Dependency Injection
+export const IPaymentProvider = Symbol('IPaymentProvider');
+
+export interface IPaymentProvider {
+  charge(amount: number, currency: string): Promise<boolean>;
+}
+```
+
+### 3. The Implementation (Low-Level Module)
+Create the specific implementation that honors the contract.
+
+```typescript
+// stripe-payment.service.ts
+import { Injectable } from '@nestjs/common';
+import { IPaymentProvider } from './payment-provider.interface';
+import { StripeClient } from 'stripe';
+
+@Injectable()
+export class StripePaymentService implements IPaymentProvider {
+  private client = new StripeClient('secret_key');
+
+  async charge(amount: number, currency: string): Promise<boolean> {
+    await this.client.charges.create({ amount, currency });
+    return true;
+  }
+}
+```
+
+### 4. The Inversion (High-Level Module)
+Now, rewrite the `PaymentService`. It no longer imports anything from `stripe`. It only depends on the interface.
+
+```typescript
+// payment.service.ts
+import { Injectable, Inject } from '@nestjs/common';
+import { IPaymentProvider } from './payment-provider.interface';
+
+@Injectable()
+export class PaymentService {
+  constructor(
+    // We inject the interface using the Symbol token!
+    @Inject(IPaymentProvider)
+    private readonly paymentProvider: IPaymentProvider
+  ) {}
+
+  async processCheckout(amount: number) {
+    // The PaymentService doesn't know if this is Stripe, PayPal, or a Mock!
+    await this.paymentProvider.charge(amount, 'usd');
+  }
+}
+```
+
+### 5. Wiring it together in the Module
+You tell NestJS how to resolve the abstraction at runtime using a Custom Provider.
+
+```typescript
+// app.module.ts
+import { Module } from '@nestjs/common';
+import { PaymentService } from './payment.service';
+import { StripePaymentService } from './stripe-payment.service';
+import { IPaymentProvider } from './payment-provider.interface';
+
+@Module({
+  providers: [
+    PaymentService,
+    {
+      // "When a class asks for IPaymentProvider..."
+      provide: IPaymentProvider,
+      // "...give them the Stripe implementation."
+      useClass: StripePaymentService,
+    },
+  ],
+})
+export class AppModule {}
+```
+
+## Best Practices
+- **Abstract Classes vs Symbols**: In TypeScript, Interfaces are completely removed during compilation, so NestJS cannot use them for Dependency Injection (`constructor(private service: IMyInterface)` will fail at runtime). You must use either `@Inject('STRING_OR_SYMBOL')` alongside an interface, or you can use an `abstract class` which *does* exist at runtime and can be injected directly without the `@Inject()` decorator.
+- **Testing Nirvana**: The primary benefit of DIP is testing. When unit testing `PaymentService`, you don't need to mock network requests to Stripe. You simply provide a mock implementation: `{ provide: IPaymentProvider, useClass: MockPaymentService }`.

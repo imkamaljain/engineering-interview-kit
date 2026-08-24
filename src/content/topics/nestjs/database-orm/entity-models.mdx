@@ -1,0 +1,83 @@
+---
+title: "Entity Models"
+description: "Entity Models in NestJS"
+importance: "HIGH"
+revisionTime: 9
+category: "NestJS"
+subcategory: "Database & ORM"
+order: 1270
+---
+
+*An Entity (or Model) is a TypeScript class that maps directly to a database table or collection. It is the core building block of any ORM/ODM.*
+
+## Overview
+In the context of NestJS and Object-Relational Mapping (ORM), an Entity is the single source of truth for the structure of your data. 
+
+Instead of writing raw SQL `CREATE TABLE` scripts, you define a TypeScript class and use decorators to describe columns, relationships, and constraints. The ORM uses this metadata to automatically generate and query the database schema.
+
+## Key Concepts
+- **Mapping**: Connecting a class property (e.g., `firstName: string`) to a database column type (e.g., `VARCHAR(50)`).
+- **Decorators**: The primary mechanism used by TypeORM and Sequelize to define this metadata. (Prisma uses a separate schema file instead of decorators).
+- **Lifecycle Hooks**: Methods inside the entity that automatically run before or after database operations (e.g., hashing a password before insert).
+
+## Code Examples
+
+### 1. A Comprehensive TypeORM Entity
+This example demonstrates common column types, constraints, and automatic timestamps.
+
+```typescript
+import { 
+  Entity, 
+  Column, 
+  PrimaryGeneratedColumn, 
+  CreateDateColumn, 
+  UpdateDateColumn,
+  BeforeInsert
+} from 'typeorm';
+import * as bcrypt from 'bcrypt';
+
+@Entity('users') // Explicitly naming the table 'users'
+export class User {
+  
+  // Creates a UUID primary key instead of an auto-incrementing integer
+  @PrimaryGeneratedColumn('uuid')
+  id: string;
+
+  // A required string column with a max length
+  @Column({ type: 'varchar', length: 100 })
+  email: string;
+
+  // A column that can be null
+  @Column({ type: 'varchar', length: 100, nullable: true })
+  displayName: string;
+
+  // Storing a password hash. 
+  // 'select: false' ensures this field is NEVER returned in standard queries 
+  // (like repository.find()), preventing accidental password leaks!
+  @Column({ select: false })
+  passwordHash: string;
+
+  // An enum column
+  @Column({ type: 'enum', enum: ['user', 'admin'], default: 'user' })
+  role: string;
+
+  // Automatically managed timestamps
+  @CreateDateColumn()
+  createdAt: Date;
+
+  @UpdateDateColumn()
+  updatedAt: Date;
+
+  // Lifecycle Hook: Runs automatically right before saving to the DB
+  @BeforeInsert()
+  async hashPassword() {
+    if (this.passwordHash) {
+      this.passwordHash = await bcrypt.hash(this.passwordHash, 10);
+    }
+  }
+}
+```
+
+## Best Practices
+- **`select: false` for Sensitive Data**: Always use `@Column({ select: false })` on fields like `password`, `ssn`, or `apiKey`. This forces you to explicitly request the field (e.g., `.addSelect('user.password')`) when you actually need it for authentication, preventing it from accidentally being serialized and sent to the client in a standard API response.
+- **Keep Business Logic Out**: Entities should primarily represent *data structure*. While simple lifecycle hooks (like password hashing) are okay, avoid putting complex business logic or dependency injections inside your Entity classes. That logic belongs in Services.

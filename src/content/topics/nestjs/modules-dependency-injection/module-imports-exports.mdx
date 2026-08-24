@@ -1,0 +1,82 @@
+---
+title: "Module Imports & Exports"
+description: "Module Imports & Exports in NestJS"
+importance: "HIGH"
+revisionTime: 10
+category: "NestJS"
+subcategory: "Modules & Dependency Injection"
+order: 190
+---
+
+*Imports and Exports are the mechanism by which you control the public API of a module and share providers across boundaries.*
+
+## Overview
+In NestJS, everything inside a module is private by default. A Controller in `UsersModule` cannot inject a Service from `OrdersModule` unless the `OrdersModule` explicitly *exports* it, and the `UsersModule` explicitly *imports* the `OrdersModule`.
+
+This strict boundary enforcement is what makes NestJS architectures so robust and scalable, preventing "spaghetti code" where everything relies on everything else.
+
+## Key Concepts
+- **`imports`**: Used to import other modules (e.g., `imports: [DatabaseModule]`). You cannot import individual providers, you can only import whole modules.
+- **`exports`**: Used to make providers available to *other* modules that import this module (e.g., `exports: [UsersService]`).
+- **Re-exporting Modules**: A module can export a module that it imported. This is useful for grouping common dependencies.
+
+## Code Examples
+
+### Proper Exporting and Importing
+
+```typescript
+// 1. The Provider we want to share
+@Injectable()
+export class AuthService {
+  validateToken(token: string) { return true; }
+}
+
+// 2. The Module exporting the provider
+@Module({
+  providers: [AuthService],
+  // We MUST export it, or it remains private to AuthModule
+  exports: [AuthService] 
+})
+export class AuthModule {}
+
+// 3. The Module importing the exporting module
+@Module({
+  // We import the MODULE, not the provider
+  imports: [AuthModule],
+  providers: [UsersService]
+})
+export class UsersModule {}
+
+// 4. The Service injecting the exported provider
+@Injectable()
+export class UsersService {
+  // This works because UsersModule imports AuthModule, and AuthModule exports AuthService
+  constructor(private authService: AuthService) {}
+}
+```
+
+### Module Re-Exporting (The "Core" Module Pattern)
+
+You can bundle multiple common modules together so that feature modules only need to import one thing.
+
+```typescript
+@Module({
+  imports: [CommonHttpModule, LoggingModule, DatabaseModule],
+  // Export the imported modules!
+  exports: [CommonHttpModule, LoggingModule, DatabaseModule],
+})
+export class CoreModule {}
+
+// Now, feature modules only need to import CoreModule
+@Module({
+  imports: [CoreModule]
+})
+export class FeatureModule {}
+```
+
+## Best Practices
+- **Never Export Controllers**: Controllers are the entry points for HTTP requests. They do not provide business logic to other classes and should never be exported.
+- **Keep Internal Services Private**: If `UsersModule` has a `UserPasswordHelperService` that is only used by `UsersService`, do *not* export it. Keep the module's public API as small as possible.
+- **Understand Error Messages**: If you see `Nest can't resolve dependencies of the XService...`, the solution is almost always: 
+  1. Check if the provider is in the `exports` of its home module.
+  2. Check if the home module is in the `imports` of the module containing XService.

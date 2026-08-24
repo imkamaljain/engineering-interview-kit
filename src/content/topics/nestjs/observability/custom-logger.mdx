@@ -1,0 +1,106 @@
+---
+title: "Custom Logger"
+description: "Custom Logger in NestJS"
+importance: "HIGH"
+revisionTime: 7
+category: "NestJS"
+subcategory: "Observability"
+order: 2810
+---
+
+*A Custom Logger allows you to completely override the default NestJS logging behavior, integrating third-party tools (like Winston, Datadog, or CloudWatch) directly into the framework's lifecycle.*
+
+## Overview
+While the built-in `Logger` is fine for development, and `nestjs-pino` is great for structured logging, sometimes your organization mandates a highly specific logging library (e.g., Winston with custom transports for AWS CloudWatch and Slack alerts).
+
+NestJS is completely agnostic to your logging library. By implementing the `LoggerService` interface, you can tell NestJS to pipe all of its internal framework logs (and your application logs) through your custom class.
+
+## Key Concepts
+- **`LoggerService` Interface**: The contract you must implement (`log`, `error`, `warn`, `debug`, `verbose`).
+- **`app.useLogger()`**: The method used during bootstrap to replace the framework's internal logger.
+- **Buffer Logs**: A setting that tells NestJS to temporarily store startup logs in memory until your Custom Logger is fully initialized by the Dependency Injection container.
+
+## Code Examples
+
+### 1. Creating the Custom Logger Class
+Create a class that implements the `LoggerService` interface. Here, we wrap the popular `winston` library.
+
+```typescript
+import { LoggerService, Injectable } from '@nestjs/common';
+import * as winston from 'winston';
+
+@Injectable()
+export class WinstonCustomLogger implements LoggerService {
+  private readonly logger: winston.Logger;
+
+  constructor() {
+    this.logger = winston.createLogger({
+      level: 'info',
+      format: winston.format.json(),
+      transports: [
+        new winston.transports.Console(),
+        // Send errors to a specific file
+        new winston.transports.File({ filename: 'error.log', level: 'error' }),
+        // You could add a Datadog or CloudWatch transport here!
+      ],
+    });
+  }
+
+  log(message: any, ...optionalParams: any[]) {
+    // The last parameter is usually the "context" (e.g., class name)
+    const context = optionalParams.pop();
+    this.logger.info(message, { context, meta: optionalParams });
+  }
+
+  error(message: any, ...optionalParams: any[]) {
+    const context = optionalParams.pop();
+    this.logger.error(message, { context, meta: optionalParams });
+  }
+
+  warn(message: any, ...optionalParams: any[]) {
+    const context = optionalParams.pop();
+    this.logger.warn(message, { context, meta: optionalParams });
+  }
+
+  debug?(message: any, ...optionalParams: any[]) {
+    const context = optionalParams.pop();
+    this.logger.debug(message, { context, meta: optionalParams });
+  }
+
+  verbose?(message: any, ...optionalParams: any[]) {
+    const context = optionalParams.pop();
+    this.logger.verbose(message, { context, meta: optionalParams });
+  }
+}
+```
+
+### 2. Bootstrapping the Custom Logger
+Because we decorated our logger with `@Injectable()`, we want NestJS's DI container to manage it (maybe it needs to inject a `ConfigService`). 
+
+```typescript
+// main.ts
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from './app.module';
+import { WinstonCustomLogger } from './winston-custom.logger';
+
+async function bootstrap() {
+  // 1. Set bufferLogs to true. This stops Nest from printing its default 
+  // startup logs to the console immediately.
+  const app = await NestFactory.create(AppModule, {
+    bufferLogs: true, 
+  });
+
+  // 2. Retrieve the fully instantiated logger from the DI container
+  const customLogger = app.get(WinstonCustomLogger);
+
+  // 3. Replace the global logger and flush the buffered startup logs through it!
+  app.useLogger(customLogger);
+
+  await app.listen(3000);
+}
+bootstrap();
+```
+
+## Best Practices
+- **Singleton Pattern**: Ensure your Custom Logger is a Singleton (which is the default in NestJS). If you accidentally make it `Scope.TRANSIENT`, NestJS will spin up a new Winston instance for every class that injects it, rapidly exhausting file descriptors and memory.
+- **Handling Objects vs Strings**: NestJS's internal logs pass strings to the `.log(message)` method. However, you might want to pass objects for structured logging. Ensure your custom implementation checks `typeof message === 'object'` and handles both strings and objects gracefully so that neither framework logs nor application logs crash the logger.

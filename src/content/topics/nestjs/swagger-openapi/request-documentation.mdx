@@ -1,0 +1,121 @@
+---
+title: "Request Documentation"
+description: "Request Documentation in NestJS"
+importance: "MEDIUM"
+revisionTime: 5
+category: "NestJS"
+subcategory: "Swagger & OpenAPI"
+order: 1590
+---
+
+*Request Documentation details exactly how a client should send data to an endpoint, including URL parameters, Query parameters, Headers, and Request Bodies.*
+
+## Overview
+While the `@nestjs/swagger` CLI plugin automatically documents Request Bodies (the `@Body()` payload) by analyzing your DTOs, it cannot always infer the intricacies of `@Query()`, `@Param()`, or `@Header()` parameters, especially if they are generic types or primitive strings/numbers.
+
+To explicitly document these aspects of an incoming request, you use specific Swagger decorators on your controller methods.
+
+## Key Concepts
+- **`@ApiBody()`**: Explicitly documents the request body. Often unnecessary if using the CLI plugin with typed DTOs, but useful for raw buffers or non-standard payloads.
+- **`@ApiParam()`**: Documents path variables (e.g., the `:id` in `/users/:id`).
+- **`@ApiQuery()`**: Documents query string parameters (e.g., `?limit=10&page=2`).
+- **`@ApiHeader()`**: Documents custom headers required by the endpoint (e.g., `X-Custom-Tenant-Id`).
+
+## Code Examples
+
+### 1. Documenting Path Parameters
+When you use a wildcard or variable in your route path (`/:id`), you should explain what that ID is expected to be.
+
+```typescript
+import { Controller, Get, Param } from '@nestjs/common';
+import { ApiParam, ApiOperation } from '@nestjs/swagger';
+
+@Controller('users')
+export class UsersController {
+  
+  @Get(':userId/posts/:postId')
+  @ApiOperation({ summary: 'Get a specific post for a user' })
+  // Document the :userId param
+  @ApiParam({ 
+    name: 'userId', 
+    required: true, 
+    description: 'The UUID of the user',
+    example: '123e4567-e89b-12d3-a456-426614174000'
+  })
+  // Document the :postId param
+  @ApiParam({ 
+    name: 'postId', 
+    required: true, 
+    description: 'The numeric ID of the post',
+    example: 42
+  })
+  findOne(
+    @Param('userId') userId: string, 
+    @Param('postId') postId: number
+  ) {
+    return 'Finds the post';
+  }
+}
+```
+
+### 2. Documenting Query Parameters
+If you use a DTO for your `@Query()` object, the Swagger CLI plugin usually documents it automatically. However, if you extract single parameters or want to provide an array of options, `@ApiQuery()` is helpful.
+
+```typescript
+import { Controller, Get, Query } from '@nestjs/common';
+import { ApiQuery, ApiOperation } from '@nestjs/swagger';
+
+@Controller('products')
+export class ProductsController {
+  
+  @Get()
+  @ApiOperation({ summary: 'Search products' })
+  // An optional query string
+  @ApiQuery({ 
+    name: 'search', 
+    required: false, 
+    description: 'Fuzzy search by product name',
+    type: String
+  })
+  // A query string restricted to specific enum values
+  @ApiQuery({ 
+    name: 'sort', 
+    required: false, 
+    enum: ['ASC', 'DESC'],
+    description: 'Sort direction based on price'
+  })
+  searchProducts(
+    @Query('search') search?: string, 
+    @Query('sort') sort?: string
+  ) {
+    return 'Search results';
+  }
+}
+```
+
+### 3. Documenting Custom Headers
+If your API requires a specific header (other than standard Authorization), you must document it so clients know to include it.
+
+```typescript
+import { Controller, Post, Headers } from '@nestjs/common';
+import { ApiHeader, ApiOperation } from '@nestjs/swagger';
+
+@Controller('webhooks')
+export class WebhooksController {
+  
+  @Post('stripe')
+  @ApiOperation({ summary: 'Stripe webhook receiver' })
+  @ApiHeader({
+    name: 'Stripe-Signature',
+    description: 'The cryptographic signature sent by Stripe to verify the payload.',
+    required: true, // Swagger UI will force the user to type this before executing!
+  })
+  handleWebhook(@Headers('Stripe-Signature') signature: string) {
+    return 'Webhook processed';
+  }
+}
+```
+
+## Best Practices
+- **Prefer DTOs for Queries**: Instead of using five `@ApiQuery()` decorators on a controller method, create a `ProductSearchQueryDto` and use `@Query() query: ProductSearchQueryDto`. The CLI plugin will document all five properties automatically, keeping your controller clean.
+- **Provide Examples**: Always provide an `example` property in `@ApiParam` and `@ApiQuery`. When a developer clicks "Try it out" in Swagger UI, these examples will pre-fill the form, saving them time and reducing errors.

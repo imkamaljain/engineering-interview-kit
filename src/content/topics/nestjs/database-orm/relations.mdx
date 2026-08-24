@@ -1,0 +1,98 @@
+---
+title: "Relations"
+description: "Relations in NestJS"
+importance: "HIGH"
+revisionTime: 5
+category: "NestJS"
+subcategory: "Database & ORM"
+order: 1280
+---
+
+*Relations (or Associations) define how different database tables connect to one another (e.g., One-to-One, One-to-Many, Many-to-Many). ORMs allow you to define these links in your code to easily fetch joined data.*
+
+## Overview
+In a relational database, you use Foreign Keys to link tables. In TypeORM, you use Relation Decorators to instruct the ORM how entities are connected. 
+
+Once defined, you can instruct the repository to automatically fetch related data (e.g., "Get this User, and bring all their Posts with them") without writing complex `JOIN` statements manually.
+
+## Key Concepts
+- **`@OneToOne`**: A user has one profile; a profile belongs to one user.
+- **`@OneToMany` / `@ManyToOne`**: The most common. A user has many posts; a post belongs to one user.
+- **`@JoinColumn`**: Placed on the "owning" side of the relationship (the table that actually holds the foreign key column in the database).
+
+## Code Examples
+
+### 1. Defining a One-to-Many Relationship
+We will define a relationship where a `User` can have multiple `Photo`s.
+
+```typescript
+// photo.entity.ts
+import { Entity, PrimaryGeneratedColumn, Column, ManyToOne } from 'typeorm';
+import { User } from './user.entity';
+
+@Entity()
+export class Photo {
+  @PrimaryGeneratedColumn()
+  id: number;
+
+  @Column()
+  url: string;
+
+  // MANY Photos belong to ONE User.
+  // The second argument is a function that points back to the inverse side of the relationship.
+  @ManyToOne(() => User, (user) => user.photos)
+  user: User; 
+  // TypeORM will automatically create a 'userId' foreign key column in this table!
+}
+```
+
+```typescript
+// user.entity.ts
+import { Entity, PrimaryGeneratedColumn, Column, OneToMany } from 'typeorm';
+import { Photo } from './photo.entity';
+
+@Entity()
+export class User {
+  @PrimaryGeneratedColumn()
+  id: number;
+
+  @Column()
+  name: string;
+
+  // ONE User has MANY Photos.
+  // This is the "inverse" side. It doesn't create a column in the User table.
+  @OneToMany(() => Photo, (photo) => photo.user)
+  photos: Photo[];
+}
+```
+
+### 2. Fetching Related Data
+By default, TypeORM does *not* fetch related data (to save performance). You must explicitly ask for it.
+
+```typescript
+@Injectable()
+export class UsersService {
+  constructor(@InjectRepository(User) private userRepository: Repository<User>) {}
+
+  async getUserWithPhotos(id: number) {
+    return this.userRepository.findOne({
+      where: { id },
+      // Tell TypeORM to perform a LEFT JOIN on the photos table
+      relations: ['photos'] 
+    });
+    
+    /* 
+      Returns:
+      {
+        id: 1,
+        name: "John",
+        photos: [ { id: 1, url: "a.jpg" }, { id: 2, url: "b.jpg" } ]
+      }
+    */
+  }
+}
+```
+
+## Best Practices
+- **Eager vs Lazy Loading**: TypeORM allows you to set `eager: true` on a relation decorator, which forces the ORM to *always* join that table every single time you query the entity. **Avoid this.** It leads to massive performance issues (the N+1 query problem). Always explicitly define `relations: ['name']` in your queries when you need the data.
+- **Cascades**: If a user is deleted, you usually want their photos deleted too. Use the `cascade` option (`@OneToMany(() => Photo, p => p.user, { cascade: true })`) to allow the ORM to handle related inserts and deletes automatically, but use it with extreme caution as it can accidentally delete large amounts of data.

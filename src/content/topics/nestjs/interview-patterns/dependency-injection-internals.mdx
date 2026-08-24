@@ -1,0 +1,73 @@
+---
+title: "Dependency Injection Internals"
+description: "Dependency Injection Internals in NestJS"
+importance: "LOW"
+revisionTime: 13
+category: "NestJS"
+subcategory: "Interview Patterns"
+order: 2920
+---
+
+*Dependency Injection (DI) is the core architectural principle of NestJS. Understanding its internals—specifically how the Inversion of Control (IoC) container resolves dependencies using TypeScript metadata—is a frequent topic in advanced interviews.*
+
+## Overview
+If Class A needs Class B, Class A should not instantiate Class B itself (`new ClassB()`). Instead, Class A declares that it *requires* Class B in its constructor, and an external system (the IoC container) is responsible for creating Class B and handing it to Class A.
+
+This decouples the classes, making the application infinitely easier to test and maintain. NestJS handles this entirely automatically, but how does it know *what* to inject?
+
+## Key Concepts
+- **Inversion of Control (IoC) Container**: The internal NestJS dictionary that holds all instantiated providers. When a class is requested, the container looks up the dependencies, resolves them recursively, instantiates the class, and stores it for future use.
+- **`emitDecoratorMetadata`**: A crucial setting in `tsconfig.json`. It tells the TypeScript compiler to save type information into the compiled JavaScript using the `reflect-metadata` library.
+- **`@Injectable()`**: A decorator that tells TypeScript to generate and attach metadata to the class, making it discoverable by the NestJS IoC container.
+
+## How it works under the hood
+
+### 1. The TypeScript Code
+You write a standard NestJS service.
+
+```typescript
+import { Injectable } from '@nestjs/common';
+import { DatabaseService } from './db.service';
+
+@Injectable()
+export class UserService {
+  // We declare we need DatabaseService
+  constructor(private db: DatabaseService) {}
+}
+```
+
+### 2. The Compiled JavaScript (Metadata)
+Because `emitDecoratorMetadata` is true, TypeScript compiles the above code and explicitly injects `reflect-metadata` calls. It looks something like this under the hood:
+
+```javascript
+const common_1 = require("@nestjs/common");
+const db_service_1 = require("./db.service");
+
+class UserService {
+    constructor(db) {
+        this.db = db;
+    }
+}
+
+// THIS IS THE MAGIC!
+// TypeScript tells the runtime: "The first argument of the constructor is of type db_service_1.DatabaseService"
+Reflect.metadata("design:paramtypes", [db_service_1.DatabaseService])(UserService);
+
+common_1.Injectable()(UserService);
+exports.UserService = UserService;
+```
+
+### 3. The Resolution Process
+When NestJS starts up and tries to instantiate `UserService`, the IoC container does the following:
+
+1. It sees `UserService` is in the `providers` array.
+2. It uses `Reflect.getMetadata('design:paramtypes', UserService)` to look at the constructor arguments.
+3. It sees that argument [0] requires the token `DatabaseService`.
+4. It checks its internal dictionary: *"Do I already have an instance of DatabaseService?"*
+   - If **yes**: It grabs the existing singleton instance.
+   - If **no**: It recursively runs steps 1-4 on `DatabaseService` to build it first.
+5. It calls `new UserService(databaseServiceInstance)` and stores the resulting `UserService` in the dictionary.
+
+## Best Practices / Interview Gotchas
+- **Circular Dependencies**: If `UserService` injects `AuthService`, and `AuthService` injects `UserService`, the IoC container gets stuck in an infinite loop during resolution and crashes on startup. You must resolve this using `forwardRef(() => OtherService)`.
+- **Interfaces cannot be injected**: TypeScript Interfaces exist *only* at compile time. They are completely erased from the compiled JavaScript. Therefore, `Reflect.metadata` cannot save them, and NestJS cannot inject them. If you try to inject an Interface (`constructor(private db: IDatabase)`), NestJS will crash with a "Cannot resolve dependency" error. You must use a Class, a String Token (`@Inject('IDatabase')`), or an Abstract Class instead.

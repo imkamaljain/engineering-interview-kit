@@ -1,0 +1,87 @@
+---
+title: "Authorization Guards"
+description: "Authorization Guards in NestJS"
+importance: "HIGH"
+revisionTime: 10
+category: "NestJS"
+subcategory: "Guards"
+order: 740
+---
+
+*Authorization is the process of verifying *what* an authenticated user is allowed to do. In NestJS, Authorization Guards enforce permissions, roles, and ACLs.*
+
+## Overview
+Authentication Guards (like JWT verifiers) only answer the question: "Do I know who you are?". They do not care what you are trying to access.
+
+Authorization Guards assume you are already authenticated (meaning `req.user` exists), and they evaluate whether that user's role or permissions grant them access to the specific controller method they are trying to invoke.
+
+## Key Concepts
+- **Execution Order**: Authorization Guards must always run *after* Authentication Guards. If they run first, `req.user` will be undefined.
+- **Metadata Reflection**: Authorization Guards rely heavily on the `Reflector` utility to read custom metadata (like `@Roles('admin')`) attached to the route handler.
+- **Domain-Specific Logic**: Unlike authentication, which is usually standard (JWT), authorization logic is highly specific to your business domain (e.g., "Only the author of a blog post can edit it").
+
+## Code Examples
+
+### Creating an Authorization Guard
+This guard checks if the user's role matches the roles required by the route.
+
+```typescript
+import { Injectable, CanActivate, ExecutionContext } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
+
+@Injectable()
+export class RolesGuard implements CanActivate {
+  constructor(private reflector: Reflector) {}
+
+  canActivate(context: ExecutionContext): boolean {
+    // 1. Use the Reflector to read the 'roles' metadata from the controller method
+    const requiredRoles = this.reflector.getAllAndOverride<string[]>('roles', [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+
+    // If there is no 'roles' metadata, the route is public to any authenticated user
+    if (!requiredRoles) {
+      return true;
+    }
+
+    // 2. Get the authenticated user from the request
+    const { user } = context.switchToHttp().getRequest();
+
+    // 3. Ensure the user exists (Authentication Guard should have handled this)
+    if (!user) return false;
+
+    // 4. Check if the user's role is in the list of required roles
+    return requiredRoles.some((role) => user.roles?.includes(role));
+  }
+}
+```
+
+### Applying Authentication AND Authorization
+Notice the order of the guards in the `@UseGuards` array.
+
+```typescript
+import { Controller, Delete, UseGuards, SetMetadata } from '@nestjs/common';
+import { AuthGuard } from '@nestjs/passport';
+import { RolesGuard } from './roles.guard';
+
+@Controller('users')
+export class UsersController {
+  
+  @Delete(':id')
+  // ORDER IS CRITICAL!
+  // 1. AuthGuard runs first, validates the JWT, and populates req.user.
+  // 2. RolesGuard runs second, reads req.user, and checks the roles.
+  @UseGuards(AuthGuard('jwt'), RolesGuard) 
+  
+  // Attach the metadata that the RolesGuard will read
+  @SetMetadata('roles', ['admin', 'super-admin']) 
+  deleteUser() {
+    return 'User deleted';
+  }
+}
+```
+
+## Best Practices
+- **Custom Decorators**: Instead of using `@SetMetadata('roles', ['admin'])` directly in your controllers (which is error-prone and hard to refactor), create a strongly-typed custom decorator: `export const Roles = (...roles: Role[]) => SetMetadata('roles', roles);`. Then you can use `@Roles(Role.Admin)` cleanly.
+- **Keep them separate**: Never combine authentication (JWT verification) and authorization (Role checking) into a single giant Guard. Keep them as two separate guards. This obeys the Single Responsibility Principle and allows you to apply authentication globally, while applying authorization selectively.

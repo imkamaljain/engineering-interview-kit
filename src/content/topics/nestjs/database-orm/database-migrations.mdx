@@ -1,0 +1,87 @@
+---
+title: "Database Migrations"
+description: "Database Migrations in NestJS"
+importance: "MEDIUM"
+revisionTime: 8
+category: "NestJS"
+subcategory: "Database & ORM"
+order: 1310
+---
+
+*Database Migrations are version control for your database schema. They are scripts that track and apply changes to your tables over time in a safe, reproducible manner.*
+
+## Overview
+During development, it is tempting to use `synchronize: true` in TypeORM to automatically update your tables when you change a TypeScript Entity class. 
+
+However, in production, if you change a column type from `string` to `boolean`, `synchronize` might just drop the column and recreate it, destroying all your users' data! 
+
+Migrations solve this. A migration is a specific file containing raw SQL (or ORM commands) that says exactly *how* to upgrade the database from version 1 to version 2 (the `up` method), and how to downgrade it back to version 1 if something goes wrong (the `down` method).
+
+## Key Concepts
+- **Generation**: Most ORMs have CLI tools that can look at your TypeScript entities, compare them to the current database schema, and automatically generate the migration script for you.
+- **Execution**: Running the migration scripts against the production database (usually done in a CI/CD pipeline right before the new code is deployed).
+- **The Migrations Table**: The ORM automatically creates a special table (e.g., `migrations`) in your database to track which migration files have already been run.
+
+## Code Examples
+
+### 1. Generating a Migration (TypeORM CLI)
+First, you modify your TypeScript entity (e.g., adding an `age` column to `User`). Then, you run the CLI command:
+
+```bash
+# Example TypeORM CLI command
+npx typeorm migration:generate src/migrations/AddUserAge -d src/data-source.ts
+```
+
+TypeORM generates a file that looks like this:
+
+```typescript
+// src/migrations/1689345920394-AddUserAge.ts
+import { MigrationInterface, QueryRunner } from "typeorm";
+
+export class AddUserAge1689345920394 implements MigrationInterface {
+    name = 'AddUserAge1689345920394'
+
+    // The 'up' method is what happens when you deploy
+    public async up(queryRunner: QueryRunner): Promise<void> {
+        // The CLI automatically figured out the SQL needed!
+        await queryRunner.query(`ALTER TABLE "users" ADD "age" integer`);
+    }
+
+    // The 'down' method is what happens if you need to rollback
+    public async down(queryRunner: QueryRunner): Promise<void> {
+        await queryRunner.query(`ALTER TABLE "users" DROP COLUMN "age"`);
+    }
+}
+```
+
+### 2. Running Migrations
+In your `AppModule`, you should NEVER have `synchronize: true` in production. Instead, you tell TypeORM where to find the migration files, and you enable `migrationsRun: true`.
+
+```typescript
+import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
+
+@Module({
+  imports: [
+    TypeOrmModule.forRoot({
+      type: 'postgres',
+      url: process.env.DATABASE_URL,
+      entities: [__dirname + '/**/*.entity{.ts,.js}'],
+      
+      // 1. NEVER use synchronize in production
+      synchronize: false, 
+      
+      // 2. Point to the compiled migration files
+      migrations: [__dirname + '/migrations/**/*{.ts,.js}'],
+      
+      // 3. Automatically run any pending migrations when the app starts
+      migrationsRun: process.env.NODE_ENV === 'production',
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+## Best Practices
+- **CI/CD Execution**: While setting `migrationsRun: true` in NestJS is easy, it can be dangerous if you scale to 5 instances (they might all try to run the migration at the exact same time). The safest best practice is to run the migration CLI command (`npx typeorm migration:run`) as a separate step in your GitHub Actions / GitLab CI pipeline *before* the new servers start.
+- **Never Modify Old Migrations**: Once a migration file has been committed to `main` and run in production, **never edit it**. If you made a mistake, you must create a *new* migration file that fixes the mistake. Editing old files will break the migration history tracking.

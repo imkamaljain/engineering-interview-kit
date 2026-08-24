@@ -1,0 +1,96 @@
+---
+title: "Event-based Communication"
+description: "Event-based Communication in NestJS"
+importance: "LOW"
+revisionTime: 8
+category: "NestJS"
+subcategory: "Microservices"
+order: 1900
+---
+
+*Event-Based Communication (Publish/Subscribe) is a messaging paradigm where a client broadcasts an event to the network, and any interested microservices react to it, without the client ever waiting for a response.*
+
+## Overview
+In modern distributed systems, tight coupling is dangerous. If your `CheckoutService` has to explicitly tell the `EmailService` to send a receipt and the `InventoryService` to update stock, it is tightly coupled. If the `EmailService` goes offline, the checkout might fail!
+
+Event-Based communication solves this via **Choreography**. The `CheckoutService` simply announces: *"An order was placed!"*. It doesn't care who is listening. The `EmailService` and `InventoryService` independently listen for this announcement and do their jobs.
+
+## Key Concepts
+- **`client.emit()`**: The NestJS method used by the client to broadcast an event.
+- **Decoupling**: The publisher has zero knowledge of the subscribers.
+- **Resilience**: If an event is published via a durable broker (like RabbitMQ or Kafka), and a subscriber is currently offline, the broker will hold the event and deliver it when the subscriber reboots.
+
+## Code Examples
+
+### 1. Publishing an Event
+You use the `emit` method on the `ClientProxy`.
+
+```typescript
+// checkout/checkout.controller.ts
+import { Controller, Post, Body, Inject } from '@nestjs/common';
+import { ClientProxy } from '@nestjs/microservices';
+
+@Controller('checkout')
+export class CheckoutController {
+  constructor(@Inject('MESSAGE_BROKER') private client: ClientProxy) {}
+
+  @Post()
+  processCheckout(@Body() orderData: any) {
+    // 1. Charge the credit card
+    // 2. Save order to database
+    
+    // 3. Broadcast the event!
+    // emit() takes the pattern name, and the payload.
+    // We do NOT wait for a response.
+    this.client.emit('order.completed', {
+      orderId: 123,
+      amount: 50.0,
+      customerEmail: 'test@example.com'
+    });
+    
+    // 4. Return immediately to the user
+    return { status: 'Order processed successfully' };
+  }
+}
+```
+
+### 2. Subscribing to an Event
+Multiple different microservices can listen to the exact same event.
+
+**Microservice A (Inventory):**
+```typescript
+// inventory/inventory.controller.ts
+import { Controller } from '@nestjs/common';
+import { EventPattern, Payload } from '@nestjs/microservices';
+
+@Controller()
+export class InventoryController {
+  
+  @EventPattern('order.completed')
+  handleOrderCompleted(@Payload() data: any) {
+    console.log(`Decreasing stock for items in order ${data.orderId}`);
+    // Update inventory DB...
+  }
+}
+```
+
+**Microservice B (Notifications):**
+```typescript
+// notifications/notifications.controller.ts
+import { Controller } from '@nestjs/common';
+import { EventPattern, Payload } from '@nestjs/microservices';
+
+@Controller()
+export class NotificationsController {
+  
+  @EventPattern('order.completed')
+  handleOrderCompleted(@Payload() data: any) {
+    console.log(`Sending receipt to ${data.customerEmail}`);
+    // Send email...
+  }
+}
+```
+
+## Best Practices
+- **Event Sourcing**: If you use Kafka, events are stored forever. This allows you to spin up a completely new microservice (e.g., an `AnalyticsService`), point it at the Kafka topic, and it will replay every `order.completed` event from the beginning of time to build its database!
+- **Idempotency**: Because of network retries, a message broker might occasionally deliver the same event twice. Your `@EventPattern` handlers MUST be idempotent. If the `InventoryService` receives `order.completed` for Order #123 twice, it should only decrease the stock once. (Often solved by tracking processed Order IDs in a database).

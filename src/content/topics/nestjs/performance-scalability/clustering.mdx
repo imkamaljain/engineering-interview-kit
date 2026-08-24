@@ -1,0 +1,87 @@
+---
+title: "Clustering"
+description: "Clustering in NestJS"
+importance: "HIGH"
+revisionTime: 12
+category: "NestJS"
+subcategory: "Performance & Scalability"
+order: 2480
+---
+
+*Clustering allows a Node.js application to utilize all available CPU cores on a machine by spawning multiple worker processes, drastically increasing the application's throughput.*
+
+## Overview
+Node.js is single-threaded. If you deploy a NestJS application to a powerful AWS EC2 instance with 8 CPU cores, Node.js will only use **1 core**, leaving the other 7 completely idle. Your application will bottleneck at roughly 12.5% CPU utilization!
+
+To fix this, we use Node.js Clustering. A single "Master" process sits in front and acts as a load balancer, spawning one "Worker" process for each available CPU core. When an HTTP request comes in, the Master forwards it to an available Worker using an internal round-robin algorithm.
+
+## Key Concepts
+- **Master Process**: Manages the workers (spawns them, listens for crashes, restarts them). It does *not* run your NestJS application logic.
+- **Worker Process**: An independent instance of your NestJS application running on a single thread.
+- **Shared Ports**: The Master process binds to port 3000, but all workers can share this port seamlessly.
+
+## Code Examples
+
+### 1. Implementing the Cluster Module
+You implement clustering in your `main.ts` file, wrapping the standard `bootstrap()` function.
+
+```typescript
+// main.ts
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from './app.module';
+import * as cluster from 'node:cluster';
+import * as os from 'node:os';
+import * as process from 'node:process';
+import { Logger } from '@nestjs/common';
+
+const numCPUs = os.cpus().length;
+const logger = new Logger('Cluster');
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+  await app.listen(3000);
+  logger.log(`Worker ${process.pid} started`);
+}
+
+// Check if we are the Master process
+// Note: In newer Node versions, cluster.isPrimary is preferred over cluster.isMaster
+if ((cluster as any).isPrimary) {
+  logger.log(`Primary server started on PID ${process.pid}`);
+  logger.log(`Spawning ${numCPUs} workers...`);
+
+  // Spawn a worker for each CPU core
+  for (let i = 0; i < numCPUs; i++) {
+    (cluster as any).fork();
+  }
+
+  // If a worker crashes (e.g., out of memory, fatal exception), restart it!
+  (cluster as any).on('exit', (worker, code, signal) => {
+    logger.error(`Worker ${worker.process.pid} died. Restarting...`);
+    (cluster as any).fork();
+  });
+
+} else {
+  // If we are a Worker process, actually start the NestJS application!
+  bootstrap();
+}
+```
+
+### 2. Using PM2 Instead of Manual Clustering
+Writing the clustering logic manually (as above) is educational, but in production, it is highly recommended to use a process manager like **PM2**. PM2 handles clustering, restarts, and log aggregation for you, without modifying your `main.ts`!
+
+Install PM2 globally on your server:
+```bash
+npm install -g pm2
+```
+
+Start your NestJS app in Cluster mode, utilizing all cores (`-i max`):
+```bash
+# Build your app first
+npm run build
+# Start with PM2
+pm2 start dist/main.js -i max --name "nest-api"
+```
+
+## Best Practices
+- **No Shared Memory**: Because each Worker is a separate OS process, they do *not* share memory! If Worker A saves an object to a local Javascript array, Worker B cannot access it. If your app relies on in-memory state (like WebSocket sessions or local Rate Limiting), clustering will break it. You must use a central store like **Redis** to share state between workers.
+- **Kubernetes vs Clustering**: If you are deploying to Kubernetes or AWS ECS, **do not use Node clustering or PM2 cluster mode**. Let Kubernetes handle the scaling by deploying multiple Pods (containers), each running a single-threaded Node process. Wrapping clustering inside a container creates conflicts between the container orchestrator and the Node cluster manager.

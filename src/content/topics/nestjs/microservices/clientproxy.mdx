@@ -1,0 +1,113 @@
+---
+title: "ClientProxy"
+description: "ClientProxy in NestJS"
+importance: "LOW"
+revisionTime: 10
+category: "NestJS"
+subcategory: "Microservices"
+order: 1880
+---
+
+*The `ClientProxy` is the abstract class provided by NestJS that allows a client (like an API Gateway or another microservice) to send messages or emit events to a message broker or transporter.*
+
+## Overview
+When building a microservice architecture, your application needs a way to send data to the network. Instead of forcing you to write raw TCP sockets, raw Redis publishes, or raw RabbitMQ channel assertions, NestJS gives you the `ClientProxy`.
+
+You configure the `ClientProxy` with the desired transport mechanism. From then on, you interact only with the `ClientProxy` methods (`send()` and `emit()`). If you decide to swap Redis for RabbitMQ later, you only change the configuration; your `send()` and `emit()` calls remain untouched.
+
+## Key Concepts
+- **`send(pattern, data)`**: Used for Request-Response communication. It returns an Observable and waits for the receiving microservice to send a reply.
+- **`emit(pattern, data)`**: Used for Event-Based (Fire-and-Forget) communication. It returns an Observable that resolves immediately once the message is successfully handed off to the broker.
+- **Connection Management**: The `ClientProxy` intelligently manages the connection to the broker. It connects lazily (on the first `send()` or `emit()` call) and handles reconnections automatically.
+
+## Code Examples
+
+### 1. Registering the Client Proxy
+You register a `ClientProxy` in the module where it will be used, typically using the `ClientsModule`.
+
+```typescript
+// app.module.ts
+import { Module } from '@nestjs/common';
+import { ClientsModule, Transport } from '@nestjs/microservices';
+import { AppController } from './app.controller';
+
+@Module({
+  imports: [
+    ClientsModule.register([
+      {
+        name: 'MATH_SERVICE', // This is the injection token!
+        transport: Transport.TCP,
+        options: { port: 8877 },
+      },
+    ]),
+  ],
+  controllers: [AppController],
+})
+export class AppModule {}
+```
+
+### 2. Injecting and Using the Client Proxy
+Inject the proxy into a service or controller using the `@Inject()` decorator and the token defined in the module.
+
+```typescript
+// app.controller.ts
+import { Controller, Get, Inject } from '@nestjs/common';
+import { ClientProxy } from '@nestjs/microservices';
+import { firstValueFrom, timeout } from 'rxjs';
+
+@Controller('math')
+export class AppController {
+  constructor(
+    // The token must match the name in ClientsModule.register()
+    @Inject('MATH_SERVICE') private client: ClientProxy, 
+  ) {}
+
+  @Get('sum')
+  async getSum() {
+    // 1. send() for Request-Response (Expecting an answer)
+    const sumResult = await firstValueFrom(
+      this.client.send<number>('calculate.sum', [1, 2, 3]).pipe(
+        timeout(3000) // Always timeout network calls!
+      )
+    );
+
+    // 2. emit() for Event-Based (Fire and Forget)
+    this.client.emit('audit.log', { action: 'sum_calculated', result: sumResult });
+
+    return { result: sumResult };
+  }
+}
+```
+
+### 3. Customizing the Client Proxy (Advanced)
+Sometimes you need to configure the `ClientProxy` dynamically (e.g., pulling the broker URL from the `ConfigService`). You can use `ClientsModule.registerAsync()`.
+
+```typescript
+import { Module } from '@nestjs/common';
+import { ClientsModule, Transport } from '@nestjs/microservices';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+
+@Module({
+  imports: [
+    ClientsModule.registerAsync([
+      {
+        name: 'RABBITMQ_SERVICE',
+        imports: [ConfigModule],
+        inject: [ConfigService],
+        useFactory: (configService: ConfigService) => ({
+          transport: Transport.RMQ,
+          options: {
+            urls: [configService.get<string>('RABBITMQ_URL')],
+            queue: 'main_queue',
+          },
+        }),
+      },
+    ]),
+  ],
+})
+export class AppModule {}
+```
+
+## Best Practices
+- **Use `firstValueFrom`**: `ClientProxy.send()` returns an RxJS `Observable`. If you are calling it from a standard REST API controller, you usually want to await the result like a Promise. Use the RxJS `firstValueFrom()` utility to convert the Observable to a Promise. (Avoid the deprecated `toPromise()`).
+- **Force Connection on Startup**: By default, `ClientProxy` lazily connects on the first request. This means if your broker is down, the app will still start successfully, but the *first user request* will fail and trigger a crash. To fail fast during deployment, force the connection on startup using the `OnApplicationBootstrap` lifecycle hook: `async onApplicationBootstrap() { await this.client.connect(); }`.

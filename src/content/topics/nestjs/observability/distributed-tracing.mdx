@@ -1,0 +1,60 @@
+---
+title: "Distributed Tracing"
+description: "Distributed Tracing in NestJS"
+importance: "MEDIUM"
+revisionTime: 11
+category: "NestJS"
+subcategory: "Observability"
+order: 2880
+---
+
+*Distributed Tracing tracks a single request as it travels across multiple microservices, databases, and third-party APIs, allowing you to pinpoint exactly where a bottleneck or failure occurred.*
+
+## Overview
+In a monolithic application, debugging a slow request is relatively easy: you look at the CPU profiler or the logs for that single process.
+
+In a microservice architecture, a user clicks "Checkout", which hits the `Gateway` service, which calls the `Orders` service, which calls the `Inventory` service and the `Payments` service. If the checkout took 10 seconds, whose fault was it? 
+
+Distributed Tracing answers this by creating a "Trace" for the entire transaction, and breaking it down into "Spans" (individual operations within that transaction).
+
+## Key Concepts
+- **Trace**: Represents the entire lifecycle of a request (e.g., "Checkout process").
+- **Span**: A specific unit of work within a Trace (e.g., "HTTP POST /inventory/deduct", "SQL INSERT INTO orders"). Spans have a start time, end time, and can have parent-child relationships.
+- **Context Propagation**: The mechanism of passing the Trace ID from one service to another via HTTP Headers (typically using W3C Trace Context headers like `traceparent`).
+
+## Code Examples
+
+### 1. The Need for Distributed Tracing
+Imagine analyzing logs for a slow checkout:
+`Gateway: Received checkout request`
+`Orders: Creating order`
+`Inventory: Deducting stock`
+`Payments: Charging card`
+`Gateway: Checkout complete (10s)`
+
+Without tracing, you don't know if `Inventory` took 9 seconds, or if `Payments` took 9 seconds.
+
+### 2. How Tracing Works (Conceptually)
+To make this work, the `Gateway` generates a unique `Trace ID` (e.g., `abc-123`). 
+
+When it makes an HTTP request to the `Orders` service, it passes that ID in the headers:
+```http
+POST /orders
+traceparent: 00-abc-123-01
+```
+
+The `Orders` service sees the header, extracts `abc-123`, and uses it for all of its own logs and database calls. When all services send their telemetry data to a backend (like Jaeger, Zipkin, or Datadog), the backend pieces them together into a beautiful waterfall chart.
+
+### 3. Implementing Tracing in NestJS
+Manually creating spans and passing headers is incredibly tedious. Instead, we use Auto-Instrumentation provided by **OpenTelemetry** (OTel).
+
+When you install OpenTelemetry in a NestJS app, it automatically intercepts:
+- Incoming HTTP requests (creates a root span).
+- Outgoing HTTP requests via `axios` / `HttpModule` (injects the Trace ID into headers).
+- Database queries via TypeORM/Prisma (creates a span showing the exact SQL query execution time).
+
+*(See the OpenTelemetry section for specific setup code).*
+
+## Best Practices
+- **Use Standard Headers**: Ensure your services use W3C Trace Context (`traceparent` and `tracestate`) for context propagation. This ensures that even if you use different languages or frameworks across your microservices, the trace will remain unbroken.
+- **Sampling**: Tracing every single request in a high-traffic system is too expensive (storage and network overhead). Implement "Sampling" (e.g., trace 1% of all successful requests, but trace 100% of failed requests or requests that take longer than 2 seconds).

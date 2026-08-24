@@ -1,0 +1,70 @@
+---
+title: "Provider Scopes"
+description: "Provider Scopes in NestJS"
+importance: "HIGH"
+revisionTime: 10
+category: "NestJS"
+subcategory: "Providers & Services"
+order: 420
+---
+
+*Provider Scopes define the lifecycle and instantiation behavior of a dependency within the NestJS IoC container.*
+
+## Overview
+By default, NestJS assumes that every provider should be a Singleton (instantiated once, shared everywhere). This allows for fast startup times, low memory consumption, and shared state across the application.
+
+However, some use cases require a class to hold state specific to an individual incoming HTTP request (like a tracing ID or the current user), or you might want a fresh instance every single time the class is injected. To achieve this, Nest allows you to change the Injection Scope.
+
+## Key Concepts
+NestJS supports three injection scopes:
+1.  **`DEFAULT` (Singleton)**: A single instance of the provider is shared across the entire application. The instance is cached.
+2.  **`REQUEST`**: A new instance of the provider is created exclusively for each incoming HTTP request, and garbage-collected afterward.
+3.  **`TRANSIENT`**: A new, dedicated instance of the provider is created *every single time* it is injected into another class.
+
+## Code Examples
+
+### Setting the Scope
+
+You can define the scope by passing an options object to the `@Injectable()` decorator.
+
+```typescript
+import { Injectable, Scope } from '@nestjs/common';
+
+// 1. DEFAULT SCOPE (Singleton) - This is identical to just @Injectable()
+@Injectable({ scope: Scope.DEFAULT })
+export class SingletonService {}
+
+// 2. REQUEST SCOPE
+@Injectable({ scope: Scope.REQUEST })
+export class RequestScopedService {}
+
+// 3. TRANSIENT SCOPE
+@Injectable({ scope: Scope.TRANSIENT })
+export class TransientScopedService {}
+```
+
+### Setting Scope for Custom Providers
+If you are using custom providers (`useFactory`, `useClass`), you set the scope in the module definition.
+
+```typescript
+import { Module, Scope } from '@nestjs/common';
+
+@Module({
+  providers: [
+    {
+      provide: 'CUSTOM_TOKEN',
+      useFactory: () => {
+        return Math.random();
+      },
+      // Generate a new random number for every single HTTP request
+      scope: Scope.REQUEST,
+    },
+  ],
+})
+export class AppModule {}
+```
+
+## Best Practices
+- **The Bubbling Up Effect (CRITICAL)**: Scope bubbles up the dependency chain. If a Singleton Controller injects a Request-Scoped Service, the Controller is automatically forced to become Request-Scoped! It must be reinstantiated on every request so it can receive the new instance of the service.
+- **Performance Impact**: Changing scopes (especially to `REQUEST`) has a severe negative impact on performance. Nest must instantiate the class, resolve its dependencies, and eventually garbage collect it for *every single incoming request*.
+- **Stick to Singletons**: 99% of your providers should be singletons. Only use Request or Transient scopes when absolutely necessary. Instead of making a service request-scoped to hold the `req.user` object, pass the user object as an argument to the service method from the controller.

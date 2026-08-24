@@ -1,0 +1,110 @@
+---
+title: "GraphQL Context"
+description: "GraphQL Context in NestJS"
+importance: "HIGH"
+revisionTime: 5
+category: "NestJS"
+subcategory: "GraphQL"
+order: 1740
+---
+
+*The GraphQL Context is an object that is created once per request and shared across all resolvers executing during that request. It is the primary mechanism for passing authentication data (like the logged-in user) into your resolvers.*
+
+## Overview
+In a REST API, you usually extract the logged-in user directly from the Express `Request` object (`req.user`). 
+
+In GraphQL, a single query might trigger 20 different resolver functions. Passing the `Request` object manually to all 20 functions would be a nightmare. Instead, GraphQL uses a `Context` object. NestJS allows you to extract data from the incoming HTTP Request and attach it to the Context, making it instantly available to any Guard, Interceptor, or Resolver using the `@Context()` decorator.
+
+## Key Concepts
+- **Context Factory**: A function defined in `GraphQLModule.forRoot()` that builds the context object for every incoming request.
+- **`@Context()`**: The decorator used in a Resolver to inject the context object.
+- **`GqlExecutionContext`**: A NestJS wrapper used inside Guards and Interceptors to extract the GraphQL context (since they normally expect a REST context).
+
+## Code Examples
+
+### 1. Building the Context in `AppModule`
+You configure what goes into the Context when you bootstrap the GraphQL module. Typically, you pass the `req` (Request) and `res` (Response) objects through.
+
+```typescript
+// app.module.ts
+import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo';
+import { Module } from '@nestjs/common';
+import { GraphQLModule } from '@nestjs/graphql';
+
+@Module({
+  imports: [
+    GraphQLModule.forRoot<ApolloDriverConfig>({
+      driver: ApolloDriver,
+      autoSchemaFile: true,
+      
+      // The context function runs on every incoming request.
+      // We take the Express req and res, and return them as the GraphQL context.
+      context: ({ req, res }) => ({ req, res }),
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+### 2. Accessing Context in a Resolver
+If you have global middleware that attaches a `user` object to the Express request (e.g., `req.user`), you can access it via the Context.
+
+```typescript
+import { Resolver, Query, Context } from '@nestjs/graphql';
+import { User } from './user.model';
+
+@Resolver(() => User)
+export class UsersResolver {
+  
+  @Query(() => User)
+  getProfile(
+    // Inject the context object we defined in AppModule
+    @Context() context: any 
+  ) {
+    // Access the Express request object, and extract the user
+    const user = context.req.user;
+    
+    if (!user) {
+      throw new Error('Not authenticated');
+    }
+    
+    return user;
+  }
+}
+```
+
+### 3. Creating a Custom `@CurrentUser` Decorator
+Passing `@Context() context: any` is messy and lacks type safety. The NestJS way is to create a custom parameter decorator that extracts the user from the `GqlExecutionContext` automatically.
+
+```typescript
+// current-user.decorator.ts
+import { createParamDecorator, ExecutionContext } from '@nestjs/common';
+import { GqlExecutionContext } from '@nestjs/graphql';
+
+export const CurrentUser = createParamDecorator(
+  (data: unknown, context: ExecutionContext) => {
+    // 1. Convert the standard NestJS ExecutionContext into a GraphQL Context
+    const ctx = GqlExecutionContext.create(context);
+    
+    // 2. Extract the HTTP request from the GraphQL context
+    const request = ctx.getContext().req;
+    
+    // 3. Return the user object (assuming it was attached by an AuthGuard)
+    return request.user;
+  },
+);
+```
+
+Now, your resolver looks beautifully clean, exactly like a REST controller!
+
+```typescript
+// users.resolver.ts
+@Query(() => User)
+getProfile(@CurrentUser() user: UserEntity) {
+  return user;
+}
+```
+
+## Best Practices
+- **Type Your Context**: Don't use `any`. Define an interface for your Context object (e.g., `export interface MyContext { req: Request, res: Response }`) and use it when typing `@Context()`.
+- **Don't overuse Context**: The Context should only be used for request-scoped metadata (like the authenticated User, tracing IDs, or a Dataloader instance). Do not use the Context to pass business logic Services or Repositories around; use standard constructor Dependency Injection for that.

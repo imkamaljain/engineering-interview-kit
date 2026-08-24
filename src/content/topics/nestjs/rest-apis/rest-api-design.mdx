@@ -1,0 +1,118 @@
+---
+title: "REST API Design"
+description: "REST API Design in NestJS"
+importance: "MEDIUM"
+revisionTime: 11
+category: "NestJS"
+subcategory: "REST APIs"
+order: 1430
+---
+
+*REST (Representational State Transfer) API Design focuses on building predictable, resource-oriented HTTP endpoints using standardized verbs and URL structures.*
+
+## Overview
+NestJS is fundamentally designed to build REST APIs easily. Its decorator-based syntax (`@Get()`, `@Post()`, `@Controller()`) maps perfectly to RESTful principles.
+
+A good REST API treats data as "resources" (like `users`, `posts`, `comments`). It uses HTTP methods to indicate the action being performed on that resource, rather than relying on action verbs in the URL itself.
+
+## Key Concepts
+- **Resources**: Nouns representing the entities in your system. Usually pluralized (e.g., `/users`).
+- **HTTP Methods**: 
+  - `GET`: Retrieve a resource (safe, idempotent).
+  - `POST`: Create a new resource.
+  - `PUT`: Completely replace an existing resource (idempotent).
+  - `PATCH`: Partially update an existing resource.
+  - `DELETE`: Remove a resource.
+- **Statelessness**: Every request must contain all the information necessary to understand and process it. The server should not rely on a stored "session state" (this is why JWTs are so popular in REST).
+
+## Code Examples
+
+### The Anti-Pattern (RPC Style)
+Do not build your NestJS controllers like this. This is RPC (Remote Procedure Call) style, not REST.
+
+```typescript
+@Controller('users')
+export class UsersController {
+  // BAD: Using a verb in the URL
+  @Post('createNewUser') 
+  create(@Body() dto: any) {}
+
+  // BAD: Using POST to fetch data
+  @Post('getAllUsers') 
+  getAll() {}
+
+  // BAD: Passing IDs via query params or request bodies for modification
+  @Post('updateUser')
+  update(@Body() dto: { id: string, name: string }) {}
+}
+```
+
+### The Standard RESTful Pattern
+This is how a standard NestJS REST controller should look. The URL defines the *resource*, and the HTTP decorator defines the *action*.
+
+```typescript
+import { Controller, Get, Post, Put, Patch, Delete, Body, Param } from '@nestjs/common';
+import { CreateUserDto, UpdateUserDto } from './user.dto';
+
+@Controller('users') // The Resource
+export class UsersController {
+
+  @Post() // Action: Create
+  create(@Body() createUserDto: CreateUserDto) {
+    return 'Creates a new user';
+  }
+
+  @Get() // Action: Read (Collection)
+  findAll() {
+    return 'Returns all users';
+  }
+
+  @Get(':id') // Action: Read (Single Resource)
+  findOne(@Param('id') id: string) {
+    return `Returns user #${id}`;
+  }
+
+  @Put(':id') // Action: Replace (Complete update)
+  replace(@Param('id') id: string, @Body() replaceUserDto: CreateUserDto) {
+    return `Replaces user #${id} completely`;
+  }
+
+  @Patch(':id') // Action: Update (Partial update)
+  update(@Param('id') id: string, @Body() updateUserDto: UpdateUserDto) {
+    return `Updates user #${id} partially`;
+  }
+
+  @Delete(':id') // Action: Delete
+  remove(@Param('id') id: string) {
+    return `Deletes user #${id}`;
+  }
+}
+```
+
+### Nested Resources
+Sometimes resources belong to other resources. Represent this hierarchically in the URL.
+
+```typescript
+// URL: /users/123/posts
+@Controller('users/:userId/posts')
+export class UserPostsController {
+  
+  @Get()
+  findAllPostsForUser(@Param('userId') userId: string) {
+    return `Returns all posts belonging to user ${userId}`;
+  }
+
+  @Get(':postId') // URL: /users/123/posts/456
+  findOnePostForUser(
+    @Param('userId') userId: string,
+    @Param('postId') postId: string,
+  ) {
+    return `Returns post ${postId} belonging to user ${userId}`;
+  }
+}
+```
+
+## Best Practices
+- **Always use Plural Nouns**: Use `/users`, not `/user`. Use `/posts`, not `/post`. This makes collection endpoints (`GET /users`) and single-item endpoints (`GET /users/1`) consistent.
+- **Don't Nest Too Deep**: Avoid URLs like `/users/1/posts/2/comments/3/likes`. A good rule of thumb is never to nest beyond two levels. If you need a specific comment's likes, just use `/comments/3/likes`, because the comment ID is already globally unique.
+- **Return the Created Resource**: When a `POST` request succeeds, it should ideally return the newly created resource (including its generated database ID) in the response body. NestJS does this automatically if you `return` the saved entity from your controller.

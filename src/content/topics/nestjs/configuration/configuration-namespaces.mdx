@@ -1,0 +1,91 @@
+---
+title: "Configuration Namespaces"
+description: "Configuration Namespaces in NestJS"
+importance: "MEDIUM"
+revisionTime: 8
+category: "NestJS"
+subcategory: "Configuration"
+order: 1390
+---
+
+*Configuration Namespaces (also known as Partial Registration) allow you to break a massive, monolithic configuration object into smaller, domain-specific modules.*
+
+## Overview
+As your application grows, your `configuration.ts` file can become hundreds of lines long, containing everything from database settings to AWS keys to Stripe webhooks.
+
+Namespaces allow you to split this configuration up. Instead of having one giant `ConfigModule` configuration, you can register a specific namespace (e.g., `databaseConfig`) directly inside the `DatabaseModule` where it actually belongs.
+
+## Key Concepts
+- **`registerAs`**: The NestJS function used to create a namespaced configuration factory.
+- **`ConfigType`**: A TypeScript helper that infers the exact shape of your namespaced configuration, giving you perfect autocomplete without needing `ConfigService.get()`.
+- **`ConfigModule.forFeature()`**: Used to load the namespace in a specific module.
+
+## Code Examples
+
+### 1. Defining a Namespace
+Use `registerAs` and give the namespace a unique string key (e.g., `'database'`).
+
+```typescript
+// database.config.ts
+import { registerAs } from '@nestjs/config';
+
+// 'database' is the namespace token
+export default registerAs('database', () => ({
+  host: process.env.DATABASE_HOST || 'localhost',
+  port: parseInt(process.env.DATABASE_PORT, 10) || 5432,
+  password: process.env.DATABASE_PASSWORD,
+}));
+```
+
+### 2. Loading the Namespace
+You still need `ConfigModule.forRoot()` in your `AppModule`, but you can load the specific namespace in the feature module.
+
+```typescript
+// database.module.ts
+import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
+import databaseConfig from './database.config';
+import { DatabaseService } from './database.service';
+
+@Module({
+  imports: [
+    // Register the specific namespace for this module
+    ConfigModule.forFeature(databaseConfig)
+  ],
+  providers: [DatabaseService],
+})
+export class DatabaseModule {}
+```
+
+### 3. Injecting the Namespaced Configuration (The Best Part!)
+This is why namespaces are amazing. You don't inject `ConfigService`. You use `@Inject()` to inject the specific configuration object. **This gives you 100% strong typing and autocomplete.**
+
+```typescript
+// database.service.ts
+import { Injectable, Inject } from '@nestjs/common';
+import { ConfigType } from '@nestjs/config';
+import databaseConfig from './database.config';
+
+@Injectable()
+export class DatabaseService {
+  constructor(
+    // 1. Inject the specific namespace using its token
+    @Inject(databaseConfig.KEY)
+    
+    // 2. Use ConfigType to automatically infer the TypeScript interface!
+    private dbConfig: ConfigType<typeof databaseConfig>,
+  ) {}
+
+  connect() {
+    // You get perfect autocomplete here! No strings!
+    console.log(`Connecting to ${this.dbConfig.host} on port ${this.dbConfig.port}`);
+    
+    // This would throw a TypeScript error!
+    // console.log(this.dbConfig.typo); 
+  }
+}
+```
+
+## Best Practices
+- **Prefer Namespaces over Global Config**: For enterprise applications, strongly prefer `registerAs` over a single massive `configuration.ts` file. It keeps your feature modules highly cohesive (the `DatabaseModule` "owns" its own configuration logic).
+- **Use `ConfigType`**: The biggest advantage of namespaces is avoiding the magic strings required by `this.configService.get('database.host')`. By injecting the `ConfigType`, you catch configuration typos at compile-time instead of runtime.

@@ -1,0 +1,90 @@
+---
+title: "Authentication"
+description: "Authentication in NestJS"
+importance: "MEDIUM"
+revisionTime: 8
+category: "NestJS"
+subcategory: "Authentication & Authorization"
+order: 1080
+---
+
+*Authentication is the process of verifying who a user is. It proves their identity, usually via a username/password, a social login, or an API key.*
+
+## Overview
+Before you can determine what a user is allowed to *do* (Authorization), you must first securely determine who they *are* (Authentication). 
+
+In NestJS, Authentication is heavily tied to the **Guards** layer. When a request hits a protected route, an Authentication Guard runs, extracts the credential (like a JWT token from a cookie or Authorization header), validates it, and attaches the user's identity to the `Request` object.
+
+## Key Concepts
+- **Guards**: The primary NestJS building block for protecting routes.
+- **The `@nestjs/passport` Module**: The official NestJS module that wraps the incredibly popular Node.js `passport` library, making authentication strategies modular and easy to integrate.
+- **`request.user`**: The universal standard in Express and NestJS. Once a user is authenticated, their data (e.g., ID, email, roles) is attached to `request.user` for downstream controllers and services to use.
+
+## Code Examples
+
+### A Simple Custom Authentication Guard
+While using Passport is recommended for production, understanding how a raw Authentication Guard works is crucial. This example checks for a simple API key.
+
+```typescript
+import { Injectable, CanActivate, ExecutionContext, UnauthorizedException } from '@nestjs/common';
+import { Request } from 'express';
+
+@Injectable()
+export class ApiKeyAuthGuard implements CanActivate {
+  
+  canActivate(context: ExecutionContext): boolean {
+    const request = context.switchToHttp().getRequest<Request>();
+    
+    // Extract the key from the 'x-api-key' header
+    const apiKey = request.headers['x-api-key'];
+
+    if (!apiKey) {
+      throw new UnauthorizedException('API Key is missing');
+    }
+
+    // In a real app, you would inject a service here to look up the key in the database
+    const isValid = this.validateApiKey(apiKey as string);
+
+    if (!isValid) {
+      throw new UnauthorizedException('Invalid API Key');
+    }
+
+    // If valid, attach some user context to the request for the controller to use
+    request['user'] = { id: 'user_123', role: 'admin' };
+    
+    // Return true to allow the request to proceed to the controller
+    return true; 
+  }
+
+  private validateApiKey(key: string): boolean {
+    // Hardcoded for demonstration
+    return key === 'super-secret-key';
+  }
+}
+```
+
+### Applying the Guard
+Apply it to a controller using the `@UseGuards()` decorator.
+
+```typescript
+import { Controller, Get, UseGuards, Req } from '@nestjs/common';
+import { Request } from 'express';
+
+@Controller('dashboard')
+// 1. The Guard runs before the route handler
+@UseGuards(ApiKeyAuthGuard) 
+export class DashboardController {
+  
+  @Get()
+  getDashboardData(@Req() request: Request) {
+    // 2. We can safely assume the user is authenticated here
+    // and access the data attached by the guard!
+    const user = request['user']; 
+    return `Welcome back, User ${user.id}`;
+  }
+}
+```
+
+## Best Practices
+- **Do Not Mix Authentication and Authorization**: An Authentication Guard should *only* answer the question "Are you logged in?". It should not answer "Are you an Admin?". Leave Role checking to a separate Authorization Guard. This separation makes your code highly reusable.
+- **Always throw `UnauthorizedException`**: If authentication fails, never return `false` from the Guard (which generates a `403 Forbidden` error). Always explicitly throw an `UnauthorizedException` so the client receives the correct `401 Unauthorized` HTTP status code.

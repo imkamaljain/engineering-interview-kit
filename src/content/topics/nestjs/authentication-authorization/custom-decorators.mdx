@@ -1,0 +1,84 @@
+---
+title: "Custom Decorators"
+description: "Custom Decorators in NestJS"
+importance: "LOW"
+revisionTime: 12
+category: "NestJS"
+subcategory: "Authentication & Authorization"
+order: 1180
+---
+
+*Custom Decorators allow you to cleanly extract data from the request object and inject it directly into your controller methods, reducing boilerplate and improving type safety.*
+
+## Overview
+After a user is authenticated, their data is attached to the Express/Fastify `request` object (specifically, `req.user`). 
+
+In a controller method, you *could* access this by injecting the entire request: `@Req() req: Request`, and then pulling out `req.user`. However, this tightly couples your controller to the underlying HTTP framework, makes testing harder, and requires you to manually type-cast `req.user` every time.
+
+Creating a custom `@CurrentUser()` decorator is the idiomatic NestJS solution.
+
+## Key Concepts
+- **`createParamDecorator`**: A NestJS utility function that abstracts away the complexity of building decorators that read from the `ExecutionContext`.
+- **Parameter Injection**: The decorator is used exactly like `@Body()` or `@Query()`, but it injects whatever data you tell it to extract from the request.
+
+## Code Examples
+
+### 1. Creating the @CurrentUser Decorator
+This decorator looks at the request object, finds the `user` property (which was populated by the Authentication Guard), and returns it.
+
+```typescript
+// current-user.decorator.ts
+import { createParamDecorator, ExecutionContext } from '@nestjs/common';
+
+export const CurrentUser = createParamDecorator(
+  // The 'data' parameter allows you to pass arguments to the decorator, e.g., @CurrentUser('id')
+  (data: string | undefined, ctx: ExecutionContext) => {
+    
+    // Switch to the HTTP context to access the raw request
+    const request = ctx.switchToHttp().getRequest();
+    const user = request.user;
+
+    // If a specific property was requested (like 'id'), return just that property.
+    // Otherwise, return the entire user object.
+    return data ? user?.[data] : user;
+  },
+);
+```
+
+### 2. Using the Decorator in a Controller
+Look how clean the controller method becomes! We don't need to import Express's `Request` object anymore.
+
+```typescript
+// profile.controller.ts
+import { Controller, Get, UseGuards } from '@nestjs/common';
+import { JwtAuthGuard } from './jwt-auth.guard';
+import { CurrentUser } from './current-user.decorator';
+
+// Assume this interface matches the payload returned by your JwtStrategy
+interface UserPayload {
+  id: string;
+  email: string;
+  role: string;
+}
+
+@Controller('profile')
+@UseGuards(JwtAuthGuard)
+export class ProfileController {
+  
+  @Get()
+  // Inject the entire user object and strongly type it!
+  getProfile(@CurrentUser() user: UserPayload) {
+    return `Hello, ${user.email}`;
+  }
+
+  @Get('settings')
+  // Use the 'data' parameter to extract ONLY the ID string!
+  getSettings(@CurrentUser('id') userId: string) {
+    return this.settingsService.findByUserId(userId);
+  }
+}
+```
+
+## Best Practices
+- **Type Safety**: The decorator itself cannot easily provide strong typing in the controller signature. You should define an Interface/Type for your JWT Payload (or User Entity) and explicitly apply it in the controller method signature (`@CurrentUser() user: UserPayload`), as shown in the example above.
+- **The `@Public()` Decorator**: Another highly recommended custom decorator is `@Public()`. Instead of using `createParamDecorator`, it uses `SetMetadata`. You apply it to routes like `/login` or `/register`, and configure your global Authentication Guard to read the metadata; if the metadata says "Public", the guard immediately returns `true` without checking for a token.

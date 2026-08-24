@@ -1,0 +1,107 @@
+---
+title: "Real-time Events"
+description: "Real-time Events in NestJS"
+importance: "MEDIUM"
+revisionTime: 12
+category: "NestJS"
+subcategory: "WebSockets"
+order: 2100
+---
+
+*Real-Time Events are the named messages sent back and forth over a WebSocket connection. NestJS uses decorators to map these string-based event names to specific handler methods.*
+
+## Overview
+In HTTP, you route requests using methods and URLs (`GET /users`). In WebSockets, you route requests using "Event Names" (`SubscribeMessage('get_users')`).
+
+Both the client and the server emit and listen to these specific string events. When a client emits a 'chat_message' event, NestJS intercepts it, finds the Gateway method decorated with `@SubscribeMessage('chat_message')`, and executes it.
+
+## Key Concepts
+- **`@SubscribeMessage(event: string)`**: Tells NestJS which method handles which event.
+- **`@MessageBody()`**: Extracts the data payload sent by the client. Similar to `@Body()` in REST.
+- **`@ConnectedSocket()`**: Injects the raw Socket object representing the specific client who sent the message. Similar to `@Req()` in REST.
+- **Acknowledgments**: If your event handler returns data, NestJS automatically sends that data back to the client as an acknowledgment callback.
+
+## Code Examples
+
+### 1. Handling an Event with Payload
+This example demonstrates extracting the payload and the socket instance.
+
+```typescript
+import { WebSocketGateway, SubscribeMessage, MessageBody, ConnectedSocket } from '@nestjs/websockets';
+import { Socket } from 'socket.io';
+
+@WebSocketGateway()
+export class GameGateway {
+
+  @SubscribeMessage('move_player')
+  handleMove(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { x: number; y: number }
+  ) {
+    // client.id identifies WHO moved
+    // data.x and data.y identifies WHERE they moved
+    
+    console.log(`Player ${client.id} moved to ${data.x}, ${data.y}`);
+    
+    // Broadcast this move to all OTHER players
+    client.broadcast.emit('player_moved', { id: client.id, x: data.x, y: data.y });
+  }
+}
+```
+
+### 2. Event Acknowledgments (Request-Response)
+WebSockets are usually Fire-and-Forget. However, Socket.IO supports Request-Response via Acknowledgments. If a `@SubscribeMessage` method returns a value, NestJS automatically sends it back to the client.
+
+```typescript
+// SERVER (NestJS)
+@WebSocketGateway()
+export class MathGateway {
+
+  @SubscribeMessage('add')
+  handleAdd(@MessageBody() data: { a: number; b: number }): number {
+    // Returning a value directly!
+    return data.a + data.b;
+  }
+}
+```
+
+```javascript
+// CLIENT (Browser - standard Socket.IO client)
+socket.emit('add', { a: 5, b: 10 }, (response) => {
+  // This callback fires when the server returns the value!
+  console.log('Server answered:', response); // Output: 15
+});
+```
+
+### 3. Asynchronous Handlers and Observables
+NestJS supports Promises and RxJS Observables in event handlers.
+
+```typescript
+import { WebSocketGateway, SubscribeMessage, MessageBody } from '@nestjs/websockets';
+import { Observable, from } from 'rxjs';
+import { map } from 'rxjs/operators';
+
+@WebSocketGateway()
+export class AsyncGateway {
+
+  // 1. Returning a Promise
+  @SubscribeMessage('get_user_async')
+  async getUserAsync(@MessageBody() id: number) {
+    const user = await this.database.findUser(id);
+    return user; // Sent as acknowledgment
+  }
+
+  // 2. Returning an Observable stream
+  @SubscribeMessage('events')
+  findAll(): Observable<any> {
+    return from([1, 2, 3]).pipe(
+      map(item => ({ event: 'events', data: item }))
+    );
+    // Client receives 3 separate messages automatically!
+  }
+}
+```
+
+## Best Practices
+- **Strictly Type Event Payloads**: Create DTOs (Classes) for your `@MessageBody()` payloads, just like you would for REST APIs. This allows you to use `ValidationPipe` to ensure clients aren't sending malformed data over the socket.
+- **Namespace Collision**: Event names are global within a namespace. Be descriptive to avoid collisions. Instead of `@SubscribeMessage('update')`, use `@SubscribeMessage('update_profile')` or `@SubscribeMessage('update_settings')`.

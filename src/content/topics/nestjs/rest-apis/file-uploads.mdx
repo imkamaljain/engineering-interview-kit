@@ -1,0 +1,93 @@
+---
+title: "File Uploads"
+description: "File Uploads in NestJS"
+importance: "HIGH"
+revisionTime: 6
+category: "NestJS"
+subcategory: "REST APIs"
+order: 1530
+---
+
+*File Uploads in a REST API require handling `multipart/form-data` instead of standard `application/json`. NestJS provides built-in interceptors leveraging the popular `multer` middleware to make this seamless.*
+
+## Overview
+When a user uploads a profile picture, the client cannot send it as a standard JSON object. They must construct a `FormData` object and send it as a `multipart/form-data` request.
+
+To parse this binary data, NestJS uses `multer` under the hood. You apply a specific Interceptor to your route, which extracts the file from the request and makes it available to your controller method via the `@UploadedFile()` decorator.
+
+## Key Concepts
+- **`FileInterceptor('fieldName')`**: Extracts a single file from the request where the form field name matches `'fieldName'`.
+- **`FilesInterceptor('fieldName')`**: Extracts an array of files uploaded under the same field name.
+- **`FileFieldsInterceptor()`**: Extracts files uploaded under multiple different field names (e.g., `avatar` and `background`).
+- **`Express.Multer.File`**: The TypeScript type representing the extracted file object, containing the buffer, mime type, and original name.
+
+## Code Examples
+
+### 1. Basic Single File Upload
+This handles a single file uploaded with the field name `file`.
+
+```typescript
+import { Controller, Post, UseInterceptors, UploadedFile, ParseFilePipe, MaxFileSizeValidator, FileTypeValidator } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+
+@Controller('upload')
+export class UploadController {
+  
+  @Post('avatar')
+  // 1. Tell Nest to look for a 'file' field in the multipart data
+  @UseInterceptors(FileInterceptor('file'))
+  uploadAvatar(
+    // 2. Extract the file and validate it using built-in File Pipes
+    @UploadedFile(
+      new ParseFilePipe({
+        validators: [
+          // Ensure it's not massive (e.g., max 1MB)
+          new MaxFileSizeValidator({ maxSize: 1024 * 1024 }),
+          // Ensure it's actually an image
+          new FileTypeValidator({ fileType: '.(png|jpeg|jpg)' }),
+        ],
+      }),
+    ) file: Express.Multer.File,
+  ) {
+    // 3. The file is now a buffer in memory. 
+    // You would typically pass this buffer to an S3 upload service.
+    console.log(file.originalname);
+    console.log(file.mimetype);
+    console.log(file.size);
+    
+    // Example: await this.s3Service.upload(file.buffer, file.originalname);
+
+    return { message: 'File uploaded successfully!' };
+  }
+}
+```
+
+### 2. Multiple File Upload
+Uploading an array of images for a product gallery.
+
+```typescript
+import { Controller, Post, UseInterceptors, UploadedFiles } from '@nestjs/common';
+import { FilesInterceptor } from '@nestjs/platform-express';
+
+@Controller('products')
+export class ProductsController {
+  
+  @Post('gallery')
+  // Expect up to 10 files under the 'images' field
+  @UseInterceptors(FilesInterceptor('images', 10))
+  uploadGallery(
+    // Notice it is @UploadedFiles() plural, and returns an Array!
+    @UploadedFiles() files: Array<Express.Multer.File>
+  ) {
+    files.forEach(file => {
+      console.log(`Processing ${file.originalname}`);
+    });
+    
+    return { message: `${files.length} files processed.` };
+  }
+}
+```
+
+## Best Practices
+- **Do not save to the local disk**: `multer` can be configured with a `diskStorage` engine to save the files directly to your server's `/uploads` folder. **Do not do this in modern architectures.** If your app is deployed to a container (like Docker/Kubernetes) or a serverless environment, that local disk is ephemeral and will be wiped when the container restarts. Always use `memoryStorage` (the default) and stream the `file.buffer` to a cloud storage provider like AWS S3 or Google Cloud Storage.
+- **Always Validate**: Never trust the user's file. Always use `ParseFilePipe` with a `MaxFileSizeValidator` to prevent attackers from uploading 10GB files and crashing your server via OOM (Out of Memory) errors. Always validate the MIME type to prevent malicious script uploads.

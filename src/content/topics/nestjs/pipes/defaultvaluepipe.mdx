@@ -1,0 +1,66 @@
+---
+title: "DefaultValuePipe"
+description: "DefaultValuePipe in NestJS"
+importance: "MEDIUM"
+revisionTime: 12
+category: "NestJS"
+subcategory: "Pipes"
+order: 640
+---
+
+*The `DefaultValuePipe` provides a fallback value when an expected query parameter or route parameter is missing from the incoming request.*
+
+## Overview
+When building REST APIs, query parameters are often optional (e.g., pagination, sorting, filtering). 
+
+If a client makes a request to `/users` without specifying a `?page=` parameter, the value will be `undefined` when injected into your controller. If you pass this `undefined` value into another pipe like `ParseIntPipe`, it will throw a 400 Bad Request error. 
+
+`DefaultValuePipe` intercepts the `undefined` value and replaces it with a default before passing it down the chain.
+
+## Key Concepts
+- **Fallback Mechanism**: It only activates if the incoming value is `undefined` or `null`. If the value is an empty string `""`, it will *not* provide the default value.
+- **Pipe Chaining**: It is almost always used as the first pipe in an array of pipes inside a parameter decorator.
+- **Type Injection**: The default value you provide to the constructor is what gets injected.
+
+## Code Examples
+
+### Standard Pagination Example
+This is the most common use case. We want to default to page 1, and ensure the result is a number.
+
+```typescript
+import { Controller, Get, Query, DefaultValuePipe, ParseIntPipe } from '@nestjs/common';
+
+@Controller('users')
+export class UsersController {
+  
+  @Get()
+  findAll(
+    // 1. If 'page' is missing, DefaultValuePipe supplies '1'.
+    // 2. ParseIntPipe then converts the string (or the default '1') into a number.
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
+    
+    // Similarly for the 'limit' parameter
+    @Query('limit', new DefaultValuePipe(10), ParseIntPipe) limit: number,
+  ) {
+    return `Fetching page ${page} with limit ${limit}`;
+  }
+}
+```
+
+### Defaulting Boolean Flags
+Useful for feature flags or toggle filters.
+
+```typescript
+import { ParseBoolPipe } from '@nestjs/common';
+
+@Get('active')
+findActive(
+  @Query('includeDeleted', new DefaultValuePipe(false), ParseBoolPipe) includeDeleted: boolean,
+) {
+  // If ?includeDeleted is missing, includeDeleted = false
+}
+```
+
+## Best Practices
+- **Order Matters (CRITICAL)**: When chaining pipes, Nest executes them from left to right. `DefaultValuePipe` **must** come first. If you put `ParseIntPipe` first, it will try to parse `undefined`, fail, and throw an error before `DefaultValuePipe` ever gets a chance to run.
+- **Defaulting DTOs**: While `DefaultValuePipe` is great for simple `@Query()` and `@Param()` primitives, do not use it for complex `@Body()` JSON payloads. For JSON bodies, define default values directly in your DTO classes (e.g., `page: number = 1;`).
