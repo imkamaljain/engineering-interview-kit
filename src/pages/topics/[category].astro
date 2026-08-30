@@ -2,6 +2,8 @@
 import { getCollection } from 'astro:content';
 import Layout from '../../layouts/Layout.astro';
 import { getCategoryIcon } from '../../utils/icons';
+import { SUBCATEGORY_ORDER } from '../../config/subcategories';
+import { ALL_CATEGORIES, CATEGORY_DISPLAY_NAMES } from '../../config/categories';
 
 export async function getStaticPaths() {
   const topics = await getCollection('topics');
@@ -13,27 +15,15 @@ export async function getStaticPaths() {
   const categoriesFromTopics = topics.map(t => slugify(t.data.category));
   
   // Manually include categories even if they are empty so the sidebar links don't 404
-  const allCategories = ['javascript', 'typescript', 'go', 'nodejs', 'sql', 'system-design', 'react'];
-  const uniqueCategorySlugs = [...new Set([...categoriesFromTopics, ...allCategories])];
+  const uniqueCategorySlugs = [...new Set([...categoriesFromTopics, ...ALL_CATEGORIES])];
   
   return uniqueCategorySlugs.map(categorySlug => {
-    // Map category ID to display name if empty
-    const displayNames = {
-      'javascript': 'JavaScript',
-      'typescript': 'TypeScript',
-      'nodejs': 'Node.js',
-      'go': 'Go',
-      'sql': 'SQL',
-      'system-design': 'System Design',
-      'react': 'React'
-    };
-    
     // Filter topics by comparing their slugified category
     const categoryTopics = topics.filter(t => slugify(t.data.category) === categorySlug);
     categoryTopics.sort((a, b) => (a.data.order || 99) - (b.data.order || 99));
     
-    // Use the actual capitalized category name from the first topic, or fallback
-    const categoryName = categoryTopics.length > 0 ? categoryTopics[0].data.category : displayNames[categorySlug];
+    // Use the mapped value for the category name, or fallback to the topic's category frontmatter
+    const categoryName = CATEGORY_DISPLAY_NAMES[categorySlug] || (categoryTopics.length > 0 ? categoryTopics[0].data.category : categorySlug);
     
     return {
       params: { category: categorySlug },
@@ -110,7 +100,14 @@ const icon = getCategoryIcon(category);
           acc[sub].push(topic);
           return acc;
         }, {})
-      ).map(([subcat, subTopics], i) => (
+      )
+      .sort(([a], [b]) => {
+        const orderArr = SUBCATEGORY_ORDER[category] || [];
+        const aIdx = orderArr.indexOf(a);
+        const bIdx = orderArr.indexOf(b);
+        return (aIdx === -1 ? 999 : aIdx) - (bIdx === -1 ? 999 : bIdx);
+      })
+      .map(([subcat, subTopics], i) => (
         <section>
           <div class="flex items-center mb-6">
             

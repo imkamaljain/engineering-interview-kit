@@ -2,6 +2,7 @@
 import { getCollection, render } from 'astro:content';
 import Layout from '../../layouts/Layout.astro';
 import { getCategoryIcon } from '../../utils/icons';
+import { SUBCATEGORY_ORDER } from '../../config/subcategories';
 
 export async function getStaticPaths() {
   const topics = await getCollection('topics');
@@ -9,7 +10,26 @@ export async function getStaticPaths() {
   return topics.map((topic) => {
     // Find all topics in the same category to determine prev/next
     const categoryTopics = topics.filter(t => t.data.category === topic.data.category);
-    categoryTopics.sort((a, b) => (a.data.order || 99) - (b.data.order || 99));
+    
+    // Normalize category slug for lookup
+    const slugify = (str: string) => str.toLowerCase().replace(/\s+/g, '-').replace(/\./g, '');
+    const catSlug = slugify(topic.data.category);
+    const orderArr = SUBCATEGORY_ORDER[catSlug] || [];
+    
+    categoryTopics.sort((a, b) => {
+      const subA = a.data.subcategory || 'Other Topics';
+      const subB = b.data.subcategory || 'Other Topics';
+      const aIdx = orderArr.indexOf(subA);
+      const bIdx = orderArr.indexOf(subB);
+      const effectiveAIdx = aIdx === -1 ? 999 : aIdx;
+      const effectiveBIdx = bIdx === -1 ? 999 : bIdx;
+      
+      if (effectiveAIdx !== effectiveBIdx) {
+        return effectiveAIdx - effectiveBIdx;
+      }
+      return (a.data.order || 99) - (b.data.order || 99);
+    });
+    
     const currentIndex = categoryTopics.findIndex(t => t.id === topic.id);
     
     const prevTopic = currentIndex > 0 ? categoryTopics[currentIndex - 1] : null;
