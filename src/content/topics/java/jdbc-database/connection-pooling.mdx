@@ -1,0 +1,72 @@
+---
+title: "Connection Pooling"
+description: "Understanding Connection Pooling in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "JDBC & Database"
+order: 10
+---
+## TL;DR
+
+- Creating a physical database connection is extremely slow (involves network handshakes, authentication, and memory allocation).
+- A **Connection Pool** pre-creates a set of connections at startup and keeps them open.
+- When an application needs a connection, it "borrows" one from the pool. When finished, it "returns" it to the pool instead of actually closing it.
+- **HikariCP** is the industry standard connection pool in modern Java (Default in Spring Boot).
+
+## Concept
+
+Without a connection pool, every time a user visits your website, your code calls `DriverManager.getConnection()`. This takes 50-100ms. If 1,000 users visit simultaneously, the database struggles to authenticate 1,000 connections at once, and response times plummet.
+
+A Connection Pool (implementing `javax.sql.DataSource`) solves this. At startup, it creates 10 physical connections to the database. 
+When your code calls `dataSource.getConnection()`, it instantly receives one of the pre-warmed connections (takes 0ms). 
+Crucially, when your code calls `conn.close()`, the Connection Pool intercepts the call. It does *not* close the physical TCP socket. Instead, it resets the connection's state (rolls back any dangling transactions) and puts it back in the idle queue for the next user.
+
+## Examples
+
+```java
+import com.zaxxer.hikari.HikariConfig;
+import com.zaxxer.hikari.HikariDataSource;
+import java.sql.Connection;
+import java.sql.SQLException;
+
+public class ConnectionPoolDemo {
+    public static void main(String[] args) {
+        
+        // 1. Configure the Pool
+        HikariConfig config = new HikariConfig();
+        config.setJdbcUrl("jdbc:postgresql://localhost:5432/mydb");
+        config.setUsername("admin");
+        config.setPassword("secret");
+        
+        // Pool tuning parameters
+        config.setMaximumPoolSize(10); // Max physical connections to the DB
+        config.setMinimumIdle(2);      // Keep at least 2 connections ready at all times
+        config.setConnectionTimeout(30000); // Wait 30s for a connection before failing
+        
+        // 2. Initialize the DataSource (This takes time as it opens connections)
+        try (HikariDataSource dataSource = new HikariDataSource(config)) {
+            
+            // 3. Application Code: Get a connection instantly!
+            try (Connection conn = dataSource.getConnection()) {
+                // Execute queries...
+                System.out.println("Got a connection from the pool!");
+                
+            } catch (SQLException e) {
+                e.printStackTrace();
+            }
+            // At this brace, conn.close() is called. 
+            // Hikari intercepts it and returns it to the pool.
+        } 
+    }
+}
+```
+
+## Interview Questions
+
+Q: What happens if the pool size is 10, and an 11th user requests a connection?
+A: The 11th user's thread will block (wait) at `dataSource.getConnection()`. It will wait up to the configured `ConnectionTimeout` (usually 30 seconds). If one of the first 10 users finishes their work and calls `conn.close()` within 30 seconds, the 11th user instantly receives that connection. If 30 seconds pass and no connection becomes available, a `SQLTransientConnectionException` is thrown.
+
+Q: Why shouldn't you set the maximum pool size to 10,000?
+A: A common misconception is "more connections = faster database". This is false. Databases process queries using CPU cores. If a database server has 4 CPU cores, it can only actively execute 4 queries simultaneously. 
+If you send 10,000 concurrent connections to a 4-core database, the database spends 99% of its CPU time context-switching between 10,000 threads, causing massive thrashing and terrible performance. A heavily utilized pool of just 10-20 connections will often process queries much faster than a pool of 1,000 connections. (A common formula is: `Core_Count * 2 + Effective_Spindle_Count`).

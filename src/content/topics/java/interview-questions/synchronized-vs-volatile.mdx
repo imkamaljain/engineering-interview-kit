@@ -1,0 +1,62 @@
+---
+title: "synchronized vs volatile"
+description: "Understanding synchronized vs volatile in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Interview Questions"
+order: 17
+---
+
+## TL;DR
+
+- **`volatile`**: Guarantees **visibility**. It ensures that if Thread A changes a variable, Thread B instantly sees the change. It does *not* guarantee atomicity (it doesn't prevent race conditions).
+- **`synchronized`**: Guarantees **visibility AND atomicity**. It locks the resource so that only one thread can execute a block of code at a time. It is much slower than `volatile`.
+
+## Concept
+
+Modern CPUs have multiple cores, and each core has its own ultra-fast L1 cache. If Thread A is running on Core 1 and changes a variable `stop = true`, it writes that to its L1 cache. Thread B on Core 2 might keep running for several seconds because it's reading `stop = false` from its own L1 cache! 
+Marking a variable as `volatile` disables CPU caching for that variable. Every read goes straight to main RAM, guaranteeing absolute visibility.
+
+However, if Thread A and Thread B both execute `count++`, `volatile` will not save you. `count++` is actually 3 operations (read, increment, write). Even with `volatile`, Thread A and B can read the same number at the same time and overwrite each other. To fix this, you must use `synchronized` to lock the entire block of code, ensuring only one thread can do the read-increment-write sequence at a time.
+
+## Examples
+
+```java
+public class ThreadSafetyDemo {
+    
+    // 1. VOLATILE
+    // Perfect for simple boolean flags. 
+    // Guarantees Thread 2 will instantly see when Thread 1 sets this to true.
+    private volatile boolean shutdownRequested = false;
+
+    public void shutdown() {
+        shutdownRequested = true;
+    }
+
+    public void runLoop() {
+        while (!shutdownRequested) {
+            // keep processing...
+        }
+    }
+
+    // 2. SYNCHRONIZED
+    // Volatile is NOT enough here. If 2 threads call this simultaneously, 
+    // they might both read '5', increment to '6', and write '6'. A count was lost!
+    // Synchronized locks the method.
+    private int counter = 0;
+
+    public synchronized void increment() {
+        counter++; 
+    }
+}
+```
+
+## Interview Questions
+
+Q: If `synchronized` handles visibility *and* atomicity, why use `volatile` at all?
+A: **Performance.** `synchronized` creates a lock. If Thread A holds the lock, Thread B is entirely blocked from the CPU and put to sleep by the OS until the lock is released. This context-switching is extremely slow. 
+`volatile` involves absolutely no locking. It simply tells the CPU to read from Main RAM instead of the L1 cache. It is thousands of times faster than `synchronized` and should always be used when you only need visibility (like a boolean flag).
+
+Q: Can `volatile` be used on an Array or an Object?
+A: Yes, but it doesn't do what you think it does. If you declare `private volatile int[] numbers`, it only guarantees visibility for the *reference pointer* to the array. If Thread A changes the pointer to point to a brand new array, Thread B will see it. However, if Thread A modifies an element *inside* the array (`numbers[0] = 5`), `volatile` provides **zero guarantees** that Thread B will see the new value. To guarantee visibility of elements inside an array, you must use `AtomicIntegerArray` or `synchronized`.

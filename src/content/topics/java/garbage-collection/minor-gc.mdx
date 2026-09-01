@@ -1,0 +1,57 @@
+---
+title: "Minor GC"
+description: "Understanding Minor GC in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Garbage Collection"
+order: 6
+---
+## TL;DR
+
+- **Minor GC** (also called Young GC) is a garbage collection event that cleans *only* the Young Generation.
+- It is triggered when the Eden space becomes full.
+- It uses a "Copying" algorithm, is extremely fast, but strictly requires a **Stop-The-World** pause.
+
+## Concept
+
+In a typical Java application, objects are created at a massive rate. The Eden space fills up rapidly. 
+
+When Eden is full, the JVM must halt the application (Stop-The-World) and perform a Minor GC. 
+1. It identifies all live objects in **Eden** and the active **Survivor space** (let's say S0).
+2. It copies all those live objects directly into the empty **Survivor space** (S1), placing them neatly side-by-side (inherently compacting them).
+3. It completely clears the memory of Eden and S0. 
+
+Because of the Weak Generational Hypothesis, 98% of the objects in Eden are usually dead. Therefore, the GC only spends time copying the 2% that are alive. This makes Minor GCs incredibly fast (often completing in 1 to 5 milliseconds).
+
+## Examples
+
+```java
+public class MinorGCDemo {
+    public static void main(String[] args) {
+        
+        System.out.println("Starting heavy allocation...");
+        
+        while (true) {
+            // We create 1MB arrays in a tight infinite loop.
+            // The Eden space will fill up in a fraction of a second.
+            // A Minor GC will instantly trigger.
+            // Because the variable 'data' is overwritten in the next iteration,
+            // the 1MB array becomes garbage immediately. 
+            // The Minor GC easily cleans it up, and the app runs forever without OOM.
+            byte[] data = new byte[1024 * 1024]; 
+        }
+        
+        // If you run this code with '-Xlog:gc' you will see hundreds of 
+        // Minor GC logs being printed per second!
+    }
+}
+```
+
+## Interview Questions
+
+Q: Does a Minor GC cause a Stop-The-World pause?
+A: Yes! Many developers incorrectly assume that only Major/Full GCs pause the application. **All GCs pause the application**. The JVM must freeze application threads during a Minor GC to safely copy live objects from Eden to the Survivor space and update the memory pointers. The critical difference is that Minor GCs take 2 milliseconds, making the pause imperceptible, whereas Full GCs can take 2 seconds.
+
+Q: Can a Minor GC promote objects to the Old Generation?
+A: Yes. During a Minor GC, the JVM checks the "Age" (number of survived GCs) of each object in the Survivor space. If an object's age exceeds the `MaxTenuringThreshold`, the Minor GC copies it to the Old Generation instead of the other Survivor space. Additionally, if the JVM tries to copy objects into the Survivor space but it is physically too small to hold them all, the Minor GC performs a "Premature Promotion", forcefully shoving the overflow objects directly into the Old Generation.

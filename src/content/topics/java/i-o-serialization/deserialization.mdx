@@ -1,0 +1,58 @@
+---
+title: "Deserialization"
+description: "Understanding Deserialization in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "I/O & Serialization"
+order: 9
+---
+## TL;DR
+
+- **Deserialization** is the reverse process of Serialization.
+- It takes a stream of bytes (from a file or network) and reconstructs the original Java Object in memory.
+- It uses `ObjectInputStream` and explicitly bypasses the class's normal constructors.
+
+## Concept
+
+When you receive a `.ser` file containing a serialized Java object, you want to bring it back to life. 
+You use an `ObjectInputStream` to read the bytes. The JVM reads the metadata in the byte stream to determine the exact Class name. It then verifies that this Class exists on your local classpath. 
+
+If it exists, the JVM magically allocates memory for the object and directly populates its fields using the saved data. **The constructor of the class is NEVER called during standard deserialization.** This is a frequent source of bugs, because validation logic placed inside a constructor will be completely bypassed when an object is deserialized!
+
+## Examples
+
+```java
+import java.io.*;
+
+public class DeserializationDemo {
+    public static void main(String[] args) {
+        
+        // Read the serialized bytes from the file
+        try (FileInputStream fis = new FileInputStream("user.ser");
+             ObjectInputStream ois = new ObjectInputStream(fis)) {
+             
+            // 1. Read the object. 
+            // 2. Cast it to the expected type.
+            User deserializedUser = (User) ois.readObject();
+            
+            // Output: User{alice_admin, null}
+            // Notice the password is null because it was marked 'transient' during serialization!
+            System.out.println("Restored: " + deserializedUser);
+            
+        } catch (IOException | ClassNotFoundException e) {
+            e.printStackTrace();
+        }
+    }
+}
+```
+
+## Interview Questions
+
+Q: Why does `readObject()` throw a `ClassNotFoundException`?
+A: The byte stream only contains the *data* and the *name* of the class (e.g., `"com.example.User"`). It does not contain the actual `.class` bytecode. When deserializing, the JVM looks for `com.example.User` in the receiving application's classpath. If the receiving application doesn't have that class file, it cannot reconstruct the object, resulting in a `ClassNotFoundException`.
+
+Q: Is it true that constructors are not called during deserialization?
+A: Yes and No. 
+The constructor of the serialized class itself (e.g., `User`) is **not** called. The JVM creates the object via internal magic. 
+However, if the serialized class extends a *non-serializable* parent class, the JVM *will* execute the no-argument constructor of that non-serializable parent class to initialize its state. If the parent class doesn't have a no-arg constructor, deserialization fails.

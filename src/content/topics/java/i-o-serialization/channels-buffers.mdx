@@ -1,0 +1,74 @@
+---
+title: "Channels & Buffers"
+description: "Understanding Channels & Buffers in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "I/O & Serialization"
+order: 7
+---
+
+## TL;DR
+
+- **Channels** and **Buffers** are the core components of Java NIO.
+- A **Channel** represents an open connection to a hardware device, file, or network socket. It is bi-directional (can both read and write).
+- A **Buffer** is a chunk of memory (an array) that you use to interact with the Channel. You read data *from* a channel *into* a buffer, or write data *from* a buffer *into* a channel.
+
+## Concept
+
+In standard `java.io`, you interact directly with a Stream, asking it for one byte at a time.
+In NIO, you do not interact with the Channel directly. The Channel is just a highway. The Buffer is the delivery truck. 
+
+**The Buffer Lifecycle:**
+A `ByteBuffer` has three crucial pointers: `capacity` (total size), `position` (where we are currently writing/reading), and `limit` (how much valid data exists).
+1. **Write to Buffer:** You (or the Channel) write bytes into the Buffer. The `position` moves forward.
+2. **Flip:** You call `buffer.flip()`. This resets the `position` back to 0, and sets the `limit` to the amount of data written. The buffer is now ready to be *read*.
+3. **Read from Buffer:** You (or the Channel) read the bytes out. The `position` moves forward towards the limit.
+4. **Clear:** You call `buffer.clear()`. This resets the pointers, making the buffer ready to be overwritten with new data.
+
+## Examples
+
+```java
+import java.io.RandomAccessFile;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
+
+public class ChannelBufferDemo {
+    public static void main(String[] args) throws Exception {
+        
+        // Open a RandomAccessFile, get its Channel
+        RandomAccessFile file = new RandomAccessFile("data.txt", "rw");
+        FileChannel channel = file.getChannel();
+        
+        // Allocate a Buffer of 48 bytes
+        ByteBuffer buffer = ByteBuffer.allocate(48);
+        
+        // 1. Write to the Buffer (The channel reads from disk, writes to our buffer)
+        int bytesRead = channel.read(buffer);
+        
+        // 2. FLIP! We are done writing to it, we want to read the data out.
+        buffer.flip();
+        
+        // 3. Read from the Buffer
+        while(buffer.hasRemaining()) {
+            System.out.print((char) buffer.get()); // Read 1 byte at a time
+        }
+        
+        // 4. CLEAR! Reset the buffer so the channel can write more data into it.
+        buffer.clear();
+        
+        channel.close();
+    }
+}
+```
+
+## Interview Questions
+
+Q: What is the difference between a Stream and a Channel?
+A: 1. **Directionality:** Streams are inherently one-way (you have an `InputStream` for reading OR an `OutputStream` for writing). Channels are bi-directional; you can read and write to the same `SocketChannel`.
+2. **Blocking:** Streams are always blocking. If no data is available on the network, `stream.read()` hangs the thread forever. Channels can be put into Non-Blocking mode, returning instantly if no data is available.
+3. **Interaction:** You interact with Streams directly via byte arrays. You interact with Channels exclusively through `Buffer` objects.
+
+Q: What is a "Direct Buffer" (`ByteBuffer.allocateDirect()`)?
+A: Normally, `ByteBuffer.allocate()` creates a byte array on the standard Java Heap. When performing Network I/O, the OS cannot read directly from the Java Heap (because the Garbage Collector might move the array mid-read!). The JVM has to copy the data from the Heap into OS memory first. 
+A **Direct Buffer** allocates memory natively outside the JVM Heap (directly in the OS memory space). The network card can read/write to it via Direct Memory Access (DMA) with zero JVM overhead. It is extremely fast for I/O, but very expensive to allocate and garbage collect.

@@ -1,0 +1,69 @@
+---
+title: "Ordering"
+description: "Understanding Ordering in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Java Memory Model"
+order: 5
+---
+## TL;DR
+
+- **Ordering** refers to the execution sequence of instructions in a program.
+- Compilers, JVMs, and CPUs aggressively **reorder** instructions to optimize performance, as long as it doesn't break the logic of a *single* thread.
+- This reordering can break multithreaded logic. You must use `volatile` or `synchronized` to enforce correct ordering across threads.
+
+## Concept
+
+Imagine a single-threaded program:
+```java
+a = 1; // Instruction 1
+b = 2; // Instruction 2
+c = a + b; // Instruction 3
+```
+The CPU notices that `a = 1` and `b = 2` are completely independent. To run faster, the CPU might execute `b = 2` *before* `a = 1`. From the perspective of that single thread, the final result `c = 3` is exactly the same, so the reordering is valid. This is called the "As-if-Serial" semantic.
+
+However, in multithreading, this optimization is a disaster. If Thread A does `initDatabase(); isReady = true;`, the CPU might reorder it to `isReady = true; initDatabase();`. Thread B might see `isReady = true`, try to query the database before it is initialized, and crash with a `NullPointerException`. 
+
+The Java Memory Model prevents dangerous reordering by emitting **Memory Barriers** (fences) when you use synchronization keywords.
+
+## Examples
+
+```java
+public class OrderingDemo {
+    private int data = 0;
+    
+    // By making this volatile, we enforce ordering!
+    // The JVM is FORBIDDEN from reordering any writes that happen before 
+    // the volatile write, to happen after it.
+    private volatile boolean ready = false;
+
+    public void writerThread() {
+        data = 42;       // 1. Write data
+        
+        // Memory Barrier inserted here by JVM!
+        
+        ready = true;    // 2. Volatile write
+        // The JVM guarantees 'data = 42' will ALWAYS execute before 'ready = true'
+    }
+
+    public void readerThread() {
+        if (ready) {
+            // Because 'ready' is true, we are guaranteed that 'data' was fully 
+            // initialized. It will definitely print 42.
+            System.out.println(data);
+        }
+    }
+}
+```
+
+## Interview Questions
+
+Q: What causes instruction reordering?
+A: It happens at three levels:
+1. **Compiler Optimization:** The Java Compiler (`javac`) or the JIT Compiler might reorganize statements to optimize register allocation.
+2. **CPU Out-of-Order Execution:** Modern processors can execute multiple instructions in parallel. If an instruction is stalled waiting for memory, the CPU will look ahead and execute later independent instructions immediately.
+3. **Memory System Reordering:** Writes to cache buffers might be flushed to main RAM in a different order than they were executed.
+
+Q: How does `synchronized` affect ordering?
+A: Entering a `synchronized` block establishes a Happens-Before relationship. The JVM guarantees that no instructions placed *inside* the synchronized block will be reordered to execute *before* the lock is acquired, and no instructions will be reordered to execute *after* the lock is released. It strictly brackets the execution sequence.

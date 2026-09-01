@@ -1,0 +1,65 @@
+---
+title: "Thread Pool Sizing"
+description: "Understanding Thread Pool Sizing in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Performance & Best Practices"
+order: 9
+---
+## TL;DR
+
+- Properly sizing a Thread Pool (`ExecutorService`) is critical for application performance.
+- Too few threads: Application underutilizes CPU and stalls waiting for I/O.
+- Too many threads: Application wastes CPU on context-switching and crashes from `OutOfMemoryError`s.
+- The size depends entirely on whether the tasks are **CPU-Bound** or **I/O-Bound**.
+
+## Concept
+
+When you submit tasks to an `ExecutorService`, they are executed by worker threads.
+
+**CPU-Bound Tasks** (e.g., video encoding, cryptography, sorting massive arrays):
+These tasks never wait. They max out the CPU continuously. If you have an 8-core processor, creating 100 threads will just cause the OS to brutally context-switch between them, making the overall job much slower. 
+*Rule:* `Pool Size = Number of CPU Cores`.
+
+**I/O-Bound Tasks** (e.g., HTTP requests, database queries, reading files):
+These tasks spend 99% of their time paused, waiting for data to return over the network. While a thread is waiting, it releases the CPU. Therefore, you need many more threads than CPU cores to keep the CPU busy.
+*Rule:* `Pool Size = Cores / (1 - Blocking Factor)`. (Often ranges from 50 to 500 threads).
+
+## Examples
+
+```java
+import java.util.concurrent.*;
+
+public class ThreadPoolSizingDemo {
+
+    public void configurePools() {
+        // Find exactly how many logical cores the server has
+        int cpuCores = Runtime.getRuntime().availableProcessors();
+
+        // 1. CPU-BOUND POOL
+        // Perfect for heavy math. Maximize cores, prevent context switching.
+        ExecutorService mathPool = Executors.newFixedThreadPool(cpuCores);
+
+        // 2. I/O-BOUND POOL
+        // We know HTTP calls block 90% of the time. 
+        // We configure a much larger pool to keep the CPU fed with work.
+        int ioPoolSize = cpuCores * 10; 
+        ExecutorService networkPool = Executors.newFixedThreadPool(ioPoolSize);
+        
+        // 3. VIRTUAL THREADS (Java 21+)
+        // For I/O-bound tasks, we can stop doing math entirely. 
+        // Virtual threads are so cheap we can spawn one for every task dynamically!
+        ExecutorService virtualPool = Executors.newVirtualThreadPerTaskExecutor();
+    }
+}
+```
+
+## Interview Questions
+
+Q: What happens if you use `Executors.newCachedThreadPool()` in production?
+A: `newCachedThreadPool()` creates a pool with an *unbounded* maximum size. If you receive a sudden spike of 10,000 requests, this pool will attempt to create 10,000 OS platform threads instantly. Because each thread requires ~1MB of stack memory, your JVM will instantly crash with a `java.lang.OutOfMemoryError: unable to create new native thread`. 
+In production, you should almost always use `newFixedThreadPool` with a bounded queue to gracefully reject excess load (Backpressure) rather than crashing the entire server.
+
+Q: What is the "Blocking Factor"?
+A: The blocking factor is the percentage of time a thread spends waiting for external resources (I/O) versus doing actual computation. If a task takes 100ms, and spends 90ms waiting for a database response and 10ms processing the JSON, the blocking factor is 0.9 (90%). The higher the blocking factor, the larger your thread pool must be to maintain CPU utilization.

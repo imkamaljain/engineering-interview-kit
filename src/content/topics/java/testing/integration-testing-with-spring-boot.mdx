@@ -1,0 +1,75 @@
+---
+title: "Integration Testing with Spring Boot"
+description: "Understanding Integration Testing with Spring Boot in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Testing"
+order: 9
+---
+## TL;DR
+
+- Spring Boot makes integration testing effortless via the `@SpringBootTest` annotation.
+- It loads the entire Spring Application Context, connecting to databases and wiring all Beans.
+- You can use `@MockBean` to selectively mock specific dependencies (like 3rd-party APIs) while keeping the rest of the application real.
+
+## Concept
+
+When you annotate a test class with `@SpringBootTest`, Spring Boot effectively starts up your entire application just as if you had run the main method. It auto-configures the database, sets up Hibernate, and creates the REST controllers.
+
+Because starting the entire app is slow, you can use "Sliced" testing. Annotations like `@DataJpaTest` or `@WebMvcTest` tell Spring: *"Only load the Database beans"* or *"Only load the HTTP Controller beans."* This provides a fast, focused integration test.
+
+If your app charges a credit card via Stripe, you absolutely do not want your automated tests hitting the real Stripe API. You use `@MockBean` on the StripeService. Spring loads the real app, but secretly swaps the StripeService bean with a Mockito mock.
+
+## Examples
+
+```java
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.junit.jupiter.api.Test;
+import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assertions.*;
+
+@SpringBootTest
+class OrderFlowIntegrationTest {
+
+    // REAL Beans, wired up to an In-Memory H2 Database automatically
+    @Autowired
+    private OrderService orderService;
+    
+    @Autowired
+    private OrderRepository orderRepository;
+
+    // FAKE Bean. Spring will replace the real PaymentClient with this Mock
+    // and inject it into the OrderService!
+    @MockBean
+    private StripePaymentClient paymentClient;
+
+    @Test
+    void testSuccessfulOrderFlow() {
+        
+        // 1. Program the mock to simulate a successful API call to Stripe
+        when(paymentClient.chargeCard(anyDouble())).thenReturn("TXN_12345");
+        
+        // 2. Trigger the real application logic
+        orderService.checkout(100.00);
+        
+        // 3. Verify the real database actually saved the order
+        assertEquals(1, orderRepository.count());
+        
+        // 4. Verify the system actually tried to call Stripe
+        verify(paymentClient, times(1)).chargeCard(100.00);
+    }
+}
+```
+
+## Interview Questions
+
+Q: What is the difference between `@Mock` and `@MockBean`?
+A: - `@Mock` is a standard Mockito annotation used in pure Unit Tests. Spring knows nothing about it.
+- `@MockBean` is a Spring Boot annotation. It creates a Mockito mock AND actively registers it inside the Spring Application Context. If Spring was preparing to inject a real `PaymentClient` into a service, it intercepts it and injects the `@MockBean` instead. 
+
+Q: Does `@SpringBootTest` start a real HTTP server (Tomcat)?
+A: By default, no. `@SpringBootTest` loads the web components, but mocks the web environment (HTTP requests are simulated entirely in-memory using `MockMvc`), making it very fast. 
+If you want to test actual HTTP networking (like a real client calling `localhost:8080`), you must configure it using `@SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT)`. Spring will spin up an actual Tomcat server on a random port. You can then use `TestRestTemplate` to send real HTTP requests to it.

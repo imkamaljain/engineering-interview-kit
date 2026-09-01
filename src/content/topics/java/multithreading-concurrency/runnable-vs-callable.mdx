@@ -1,0 +1,71 @@
+---
+title: "Runnable vs Callable"
+description: "Understanding Runnable vs Callable in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Multithreading & Concurrency"
+order: 5
+---
+## TL;DR
+
+- **`Runnable`** executes a task in the background but **cannot return a result** and cannot throw checked exceptions.
+- **`Callable<V>`** executes a task in the background, **returns a result** of type `V`, and is allowed to throw checked exceptions.
+
+## Concept
+
+When you want a thread to do some work in the background, you give it a payload. 
+
+For 10 years, Java only had `Runnable` (`void run()`). This was fine for fire-and-forget tasks (e.g., writing a log to a file). But what if you spawned a background thread to calculate a complex mathematical equation, and you needed the answer? `Runnable` returns `void`, so the only way to get the result was through complex shared memory and `wait/notify` blocks.
+
+Java 5 introduced `Callable<V>`. Its method is `V call() throws Exception`. It allows the thread to finish its work and smoothly return the calculated value (usually wrapped in a `Future` object) back to the main thread.
+
+## Examples
+
+```java
+import java.util.concurrent.*;
+
+public class RunnableVsCallable {
+    public static void main(String[] args) throws ExecutionException, InterruptedException {
+        
+        // Creates a pool of 2 reusable threads
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        
+        // --- 1. RUNNABLE ---
+        // Fire and forget. No return value.
+        Runnable myRunnable = () -> {
+            System.out.println("Processing log file...");
+        };
+        executor.submit(myRunnable); 
+        
+        
+        // --- 2. CALLABLE ---
+        // Returns an Integer. Can throw exceptions.
+        Callable<Integer> myCallable = () -> {
+            System.out.println("Calculating massive equation...");
+            Thread.sleep(1000); // Simulate hard work
+            return 42; 
+        };
+        
+        // Submit returns a Future (a promise of a future result)
+        Future<Integer> futureResult = executor.submit(myCallable);
+        
+        System.out.println("Main thread is doing other things...");
+        
+        // .get() will block the main thread until the Callable finishes and returns 42
+        Integer finalAnswer = futureResult.get(); 
+        System.out.println("The answer is: " + finalAnswer);
+        
+        executor.shutdown();
+    }
+}
+```
+
+## Interview Questions
+
+Q: Can you pass a `Callable` to a standard `Thread` constructor (e.g., `new Thread(myCallable)`)?
+A: No. The standard `Thread` class constructor only accepts `Runnable`. To execute a `Callable`, you must submit it to an `ExecutorService`, or wrap it inside a `FutureTask` (which is a bridge class that implements `Runnable` but wraps a `Callable`).
+
+Q: How do `Runnable` and `Callable` handle Exceptions?
+A: `Runnable.run()` does not declare any `throws` clause. If a checked exception (like `IOException`) occurs inside a `Runnable`, you are forced to wrap it in a `try/catch` block. You cannot throw it upwards.
+`Callable.call()` explicitly declares `throws Exception`. You can let checked exceptions bubble up. The exception will be caught by the Executor and re-thrown when you eventually call `Future.get()`.

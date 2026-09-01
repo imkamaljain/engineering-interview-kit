@@ -1,0 +1,65 @@
+---
+title: "Visibility"
+description: "Understanding Visibility in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Java Memory Model"
+order: 3
+---
+## TL;DR
+
+- **Visibility** refers to whether a change made to a shared variable by one thread is immediately visible to other threads.
+- Without proper synchronization, changes can get stuck in a CPU core's local cache (L1/L2) and never be flushed to main RAM.
+- Use `volatile` or `synchronized` to enforce memory visibility.
+
+## Concept
+
+Modern CPUs have multi-level cache architectures to prevent the CPU from idling while waiting for slow RAM. 
+When a thread reads a variable from main memory, it copies it into its local CPU cache. If the thread updates the variable, it updates the *cached copy*, not the main memory. It defers flushing to RAM for performance reasons.
+
+If Thread 1 updates `isRunning = false` in Core A's cache, but Thread 2 is looping on `isRunning` in Core B, Thread 2 will read the stale `true` value from Core B's cache forever. This is a Visibility failure.
+
+To fix this, we instruct the JVM to enforce Visibility. The most direct way is the `volatile` keyword. It tells the JVM: *"Do not aggressively cache this variable. Every write must immediately flush to main RAM, and every read must fetch directly from main RAM."*
+
+## Examples
+
+```java
+public class VisibilityDemo {
+    
+    // Without 'volatile', the background thread might run infinitely!
+    private static volatile boolean running = true;
+    
+    public static void main(String[] args) throws InterruptedException {
+        
+        Thread worker = new Thread(() -> {
+            int count = 0;
+            // The thread might cache 'running' in a CPU register.
+            // It will never see the update from the main thread.
+            while (running) {
+                count++;
+            }
+            System.out.println("Thread terminated.");
+        });
+        
+        worker.start();
+        
+        Thread.sleep(1000); // Let it run for a second
+        
+        // Main thread updates the variable.
+        // Because it is volatile, this write is instantly visible to the worker thread.
+        running = false; 
+        System.out.println("Main thread signaled stop.");
+    }
+}
+```
+
+## Interview Questions
+
+Q: Does `synchronized` guarantee visibility?
+A: Yes. When a thread enters a `synchronized` block, it automatically invalidates its local CPU cache and fetches fresh data from main memory. When it exits a `synchronized` block, it automatically flushes all modified variables from its cache back to main memory. Therefore, passing data between threads using locks guarantees full visibility.
+
+Q: What is the difference between Visibility and Atomicity?
+A: They solve two completely different multithreading problems.
+- **Visibility** ensures that a thread *sees* the most up-to-date data (e.g., stopping an infinite loop). `volatile` solves this.
+- **Atomicity** ensures that a multi-step operation (like `count++`, which is read-modify-write) completes entirely as a single indivisible unit, preventing threads from overwriting each other's calculations. `volatile` does **not** solve this. You need `synchronized` or `AtomicInteger`.

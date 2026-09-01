@@ -1,0 +1,69 @@
+---
+title: "Virtual Thread Scheduling"
+description: "Understanding Virtual Thread Scheduling in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Virtual Threads & Modern Concurrency"
+order: 3
+---
+## TL;DR
+
+- Virtual Thread scheduling is handled by the **JVM**, not the Operating System.
+- The JVM uses a **ForkJoinPool** in FIFO mode as the underlying scheduler.
+- The scheduler multiplexes millions of Virtual Threads onto a small pool of OS "Carrier Threads".
+
+## Concept
+
+When you start a Platform Thread, the OS decides when it gets CPU time. 
+
+When you start a Virtual Thread, the OS knows nothing about it. Instead, the JVM assigns the Virtual Thread to a dedicated scheduler. By default, this is a dedicated `ForkJoinPool` configured to use the same number of threads as your physical CPU cores (the "Carrier Threads").
+
+**The Lifecycle:**
+1. A Virtual Thread is created and submitted to the JVM scheduler.
+2. The scheduler mounts the Virtual Thread onto an available Carrier Thread.
+3. The Virtual Thread executes Java bytecode.
+4. The Virtual Thread makes a blocking call (e.g., `InputStream.read()`).
+5. The JVM intercepts the blocking call, copies the Virtual Thread's stack frames to the Java Heap, and **unmounts** it.
+6. The Carrier Thread is now free. The scheduler immediately gives it a different Virtual Thread to run.
+7. Later, when the I/O operation finishes, the OS notifies the JVM. The JVM puts the original Virtual Thread back into the scheduler queue to be remounted.
+
+## Examples
+
+```java
+public class SchedulerDemo {
+    public static void main(String[] args) throws InterruptedException {
+        
+        Runnable task = () -> {
+            // Print the current thread info. 
+            // It will show the Virtual Thread name AND its underlying Carrier Thread!
+            System.out.println("Start: " + Thread.currentThread());
+            
+            try {
+                // This triggers an unmount!
+                Thread.sleep(100);
+            } catch (InterruptedException e) {}
+            
+            // Print again after waking up. 
+            // Notice that the Carrier Thread might be completely different now!
+            System.out.println("End: " + Thread.currentThread());
+        };
+        
+        Thread v1 = Thread.ofVirtual().name("vthread-1").start(task);
+        v1.join();
+    }
+}
+// OUTPUT MIGHT LOOK LIKE:
+// Start: VirtualThread[#21,vthread-1]/runnable@ForkJoinPool-1-worker-1
+// End: VirtualThread[#21,vthread-1]/runnable@ForkJoinPool-1-worker-4
+```
+
+## Interview Questions
+
+Q: What happens if a Virtual Thread executes an infinite `while(true)` loop?
+A: Because Virtual Threads do not use preemptive time-slicing by the OS, a Virtual Thread executing a heavy CPU-bound loop will **never yield** its Carrier Thread. It essentially hijacks the Carrier Thread. If you have 4 CPU cores and launch 4 Virtual Threads with infinite math loops, your entire Virtual Thread scheduler will freeze, and no other Virtual Threads will be able to execute. This is why Virtual Threads are for I/O-bound tasks only!
+
+Q: What is "Thread Pinning"?
+A: Sometimes the JVM wants to unmount a Virtual Thread, but it can't. This is called "Pinning". The Virtual Thread is pinned to the Carrier Thread, blocking it completely. This currently happens in two scenarios:
+1. Executing a blocking operation inside a `synchronized` block or method. (Solution: Use `ReentrantLock` instead).
+2. Executing a blocking operation inside a native C/C++ method (JNI).

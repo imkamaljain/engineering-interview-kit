@@ -1,0 +1,70 @@
+---
+title: "Semaphore"
+description: "Understanding Semaphore in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Multithreading & Concurrency"
+order: 26
+---
+## TL;DR
+
+- A **`Semaphore`** is a concurrency utility that maintains a set of **permits**.
+- It is used to restrict the number of threads that can access a specific resource simultaneously.
+- You `acquire()` a permit to enter, and `release()` a permit when you leave.
+
+## Concept
+
+Think of a Semaphore like a parking garage with exactly 50 spots (permits). 
+- A car arrives and asks the gate for a spot (`acquire()`). The gate opens, and the display goes down to 49.
+- If 50 cars are inside, the display reads 0. When the 51st car arrives and calls `acquire()`, the gate stays shut, and the car is blocked in line.
+- When a car leaves the garage, it calls `release()`. The display goes up to 1, and the gate opens to let the 51st car in.
+
+While `synchronized` and `ReentrantLock` restrict access to exactly **1** thread, a Semaphore restricts access to exactly **N** threads. It is widely used to limit network connections or database connection pools.
+
+## Examples
+
+```java
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+public class SemaphoreExample {
+    public static void main(String[] args) {
+        
+        // A Semaphore with 3 permits (Only 3 threads allowed at once)
+        Semaphore garage = new Semaphore(3);
+        ExecutorService executor = Executors.newFixedThreadPool(10);
+        
+        for (int i = 1; i <= 10; i++) {
+            final int carId = i;
+            executor.submit(() -> {
+                try {
+                    System.out.println("Car " + carId + " waiting for a spot...");
+                    
+                    garage.acquire(); // Blocks if 0 permits available
+                    
+                    System.out.println("Car " + carId + " PARKED. (Available: " + garage.availablePermits() + ")");
+                    Thread.sleep(2000); // Parked for 2 seconds
+                    
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                } finally {
+                    System.out.println("Car " + carId + " left.");
+                    garage.release(); // ALWAYS release in a finally block!
+                }
+            });
+        }
+        
+        executor.shutdown();
+    }
+}
+```
+
+## Interview Questions
+
+Q: What happens if you call `release()` more times than you called `acquire()`?
+A: A `Semaphore` does not track *which* thread owns the permit, nor does it enforce a maximum cap automatically. If you initialize a Semaphore with 3 permits, and a buggy thread calls `release()` without ever calling `acquire()`, the Semaphore will now have 4 permits! It is the developer's strict responsibility to ensure `release()` is only called by threads that successfully acquired a permit, usually utilizing `finally` blocks.
+
+Q: What is a Binary Semaphore?
+A: A Binary Semaphore is simply a `new Semaphore(1)`. It functions identically to a standard mutual exclusion lock (like a `ReentrantLock`). Only one thread can enter the critical section at a time. However, unlike a `ReentrantLock` (where only the thread that locked it can unlock it), a Binary Semaphore allows *Thread A* to acquire the permit and *Thread B* to release the permit.

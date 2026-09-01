@@ -1,0 +1,57 @@
+---
+title: "Generational GC"
+description: "Understanding Generational GC in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Garbage Collection"
+order: 4
+---
+## TL;DR
+
+- **Generational GC** is a strategy that physically divides the Heap into distinct areas based on the age of the objects.
+- It is based on the **Weak Generational Hypothesis**: *Most objects die young.*
+- By segregating memory, the JVM can quickly and aggressively clean the area where young objects die, without wasting time scanning old, long-lived objects.
+
+## Concept
+
+If you have a 100GB Heap, running a Mark-and-Sweep algorithm across the entire 100GB takes a massive amount of time (causing huge application pauses).
+However, computer scientists noticed a pattern in object-oriented programming: 
+- 98% of objects are created for temporary calculations (like local variables inside a `for-loop` or JSON parsing) and become garbage almost instantly.
+- The remaining 2% are long-lived (like Spring singleton beans, database connection pools, or caches).
+
+The JVM optimizes for this by splitting the Heap:
+1. **Young Generation:** All new objects go here. It is kept relatively small. Because it fills up fast, it is cleaned constantly (Minor GC). Because 98% of the objects here are already dead, cleaning it takes just 1-2 milliseconds!
+2. **Old Generation:** If an object survives multiple Minor GCs in the Young Generation, it is assumed to be long-lived and is "promoted" to the Old Gen. The Old Gen is massive and is rarely cleaned (Major GC).
+
+## Examples
+
+```java
+public class GenerationalGCDemo {
+    
+    // Spring Boot Singleton Bean. 
+    // It survives for days/weeks. It lives in the OLD GENERATION.
+    static Object mySingletonService = new Object();
+    
+    public void processHttpRequest(String requestBody) {
+        
+        // This parsed object is needed for about 10 milliseconds.
+        // It is allocated in the YOUNG GENERATION.
+        Object parsedJson = parse(requestBody);
+        
+        // The method ends. The 'parsedJson' reference is destroyed.
+        // The next Minor GC will instantly wipe the object from the Young Gen.
+        // The GC didn't even have to look at the 'mySingletonService' object!
+    }
+    
+    private Object parse(String body) { return new Object(); }
+}
+```
+
+## Interview Questions
+
+Q: What is the Weak Generational Hypothesis?
+A: It is the empirical observation that in most applications, newly created objects are highly likely to become unreachable very quickly, whereas objects that have survived for a long time are highly likely to continue surviving. This hypothesis is the entire foundational justification for dividing the JVM Heap into Young and Old generations.
+
+Q: How does Generational GC improve performance?
+A: Without generations, every GC cycle requires scanning every single object in memory (which could take seconds). With generations, the GC spends 99% of its time scanning *only* the Young Generation, which is small and mostly empty (since the objects are dead). It completely ignores the massive Old Generation, reducing a 5-second pause into a 2-millisecond pause, drastically improving application latency.

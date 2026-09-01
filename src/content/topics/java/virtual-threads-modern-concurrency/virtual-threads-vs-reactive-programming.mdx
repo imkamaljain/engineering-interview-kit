@@ -1,0 +1,58 @@
+---
+title: "Virtual Threads vs Reactive Programming"
+description: "Understanding Virtual Threads vs Reactive Programming in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Virtual Threads & Modern Concurrency"
+order: 8
+---
+## TL;DR
+
+- **Reactive Programming** (WebFlux, RxJava) scales beautifully but is incredibly complex, breaks stack traces, and forces an asynchronous programming model on your entire codebase.
+- **Virtual Threads** provide the exact same scalability as Reactive Programming, but allow you to write simple, blocking, sequential code.
+- Virtual Threads are widely considered the death knell for standard Reactive Programming in Java.
+
+## Concept
+
+In the 2010s, as microservices exploded, Tomcat servers (using 1 OS thread per request) began crashing under load. 
+To fix this, the industry adopted **Reactive Programming** (Project Reactor, Spring WebFlux). Instead of blocking a thread while waiting for a database, you attach a "Callback". The thread is instantly freed. When the database finishes, a different thread picks up the callback and continues execution. 
+**The problem:** To achieve this, developers had to learn complex functional paradigms (`Mono`, `Flux`, `flatMap`, `zip`). If a bug occurred, the stack trace was useless because execution hopped across 15 different threads.
+
+**Project Loom (Virtual Threads)** fixes the root cause instead of treating the symptom. 
+Instead of writing complex non-blocking callbacks, you just write normal, blocking code. When the Virtual Thread hits the database query, the JVM handles the "callback/unmount" logic completely invisibly at the kernel/JVM level. You get the scalability of WebFlux with the simplicity of traditional Spring MVC.
+
+## Examples
+
+```java
+// --- THE REACTIVE WAY (Complex) ---
+public Mono<UserDetails> getUserReactive(String id) {
+    return userRepository.findById(id)            // Returns Mono<User>
+        .flatMap(user -> 
+             permissionsRepo.findForUser(user)    // Returns Mono<Permissions>
+                 .map(perms -> new UserDetails(user, perms))
+        )
+        .onErrorResume(e -> Mono.just(new FallbackUser()));
+}
+
+// --- THE VIRTUAL THREAD WAY (Simple & Synchronous) ---
+// Does the exact same thing under the hood. Scales just as well.
+public UserDetails getUserVirtual(String id) {
+    try {
+        User user = userRepository.findById(id);        // Automatically unmounts!
+        Permissions perms = permissionsRepo.findFor(user); // Automatically unmounts!
+        return new UserDetails(user, perms);
+    } catch (Exception e) {
+        return new FallbackUser();
+    }
+}
+```
+
+## Interview Questions
+
+Q: Does this mean Spring WebFlux is dead?
+A: For standard CRUD web applications and microservices, yes, most architects predict a mass migration away from WebFlux back to Spring Web MVC running on Virtual Threads. However, Reactive paradigms (like RxJava) are still incredibly useful for actual *stream processing*—handling websockets, UI events, or continuous streams of financial market data where the functional paradigm fits the domain logic perfectly.
+
+Q: What happens to `ThreadLocal` in Reactive vs Virtual Threads?
+A: In Reactive Programming, `ThreadLocal` breaks entirely. Because a single request might start on Thread A, block, and resume on Thread B, `ThreadLocal` context (like Spring Security context) gets lost. You have to use complex `Reactor Context` maps. 
+With Virtual Threads, a single Virtual Thread handles the request from start to finish (even though it mounts on different OS threads!). Therefore, standard `ThreadLocal` (or the newer `ScopedValue`) works perfectly out of the box.

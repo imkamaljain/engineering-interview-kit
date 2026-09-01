@@ -1,0 +1,66 @@
+---
+title: "volatile"
+description: "Understanding volatile in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Java Memory Model"
+order: 6
+---
+
+## TL;DR
+
+- The `volatile` keyword tells the JVM that a variable is shared across threads and its value may change unexpectedly.
+- It guarantees **Visibility**: Reads and writes go directly to main memory, bypassing CPU caches.
+- It guarantees **Ordering**: It prevents the CPU from reordering instructions around the volatile read/write.
+- It does **NOT** guarantee **Atomicity** (e.g., `count++` is still broken).
+
+## Concept
+
+When multiple threads access a normal variable, they often copy it into their CPU's local L1/L2 cache for faster access. If Thread A updates the variable, it updates the cache, not main memory. Thread B will continue reading stale data from its own cache.
+
+By marking a variable as `volatile`, you instruct the JVM to insert **Memory Barriers** at the hardware level. 
+- A volatile write instantly flushes the CPU cache to Main Memory.
+- A volatile read instantly invalidates the local CPU cache and fetches fresh data from Main Memory.
+
+Additionally, under the JMM "Happens-Before" rules, writing to a volatile variable ensures that *all* previous writes (even to non-volatile variables) are also flushed to main memory.
+
+## Examples
+
+```java
+public class VolatileDemo {
+    
+    // 1. Used as a state flag. 
+    // This is the most common and safest use case for volatile.
+    private volatile boolean shutdownRequested = false;
+
+    public void startWork() {
+        while (!shutdownRequested) {
+            // Do some background processing
+        }
+        System.out.println("Gracefully shutting down...");
+    }
+
+    public void signalShutdown() {
+        // Without volatile, the worker thread might never see this change!
+        shutdownRequested = true; 
+    }
+    
+    // ----------------------------------------------------
+    // DANGER: Volatile does not solve compound operations!
+    // ----------------------------------------------------
+    private volatile int counter = 0;
+    
+    public void increment() {
+        counter++; // BROKEN! This is Read-Modify-Write. Volatile doesn't make it atomic.
+    }
+}
+```
+
+## Interview Questions
+
+Q: Why not make every variable `volatile`?
+A: Because reading and writing directly to Main Memory (RAM) is orders of magnitude slower than reading from the CPU cache. Furthermore, the memory barriers injected by `volatile` restrict the CPU's ability to optimize instruction execution pipelines. Overusing `volatile` will severely degrade application performance.
+
+Q: Can `volatile` be used on arrays?
+A: Yes, but it is dangerous and usually a mistake. If you declare `private volatile int[] numbers`, the `volatile` keyword *only applies to the array reference itself*. It guarantees visibility if you reassign the array (`numbers = new int[10]`). It does **NOT** guarantee visibility if you modify the contents of the array (`numbers[0] = 5`). If you need volatile semantics for array elements, you must use `java.util.concurrent.atomic.AtomicIntegerArray`.

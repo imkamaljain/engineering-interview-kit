@@ -1,0 +1,72 @@
+---
+title: "Spring Dependency Injection"
+description: "Understanding Spring Dependency Injection in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Interview Questions"
+order: 28
+---
+## TL;DR
+
+- **Dependency Injection (DI)** is a design pattern where an object's dependencies (other objects it needs) are provided to it, rather than the object creating them itself.
+- It relies heavily on **Inversion of Control (IoC)**.
+- The Spring Framework manages the lifecycle of these objects (Beans) and injects them automatically (via Constructor, Setter, or Field injection).
+
+## Concept
+
+Without DI, a `UserService` might do `this.userRepository = new UserRepositoryImpl();`. This tightly couples the service to a specific database implementation. If you want to unit test `UserService`, you are forced to connect to a real database!
+
+With DI, the `UserService` asks for a `UserRepository` in its constructor. It doesn't care *how* the repository is created. 
+At runtime, the Spring **IoC Container** scans your application, finds a class annotated with `@Repository`, creates exactly one instance of it (a Singleton Bean), and automatically passes (injects) that instance into the constructor of your `UserService`. 
+During a Unit Test, Spring isn't running. You can manually instantiate `UserService`, passing in a Fake or Mock repository, completely bypassing the database!
+
+## Examples
+
+```java
+// 1. The Interface
+public interface NotificationService {
+    void send(String msg);
+}
+
+// 2. The Implementation (Managed by Spring)
+@Service
+public class EmailNotificationService implements NotificationService {
+    public void send(String msg) {
+        System.out.println("Email sent: " + msg);
+    }
+}
+
+// 3. The Dependent Class
+@RestController
+public class UserController {
+    
+    // The dependency
+    private final NotificationService notificationService;
+
+    // CONSTRUCTOR INJECTION (Best Practice!)
+    // Spring automatically finds EmailNotificationService and passes it in here.
+    @Autowired // Optional in modern Spring if there is only 1 constructor
+    public UserController(NotificationService notificationService) {
+        this.notificationService = notificationService;
+    }
+
+    @PostMapping("/users")
+    public void createUser() {
+        // Use the dependency without worrying about how it was created
+        notificationService.send("Welcome new user!");
+    }
+}
+```
+
+## Interview Questions
+
+Q: Why is Constructor Injection preferred over Field Injection (`@Autowired` on the field)?
+A: If you use Field Injection, you cannot declare the field as `final`. More importantly, if you try to unit test the class without starting the entire Spring Context, you cannot easily inject the mock dependency because there is no constructor or setter available; the field is private! 
+Constructor injection forces the dependency to be provided at instantiation time. It allows the field to be `final` (ensuring immutability), and it makes writing pure, fast Unit Tests trivial using `new UserController(mockService)`.
+
+Q: What happens if you have two classes that implement `NotificationService`?
+A: Spring will throw a `NoUniqueBeanDefinitionException` on startup because it doesn't know which one to inject. 
+To fix this, you have two options:
+1. Mark one of the implementations with `@Primary`. Spring will use that one by default.
+2. Use the `@Qualifier("smsNotificationService")` annotation next to the dependency in your constructor to explicitly tell Spring exactly which implementation bean by name you want it to inject.

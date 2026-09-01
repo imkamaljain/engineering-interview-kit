@@ -1,0 +1,65 @@
+---
+title: "Stop-the-World"
+description: "Understanding Stop-the-World in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "JVM & Memory"
+order: 12
+---
+
+## TL;DR
+
+- **Stop-The-World (STW)** is a mandatory pause in a Java application where the JVM completely suspends **all** active application threads to perform Garbage Collection.
+- During this pause, the application is literally frozen and cannot respond to any requests.
+- Minimizing STW pauses is the primary goal of modern Garbage Collectors.
+
+## Concept
+
+Why must the JVM stop the world? 
+Imagine a cleaner trying to sweep a living room floor, but a family is actively walking around, moving furniture, and dropping more trash. The cleaner can't do their job accurately.
+
+When the Garbage Collector runs the **Mark** phase, it builds a map of all live objects. If application threads are allowed to run simultaneously, they might change object references (e.g., Thread A makes Object X point to Object Y) *while* the GC is scanning. The GC's map would instantly become corrupt, potentially causing it to delete an object that is actually still in use (causing a catastrophic crash).
+Furthermore, during **Compaction**, the GC moves objects to new memory addresses. If an application thread is running, it might try to read an object from the old address, reading raw garbage data. 
+
+Therefore, the JVM must freeze all application threads.
+
+## Examples
+
+```java
+public class StopTheWorldDemo {
+    public static void main(String[] args) {
+        
+        // Simulating a high-frequency trading application
+        Thread tradingThread = new Thread(() -> {
+            while(true) {
+                // If a Full GC triggers, this thread is violently paused by the JVM!
+                // If the pause lasts 2 seconds, we miss 2 seconds of market data.
+                executeTrade(); 
+            }
+        });
+        tradingThread.start();
+        
+        // Simulating memory abuse that triggers GC
+        Thread memoryAbuser = new Thread(() -> {
+            List<byte[]> list = new ArrayList<>();
+            while(true) {
+                // Rapidly filling Heap to force Minor and Major GCs
+                list.add(new byte[1024 * 1024]); 
+                if (list.size() > 1000) list.clear();
+            }
+        });
+        memoryAbuser.start();
+    }
+    
+    static void executeTrade() {}
+}
+```
+
+## Interview Questions
+
+Q: Do Minor GCs cause Stop-The-World pauses?
+A: Yes. **Every** type of Garbage Collection (Minor, Major, Full) requires a Stop-The-World pause. The difference is the *duration*. A Minor GC (cleaning only the Young Generation) usually completes in 1 to 5 milliseconds, which is imperceptible to humans. A Full GC on a massive 100GB Heap might cause a Stop-The-World pause of 5 to 10 seconds, severely impacting user experience.
+
+Q: How do modern Garbage Collectors minimize STW pauses?
+A: Modern GCs like **G1GC**, **ZGC**, and **Shenandoah** achieve incredibly low pause times (under 1 millisecond for ZGC!). They do this by performing the vast majority of the marking and compacting work *concurrently* alongside the application threads. They use highly advanced techniques (like load barriers and colored pointers) to intercept application reads/writes, allowing the GC and the app to safely modify memory at the same time, reducing the mandatory STW pause to an absolute minimum.

@@ -1,0 +1,61 @@
+---
+title: "Atomic Variables"
+description: "Understanding Atomic Variables in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Multithreading & Concurrency"
+order: 12
+---
+## TL;DR
+
+- **Atomic Variables** (e.g., `AtomicInteger`, `AtomicReference`) belong to the `java.util.concurrent.atomic` package.
+- They allow you to perform thread-safe, lock-free operations on single variables.
+- They rely on a low-level hardware instruction called **Compare-And-Swap (CAS)**.
+
+## Concept
+
+To increment a counter safely in a multithreaded environment, you normally have to use `synchronized`. However, locking and unlocking threads is computationally heavy (involving the OS). 
+
+Atomic variables provide a lightweight, **Lock-Free** alternative. When you call `atomicInt.incrementAndGet()`, it doesn't lock the thread. Instead, it uses a CPU instruction (Compare-And-Swap). 
+CAS essentially says: *"I read the value as 5. I want to change it to 6. CPU, check if the memory is still exactly 5. If yes, change it to 6. If another thread snuck in and changed it to 7, fail."* 
+If it fails, the Atomic variable just loops (spins) and tries again. Because there are no OS-level locks involved, it is extremely fast.
+
+## Examples
+
+```java
+import java.util.concurrent.atomic.AtomicInteger;
+
+public class AtomicExample {
+    
+    // Thread-safe integer without using synchronized
+    private static AtomicInteger counter = new AtomicInteger(0);
+    
+    public static void main(String[] args) throws InterruptedException {
+        
+        Runnable task = () -> {
+            for (int i = 0; i < 1000; i++) {
+                // Safely increments the value atomically
+                counter.incrementAndGet(); 
+            }
+        };
+        
+        Thread t1 = new Thread(task);
+        Thread t2 = new Thread(task);
+        
+        t1.start(); t2.start();
+        t1.join(); t2.join();
+        
+        // Will exactly be 2000. No race conditions!
+        System.out.println("Final Count: " + counter.get()); 
+    }
+}
+```
+
+## Interview Questions
+
+Q: What is the ABA Problem in CAS?
+A: The **ABA Problem** occurs when a thread reads a variable (value A). Before it can perform the CAS operation, another thread changes the value to B, and then a third thread changes it *back* to A. The original thread's CAS operation succeeds because the value is currently A, completely unaware that the state was modified in the interim. Java solves this with `AtomicStampedReference`, which attaches an integer stamp (version number) to the reference.
+
+Q: When should you use `LongAdder` instead of `AtomicLong`?
+A: Java 8 introduced `LongAdder`. If you have a highly-contended counter (e.g., thousands of threads constantly incrementing web traffic hits), `AtomicLong` suffers from performance degradation because all threads are fighting to update the exact same memory address (causing continuous CAS failures and CPU spinning). `LongAdder` creates multiple internal cells (variables) to spread the contention, and simply sums them up when you call `.sum()`. It is drastically faster under massive contention.

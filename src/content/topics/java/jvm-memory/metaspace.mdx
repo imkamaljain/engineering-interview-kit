@@ -1,0 +1,56 @@
+---
+title: "Metaspace"
+description: "Understanding Metaspace in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "JVM & Memory"
+order: 6
+---
+## TL;DR
+
+- **Metaspace** is the memory area in the JVM that stores Class metadata (class definitions, method bytecode, static variables, etc.).
+- Prior to Java 8, this was called the **PermGen** (Permanent Generation) and it lived inside the JVM Heap.
+- In Java 8, PermGen was removed. Metaspace replaces it and is allocated in **Native OS Memory**, not the JVM Heap.
+
+## Concept
+
+When the Class Loader loads a `.class` file, it has to store the blueprint somewhere. It stores it in the **Method Area** (which is a logical concept in the JVM specification).
+
+### PermGen (Java 7 and earlier)
+Historically, the Method Area was implemented as "PermGen". It was a fixed-size contiguous block of memory inside the JVM Heap. Because its size was fixed at startup (e.g., `-XX:MaxPermSize=256m`), applications that dynamically loaded thousands of classes (like Spring or Hibernate) would frequently crash with `java.lang.OutOfMemoryError: PermGen space`.
+
+### Metaspace (Java 8+)
+To solve this, Java 8 deleted PermGen entirely. It was replaced by **Metaspace**. The critical difference is that Metaspace is allocated out of the **Native Operating System Memory**. By default, it dynamically auto-scales. If your application loads more classes, Metaspace just requests more RAM from the OS, virtually eliminating the infamous PermGen OutOfMemoryErrors.
+
+## Examples
+
+```java
+import java.util.ArrayList;
+import java.util.List;
+
+public class MetaspaceDemo {
+    
+    // This static variable's reference is stored in the Metaspace.
+    // However, the actual ArrayList Object is still created on the Heap!
+    public static List<String> globalCache = new ArrayList<>();
+    
+    public static void main(String[] args) {
+        
+        // This is a normal object. It goes to the Heap.
+        MetaspaceDemo demo = new MetaspaceDemo();
+        
+        System.out.println("Notice that you no longer see PermGen errors in modern Java.");
+        // To artificially limit Metaspace and force an OOM, you can use the JVM argument:
+        // -XX:MaxMetaspaceSize=10m
+    }
+}
+```
+
+## Interview Questions
+
+Q: If Metaspace uses Native Memory, can it crash the entire computer?
+A: Yes, theoretically. Because Metaspace defaults to an unlimited maximum size, a severe class-loading memory leak could cause the JVM to consume 100% of the host machine's physical RAM, causing the OS to crash or aggressively kill processes. To prevent this in production environments, it is best practice to set a hard limit using `-XX:MaxMetaspaceSize`.
+
+Q: Are static variables stored in Metaspace?
+A: Yes. The references for `static` variables are stored in Metaspace because they belong to the Class, not an instance of the Class. However, if the static variable is an object (`static List<String> list = new ArrayList()`), the reference is in Metaspace, but the actual `ArrayList` object itself is still instantiated on the standard Heap.

@@ -1,0 +1,69 @@
+---
+title: "Externalizable"
+description: "Understanding Externalizable in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "I/O & Serialization"
+order: 12
+---
+## TL;DR
+
+- `Externalizable` is a sub-interface of `Serializable` (`public interface Externalizable extends Serializable`).
+- While `Serializable` relies on the JVM's slow, reflection-based internal engine to serialize an object, `Externalizable` gives **you** complete control over the serialization process.
+- You must manually implement the `writeExternal()` and `readExternal()` methods to read and write bytes.
+
+## Concept
+
+Standard Serialization is notoriously slow and creates bloated byte streams because the JVM includes massive amounts of metadata (class names, field types) to safely restore the object via Reflection.
+
+If performance and network bandwidth are absolutely critical, you can implement `Externalizable`. 
+The JVM will not use reflection. Instead, it will call your `writeExternal` method. You manually write only the exact raw data needed (e.g., just an integer and a String). This creates a highly optimized, compact byte array.
+
+However, during deserialization, because the JVM doesn't use Reflection to bypass constructors, **an Externalizable class MUST have a public no-argument constructor!** The JVM calls this constructor first, and then calls your `readExternal()` method to let you populate the fields.
+
+## Examples
+
+```java
+import java.io.*;
+
+public class UserSession implements Externalizable {
+    
+    private int sessionId;
+    private String username;
+    
+    // REQUIRED: Must have a public no-arg constructor!
+    public UserSession() { }
+    
+    public UserSession(int sessionId, String username) {
+        this.sessionId = sessionId;
+        this.username = username;
+    }
+
+    // You control EXACTLY what gets written to the stream
+    @Override
+    public void writeExternal(ObjectOutput out) throws IOException {
+        out.writeInt(sessionId);
+        out.writeUTF(username);
+    }
+
+    // You control EXACTLY how it gets read back
+    @Override
+    public void readExternal(ObjectInput in) throws IOException, ClassNotFoundException {
+        // Must be read in the EXACT same order they were written!
+        this.sessionId = in.readInt();
+        this.username = in.readUTF();
+    }
+}
+```
+
+## Interview Questions
+
+Q: What are the main differences between `Serializable` and `Externalizable`?
+A: 1. **Control:** `Serializable` is automatic (JVM handles it). `Externalizable` is manual (you write the logic).
+2. **Performance:** `Externalizable` is significantly faster and produces much smaller payloads because it skips reflection and metadata.
+3. **Constructors:** `Serializable` completely bypasses constructors during deserialization. `Externalizable` **requires** a public no-arg constructor, which it calls before invoking `readExternal()`.
+4. **Transient:** The `transient` keyword works automatically with `Serializable`. It is completely ignored in `Externalizable` (since you manually choose what to write anyway).
+
+Q: Is `Externalizable` widely used today?
+A: No. While it solves the performance problems of `Serializable`, modern Java applications have largely abandoned Java's built-in binary serialization entirely. Frameworks like Protocol Buffers (gRPC), Avro, or JSON libraries (Jackson) offer cross-language compatibility, schemas, and even better performance than `Externalizable`.

@@ -1,0 +1,52 @@
+---
+title: "G1 Garbage Collector"
+description: "Understanding G1 Garbage Collector in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Garbage Collection"
+order: 9
+---
+## TL;DR
+
+- **G1GC (Garbage-First Garbage Collector)** is the default GC in Java 9 and above.
+- It abandons the traditional massive contiguous Young/Old regions. Instead, it divides the Heap into hundreds of tiny **Regions** (usually 1MB to 32MB each).
+- It is designed to provide **predictable pause times** (e.g., "Do not pause my app for more than 200ms").
+
+## Concept
+
+In older GCs (like Parallel GC), the Old Generation was one massive contiguous block (e.g., 8GB). Cleaning and compacting an 8GB block required a 4-second Stop-The-World pause. You couldn't stop it halfway through.
+
+**G1GC** solves this by cutting the Heap into thousands of small, equal-sized regions. 
+Some regions are logically designated as "Eden", some as "Survivor", and some as "Old".
+
+When G1GC needs to perform a Mixed GC (cleaning the Old Generation), it analyzes all the Old regions. It calculates which regions have the *most* garbage (hence the name **Garbage-First**).
+If your target pause time is 200ms, G1GC knows it doesn't have time to clean the entire Old Generation. It calculates: *"I can only clean 40 regions in 200ms."* It picks the 40 regions with the absolute most garbage, copies the few surviving objects to a new region, and wipes the 40 regions clean. 
+
+## Examples
+
+```bash
+# How to enable and tune G1GC from the command line
+
+# Use G1GC (Default in Java 9+, but good to be explicit in Java 8)
+java -XX:+UseG1GC \
+
+  # This is the magic flag! You tell G1GC your latency SLA.
+  # G1GC will adjust its region sizes and collection frequency
+  # to guarantee it NEVER pauses the app for more than 200ms.
+  -XX:MaxGCPauseMillis=200 \
+  
+  # Tell G1GC to start concurrent background marking when the 
+  # entire Heap becomes 45% full. (Default is 45).
+  -XX:InitiatingHeapOccupancyPercent=45 \
+  
+  -jar my-application.jar
+```
+
+## Interview Questions
+
+Q: What are "Humongous" objects in G1GC?
+A: Because G1GC divides the heap into fixed-size regions (e.g., 2MB), what happens if you instantiate a massive 5MB `byte[]` array? G1GC treats objects larger than 50% of a region size as **Humongous Objects**. Instead of putting them in Eden, it allocates them directly into specialized contiguous "Humongous Regions". Humongous objects bypass the Young generation entirely and are very expensive for G1 to manage, so creating massive arrays is an anti-pattern when using G1GC.
+
+Q: Does G1GC completely eliminate Full GCs?
+A: No. G1GC performs its Old Generation cleanup concurrently in the background (Mixed GC). However, if your application allocates new objects faster than G1GC can clean up the old ones, the Heap will eventually hit 100% capacity. When this happens, G1GC throws its hands up in defeat, stops the entire application, and falls back to a massive, single-threaded **Full GC** to save the JVM from crashing. This is called a "Concurrent Mode Failure".

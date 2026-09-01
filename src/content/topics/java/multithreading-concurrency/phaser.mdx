@@ -1,0 +1,74 @@
+---
+title: "Phaser"
+description: "Understanding Phaser in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Multithreading & Concurrency"
+order: 27
+---
+## TL;DR
+
+- **`Phaser`** (Java 7) is the ultimate, most flexible synchronization barrier.
+- It combines and entirely replaces the functionality of both `CountDownLatch` and `CyclicBarrier`.
+- Unlike the others, a Phaser allows threads to **dynamically register and deregister** themselves at any time during execution.
+
+## Concept
+
+A `CountDownLatch` is rigid: you set it to 5, and it stays 5. 
+But what if you have a complex algorithmic pipeline where the number of worker threads changes continuously? 
+Phase 1 might require 3 threads. Once Phase 1 finishes, 2 threads might quit, and 5 new threads might join for Phase 2.
+
+A `Phaser` tracks the current "Phase" (an integer starting at 0). Threads can call `phaser.register()` to say "Wait for me too!", or `phaser.arriveAndDeregister()` to say "I'm done, don't wait for me in the next phase." 
+The phase only advances when all currently registered parties arrive.
+
+## Examples
+
+```java
+import java.util.concurrent.Phaser;
+
+public class PhaserExample {
+    public static void main(String[] args) {
+        
+        Phaser phaser = new Phaser(1); // Register the main thread
+        
+        System.out.println("Phase " + phaser.getPhase() + " started.");
+        
+        // Spawn 3 worker threads
+        for (int i = 0; i < 3; i++) {
+            phaser.register(); // Dynamically tell Phaser to expect +1 thread
+            new Thread(new Worker(phaser)).start();
+        }
+        
+        // Main thread arrives and waits for the 3 workers to finish Phase 0
+        phaser.arriveAndAwaitAdvance(); 
+        System.out.println("Phase " + phaser.getPhase() + " completed by everyone!");
+        
+        // Main thread no longer wishes to participate in future phases
+        phaser.arriveAndDeregister(); 
+    }
+}
+
+class Worker implements Runnable {
+    private Phaser phaser;
+    Worker(Phaser p) { this.phaser = p; }
+    
+    public void run() {
+        System.out.println(Thread.currentThread().getName() + " working...");
+        try { Thread.sleep(1000); } catch (Exception e) {}
+        
+        // Signal arrival and wait for others to finish the phase
+        phaser.arriveAndAwaitAdvance();
+    }
+}
+```
+
+## Interview Questions
+
+Q: When should I use `Phaser` instead of `CyclicBarrier`?
+A: If you know exactly how many threads you have at startup, and that number will never change, use `CountDownLatch` (for one-off) or `CyclicBarrier` (for loops). They are simpler and slightly faster. 
+Use `Phaser` exclusively when the number of participating threads is dynamic (unknown at startup, or threads are added/removed dynamically during execution). 
+
+Q: What does `arrive()` do versus `arriveAndAwaitAdvance()`?
+A: - `arriveAndAwaitAdvance()`: The thread says "I am here", and then completely blocks and waits for all other registered threads to also arrive before moving to the next line of code (like a Barrier).
+- `arrive()`: The thread says "I am here", decrements the counter, but *does not block*. It instantly continues executing its code while the other threads are still working.

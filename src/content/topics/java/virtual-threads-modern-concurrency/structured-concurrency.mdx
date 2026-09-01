@@ -1,0 +1,59 @@
+---
+title: "Structured Concurrency"
+description: "Understanding Structured Concurrency in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Virtual Threads & Modern Concurrency"
+order: 5
+---
+## TL;DR
+
+- **Structured Concurrency** aligns the lifetime of concurrent threads with the lexical scope of your code blocks.
+- If a parent task fails or is interrupted, all its child tasks are automatically canceled.
+- It eliminates thread leaks and makes concurrent code as readable as sequential code.
+
+## Concept
+
+Without Structured Concurrency, if you launch a thread via `CompletableFuture` or `ExecutorService`, it is "fire and forget." If the method that launched the thread throws an exception and exits, the thread you launched keeps running independently in the background. This unstructured "goto" style of concurrency creates severe memory leaks and zombie tasks.
+
+Structured Concurrency (via `StructuredTaskScope`) introduces the concept that **threads should have a strict parent-child hierarchy**. You open a scope (like a `try` block), fork several child threads within it, and join them. Execution cannot leave the scope until all child threads have either succeeded or been explicitly cancelled. 
+
+## Examples
+
+```java
+import java.util.concurrent.StructuredTaskScope;
+
+public class StructuredDemo {
+    
+    // We want to fetch weather and news concurrently.
+    // If EITHER fails, we don't want to wait for the other. We want to cancel immediately.
+    public DashboardData getDashboard() throws InterruptedException, ExecutionException {
+        
+        // ShutdownOnFailure automatically cancels all other subtasks if one throws an exception.
+        try (var scope = new StructuredTaskScope.ShutdownOnFailure()) {
+            
+            // Fork Virtual Threads for each subtask
+            var weatherTask = scope.fork(() -> fetchWeather());
+            var newsTask = scope.fork(() -> fetchNews());
+            
+            // Wait for both to finish (or one to fail)
+            scope.join();
+            
+            // If any task failed, propagate the exception back to the caller
+            scope.throwIfFailed();
+            
+            // Safely retrieve the values
+            return new DashboardData(weatherTask.get(), newsTask.get());
+        }
+    }
+}
+```
+
+## Interview Questions
+
+Q: How does Structured Concurrency handle timeouts?
+A: You can easily apply a timeout to the entire scope using `scope.joinUntil(Instant)`. If the timeout is reached before the tasks complete, the scope automatically interrupts all running child threads and throws a `TimeoutException`. This is vastly easier than manually tracking and interrupting futures.
+
+Q: Why was StructuredTaskScope designed alongside Virtual Threads?
+A: Because Structured Concurrency encourages you to fork a new thread for every single sub-task (e.g., querying 3 different tables? Fork 3 threads!). If you did this with heavy OS threads, you would instantly run out of memory. Structured Concurrency assumes that threads are virtually free to create—which is exactly what Virtual Threads provide.

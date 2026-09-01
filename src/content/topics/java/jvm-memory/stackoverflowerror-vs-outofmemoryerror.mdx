@@ -1,0 +1,59 @@
+---
+title: "StackOverflowError vs OutOfMemoryError"
+description: "Understanding StackOverflowError vs OutOfMemoryError in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "JVM & Memory"
+order: 15
+---
+## TL;DR
+
+- Both are subclasses of `java.lang.Error` (not `Exception`), meaning they indicate severe, unrecoverable JVM failure.
+- **`StackOverflowError`:** Occurs when a Thread's Call Stack memory is completely exhausted, almost always caused by infinite recursion.
+- **`OutOfMemoryError`:** Occurs when the JVM's Heap memory or Metaspace is completely full, caused by creating too many objects or a memory leak.
+
+## Concept
+
+### StackOverflowError
+Every thread has a small, private Stack. Every time a method is called, a new "Frame" (holding local variables and return addresses) is pushed onto this Stack. If a method calls itself indefinitely, the Stack grows until it hits the memory limit set by the OS (or the `-Xss` JVM flag), throwing a `StackOverflowError`. 
+
+### OutOfMemoryError
+The Heap is a massive shared memory area where objects live. If you load 10 million rows from a database into a `List` in RAM, and the JVM is only allocated 1GB of Heap space (`-Xmx1G`), the JVM won't be able to allocate memory for the new objects. The Garbage Collector will desperately try to clean up space, but if everything is strongly referenced, it will fail and throw an `OutOfMemoryError`.
+
+## Examples
+
+```java
+public class ErrorsDemo {
+    
+    // Causes StackOverflowError
+    public static void recursiveMethod() {
+        // Missing a base case!
+        recursiveMethod(); 
+    }
+    
+    // Causes OutOfMemoryError (Heap space)
+    public static void createMemoryLeak() {
+        List<byte[]> memoryHog = new java.util.ArrayList<>();
+        while(true) {
+            // Allocate 10MB of memory in every loop iteration
+            memoryHog.add(new byte[10 * 1024 * 1024]);
+        }
+    }
+
+    public static void main(String[] args) {
+        // Uncomment one to crash the JVM:
+        
+        // recursiveMethod(); 
+        // createMemoryLeak();
+    }
+}
+```
+
+## Interview Questions
+
+Q: Can you catch an `OutOfMemoryError`?
+A: Yes, technically you can write `catch (OutOfMemoryError e)`. However, it is a terrible practice. When this error is thrown, the JVM is in a highly unstable state. There is virtually no memory left even to execute the code *inside* the catch block (creating the Exception object itself requires memory!). You should never attempt to catch or recover from an `Error`.
+
+Q: What does `OutOfMemoryError: GC Overhead limit exceeded` mean?
+A: This is a specific type of OOM. It occurs when the JVM is spending 98% of its CPU time doing Garbage Collection, but is successfully recovering less than 2% of the Heap memory. It means the JVM is in a "Death Spiral", constantly pausing the application to clean up memory but failing to do so. The JVM throws this error as a fail-safe to kill the application rather than letting it hang indefinitely.

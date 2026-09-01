@@ -1,0 +1,68 @@
+---
+title: "Young vs Old Generation"
+description: "Understanding Young vs Old Generation in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Garbage Collection"
+order: 5
+---
+## TL;DR
+
+The Java Heap is fundamentally split into two massive partitions:
+- **Young Generation:** Divided into **Eden** and two **Survivor spaces (S0, S1)**. All new objects are born here. Cleaned by Minor GCs.
+- **Old Generation (Tenured):** Holds objects that survived many Minor GCs. Cleaned by Major GCs.
+
+## Concept
+
+### 1. The Young Generation
+When you write `new Object()`, the JVM places it in the **Eden Space** of the Young Generation. 
+When Eden gets full, a Minor GC triggers. 
+1. Live objects in Eden are copied to **Survivor Space 0 (S0)**.
+2. Eden is wiped clean.
+3. The next time Eden gets full, live objects in Eden *and* S0 are copied to **Survivor Space 1 (S1)**.
+4. Eden and S0 are wiped clean. 
+Objects bounce back and forth between S0 and S1. This "copying" inherently compacts the memory without needing a complex algorithm!
+
+### 2. The Old Generation (Tenured Space)
+Every time an object survives a bounce between Survivor spaces, its "Age" increases. When its age reaches a threshold (the `MaxTenuringThreshold`, default is usually 15), the JVM says: *"This object isn't dying. Stop bouncing it around."* 
+It is promoted and moved permanently to the **Old Generation**.
+
+## Examples
+
+```java
+public class GenerationsDemo {
+    
+    // Lives forever. Will eventually end up in the Old Generation.
+    static List<byte[]> cache = new ArrayList<>();
+    
+    public static void main(String[] args) {
+        
+        for (int i = 0; i < 100; i++) {
+            
+            // 1. Allocated in EDEN space.
+            byte[] temporaryData = new byte[1024]; 
+            
+            // 2. Minor GC triggers! 'temporaryData' is already unreachable.
+            // It is wiped from EDEN. It never makes it to a Survivor space.
+            
+            // 3. Allocated in EDEN.
+            byte[] cachedData = new byte[1024];
+            cache.add(cachedData);
+            
+            // 4. Minor GC triggers! 'cachedData' is heavily referenced by 'cache'.
+            // It survives. It is moved to Survivor 0 (Age 1).
+            // Many loops later, it bounces to Survivor 1 (Age 2), S0 (Age 3)...
+            // Eventually (Age 15), it is promoted to the OLD GENERATION.
+        }
+    }
+}
+```
+
+## Interview Questions
+
+Q: Why are there TWO Survivor spaces (S0 and S1)?
+A: To prevent memory fragmentation in the Young Generation without using an expensive Compaction algorithm. If there was only one Survivor space, Eden survivors would be placed randomly inside it, creating Swiss-cheese memory gaps over time. By having two, the JVM can simply take *everything* alive in S0, pack them tightly into S1 side-by-side, and then instantly erase 100% of S0. At any given time, one Survivor space is always completely empty.
+
+Q: What is the `MaxTenuringThreshold`?
+A: It is a JVM flag (`-XX:MaxTenuringThreshold`) that determines how many Minor GCs an object must survive in the Young Generation before being promoted to the Old Generation. Setting it to 0 means all surviving objects instantly go to the Old Generation (bypassing Survivor spaces entirely), which can cause the Old Generation to fill up too fast and trigger catastrophic Full GCs.

@@ -1,0 +1,65 @@
+---
+title: "Memory Leaks"
+description: "Understanding Memory Leaks in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "JVM & Memory"
+order: 14
+---
+## TL;DR
+
+- A **Memory Leak** in Java occurs when the application unintentionally holds **Strong References** to objects that are no longer needed.
+- Because a strong reference still exists, the Garbage Collector refuses to delete the object.
+- Over time, these useless objects accumulate, filling the Heap and causing a fatal `java.lang.OutOfMemoryError`.
+
+## Concept
+
+Unlike C++, where memory leaks happen because a developer forgets to call `free()`, Java memory leaks are purely logical errors. The developer puts an object into a data structure and forgets to remove it.
+
+### Common Causes of Memory Leaks:
+1. **Static Collections:** A `static List` or `static Map` lives for the entire lifespan of the JVM. If you continuously add objects to a static map and never remove them, the map will grow infinitely until the server crashes.
+2. **Unclosed Resources:** Failing to close database `Connection`, `ResultSet`, or `InputStream` objects.
+3. **Improper `equals()` and `hashCode()`:** If you use a custom object as a key in a `HashMap` but forget to override `equals/hashCode`, the Map cannot find the object again to overwrite or remove it. Every `put()` creates a brand new entry. The Map grows infinitely.
+4. **ThreadLocals:** In web servers (like Tomcat), threads are pooled and reused. If you set a `ThreadLocal` variable and forget to call `.remove()` at the end of the HTTP request, that data remains permanently glued to the pooled thread, leaking memory.
+
+## Examples
+
+```java
+import java.util.ArrayList;
+import java.util.List;
+
+public class MemoryLeakExample {
+    
+    // STATIC collection. Exists for the life of the application.
+    public static List<Double> massiveCache = new ArrayList<>();
+    
+    public void processTransaction() {
+        // A developer intends this to be temporary data for logging
+        Double transactionData = Math.random();
+        
+        massiveCache.add(transactionData);
+        
+        // BUG: The developer forgot to call massiveCache.remove()!
+        // Because 'massiveCache' holds a strong reference to the Double, 
+        // the Garbage Collector is powerless. It will never be cleaned up.
+    }
+    
+    public static void main(String[] args) {
+        MemoryLeakExample app = new MemoryLeakExample();
+        while (true) {
+            // This infinite loop will eventually crash with OutOfMemoryError
+            app.processTransaction(); 
+        }
+    }
+}
+```
+
+## Interview Questions
+
+Q: How do you diagnose and fix a Memory Leak in production?
+A: If a server crashes with an `OutOfMemoryError`, you configure the JVM with the flag `-XX:+HeapDumpOnOutOfMemoryError`. This tells the JVM to save a massive `.hprof` file to the hard drive exactly at the moment it crashes. 
+You then download this Heap Dump file and open it in a tool like **Eclipse MAT (Memory Analyzer Tool)** or **VisualVM**. The tool will analyze the millions of objects in the dump and explicitly highlight the "Leak Suspects" (e.g., "This specific HashMap occupies 85% of your Heap"). You trace the HashMap back to your source code and implement proper removal logic.
+
+Q: Why does a memory leak cause CPU usage to spike to 100% before crashing?
+A: When the Heap is 95% full of leaked objects, the JVM panics. It triggers a heavy **Full GC** to try and free up space. The Full GC pauses the app (Stop-The-World), scans the entire Heap, but realizes it can't delete anything because everything is strongly referenced. It frees 0 bytes. The application resumes, instantly tries to allocate memory, and hits the 95% threshold again. Another Full GC triggers. The JVM enters a **GC Death Spiral**, spending 99% of its CPU power repeatedly running useless Garbage Collections, causing CPU monitors to spike to 100% while the application itself performs zero actual work.

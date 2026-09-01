@@ -1,0 +1,67 @@
+---
+title: "Mark and Compact"
+description: "Understanding Mark and Compact in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Garbage Collection"
+order: 3
+---
+## TL;DR
+
+- **Mark-and-Compact** is an evolution of the Mark-and-Sweep algorithm.
+- It solves the problem of **Memory Fragmentation** by physically moving surviving objects next to each other.
+- It requires updating all reference pointers to the new memory addresses, causing slightly longer Stop-The-World pauses.
+
+## Concept
+
+Standard "Mark and Sweep" leaves the memory Heap full of empty gaps. This is Memory Fragmentation. If you try to allocate a large array, the JVM will throw an `OutOfMemoryError` because it can't find a single contiguous gap large enough, even if the sum of all the tiny gaps is sufficient.
+
+To fix this, the JVM adds a third step: **Compact**.
+1. **Mark:** Find all live objects.
+2. **Sweep:** Delete dead objects.
+3. **Compact:** Take all surviving live objects and slide them down to the very beginning of the Heap memory space, packing them tightly together without any gaps between them.
+
+The result? The first half of the Heap is a solid block of live objects, and the second half is one massive, contiguous block of empty free space, ready for giant new allocations.
+
+## Examples
+
+```java
+public class MarkAndCompactDemo {
+    public static void main(String[] args) {
+        
+        // Imagine the Heap is 100 bytes long.
+        // We create a bunch of 10-byte objects.
+        Object a = new byte[10]; // Address 0-10
+        Object b = new byte[10]; // Address 10-20
+        Object c = new byte[10]; // Address 20-30
+        Object d = new byte[10]; // Address 30-40
+        
+        // We delete B and D
+        b = null;
+        d = null;
+        
+        // AFTER MARK AND SWEEP:
+        // Address 0-10: [A]
+        // Address 10-20: [EMPTY GAP]
+        // Address 20-30: [C]
+        // Address 30-40: [EMPTY GAP]
+        // We have 20 bytes of free space, but a 20-byte object won't fit!
+        
+        // AFTER COMPACTION:
+        // The JVM slides object 'C' down to fill the gap.
+        // Address 0-10: [A]
+        // Address 10-20: [C]
+        // Address 20-100: [MASSIVE FREE SPACE]
+        // A 20-byte object will now fit perfectly.
+    }
+}
+```
+
+## Interview Questions
+
+Q: Why does Compaction cause application pauses (Stop The World)?
+A: When the GC slides Object 'C' from Memory Address 20 down to Memory Address 10, every single variable in the application that was pointing to Object 'C' is now pointing to the wrong memory address! The JVM must carefully update all those references. If application threads were running during this process, they might try to read Object 'C' from the old address and get garbage data, crashing the app. Therefore, all application threads must be completely frozen while objects are moved and pointers are updated.
+
+Q: Do all Garbage Collectors use Compaction?
+A: Almost all modern ones do, but they use different strategies. For example, the **CMS (Concurrent Mark Sweep)** collector explicitly *did not* compact the Old Generation by default to avoid the heavy pause times, relying instead on a "Free List" to track holes. However, if fragmentation got too severe, it was forced to trigger a catastrophic "Full GC" to compact everything. Modern GCs like **G1GC** handle compaction incrementally in small chunks to keep pause times predictable.

@@ -1,0 +1,77 @@
+---
+title: "Mock vs Spy"
+description: "Understanding Mock vs Spy in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Testing"
+order: 5
+---
+## TL;DR
+
+- A **Mock** (`@Mock`) is a 100% fake object. All its methods do nothing and return `null`/default values unless explicitly stubbed.
+- A **Spy** (`@Spy`) is a wrapper around a *real* object. By default, it calls the real methods of the object, but you can selectively stub specific methods.
+
+## Concept
+
+### Mocks (Total Illusion)
+When you `mock(ArrayList.class)`, you get a completely hollow shell. If you call `mockList.add("Hello")`, nothing happens. If you then call `mockList.size()`, it returns `0`. The real `ArrayList` code is completely bypassed.
+
+### Spies (Partial Mocking)
+Sometimes, you want to test a real object but just intercept one specific method. 
+If you `spy(new ArrayList<>())`, you get a real list wrapped in a Mockito observer. 
+If you call `spyList.add("Hello")`, the real code executes, and the item is actually added. `spyList.size()` will return `1`. 
+However, you can say: `doReturn(100).when(spyList).size()`. Now, the `size()` method is hijacked and returns 100, but all other methods (like `add` or `get`) still execute the real Java code!
+
+## Examples
+
+```java
+import org.junit.jupiter.api.Test;
+import java.util.ArrayList;
+import java.util.List;
+import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assertions.*;
+
+public class MockVsSpyTest {
+
+    @Test
+    void testMock() {
+        // A Mock is totally fake. 
+        List<String> mockList = mock(ArrayList.class);
+        
+        mockList.add("one"); // Does nothing!
+        
+        // Returns 0, because the real add() never ran, and size() defaults to 0
+        assertEquals(0, mockList.size()); 
+    }
+
+    @Test
+    void testSpy() {
+        // A Spy wraps a real object instance.
+        List<String> realList = new ArrayList<>();
+        List<String> spyList = spy(realList);
+        
+        spyList.add("one"); // Calls the REAL add() method!
+        spyList.add("two");
+        
+        // Returns 2, because the real code is executing.
+        assertEquals(2, spyList.size()); 
+        
+        // STUBBING A SPY: Hijack just the size() method
+        doReturn(100).when(spyList).size();
+        
+        // The real list still only has 2 items, but our Spy lies and says 100!
+        assertEquals(100, spyList.size());
+    }
+}
+```
+
+## Interview Questions
+
+Q: Why do you use `doReturn().when()` for Spies instead of `when().thenReturn()`?
+A: This is a critical "gotcha" in Mockito.
+If you use the standard `when(spyList.size()).thenReturn(100)`, Java actually executes the real `spyList.size()` method *during the setup phase* before Mockito can intercept it. If the real method throws an exception (e.g., trying to read an uninitialized database), your test will crash during setup! 
+Using `doReturn(100).when(spyList).size()` tells Mockito to bypass the real method entirely during setup.
+
+Q: When should you use a Spy in practice?
+A: Spies should be used sparingly. They are considered a "code smell" if used heavily, as they often indicate a class is trying to do too many things (violating the Single Responsibility Principle). They are mostly used when testing legacy code where you cannot easily mock dependencies, so you spy on the class under test to hijack internal private/protected helper methods.

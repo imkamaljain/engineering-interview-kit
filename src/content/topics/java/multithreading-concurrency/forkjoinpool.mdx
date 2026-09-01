@@ -1,0 +1,67 @@
+---
+title: "ForkJoinPool"
+description: "Understanding ForkJoinPool in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Multithreading & Concurrency"
+order: 23
+---
+## TL;DR
+
+- **`ForkJoinPool`** (Java 7) is a specialized thread pool designed specifically for **Divide and Conquer** algorithms.
+- It is the engine that powers Java 8 Parallel Streams and CompletableFutures.
+- It utilizes a technique called **Work-Stealing** to maximize CPU utilization.
+
+## Concept
+
+In a standard Thread Pool, all threads share one massive global queue of tasks. In a `ForkJoinPool`, **every individual thread has its own private queue** (a double-ended queue, or Deque).
+
+When a massive task is submitted, a thread takes it and "Forks" it (splits it into two smaller sub-tasks), pushing them onto its own queue. It keeps splitting them until they are small enough to process.
+
+**Work-Stealing:** If Thread A finishes all the tasks in its private queue, it doesn't just sit idle. It looks at Thread B's queue and literally "steals" a task from the bottom of Thread B's queue! This guarantees that no CPU core ever sits idle while there is still work to be done.
+
+## Examples
+
+```java
+import java.util.concurrent.RecursiveTask;
+import java.util.concurrent.ForkJoinPool;
+
+// RecursiveTask returns a result. RecursiveAction does not.
+class FibonacciTask extends RecursiveTask<Integer> {
+    final int n;
+    FibonacciTask(int n) { this.n = n; }
+
+    @Override
+    protected Integer compute() {
+        if (n <= 1) return n;
+        
+        // Fork: Split the task into two sub-tasks
+        FibonacciTask f1 = new FibonacciTask(n - 1);
+        f1.fork(); // Pushes to the thread's own queue
+        
+        FibonacciTask f2 = new FibonacciTask(n - 2);
+        
+        // Join: Wait for f1 to finish, while computing f2 on this thread
+        return f2.compute() + f1.join(); 
+    }
+}
+
+public class ForkJoinExample {
+    public static void main(String[] args) {
+        ForkJoinPool pool = ForkJoinPool.commonPool();
+        
+        // Calculate the 10th Fibonacci number
+        int result = pool.invoke(new FibonacciTask(10));
+        System.out.println("Result: " + result); // 55
+    }
+}
+```
+
+## Interview Questions
+
+Q: When should you NOT use a `ForkJoinPool`?
+A: You should **never** use a `ForkJoinPool` for tasks that involve blocking I/O (like making HTTP calls, writing to files, or executing DB queries). `ForkJoinPool` is strictly optimized for heavy, purely mathematical/CPU-bound calculations. If a thread in a ForkJoinPool gets blocked waiting for a database response, it cannot participate in Work-Stealing, and the entire framework's performance collapses. Use a standard `FixedThreadPool` for I/O tasks.
+
+Q: What is the `ForkJoinPool.commonPool()`?
+A: It is a static, global ForkJoinPool that the JVM creates by default. Its size is exactly equal to `Runtime.getRuntime().availableProcessors() - 1`. All Parallel Streams and `CompletableFuture.supplyAsync()` calls execute in this single global pool by default. Because it is shared globally across your entire application, you must be extremely careful never to submit blocking tasks to it, or you will freeze all parallel streams application-wide.

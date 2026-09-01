@@ -1,0 +1,55 @@
+---
+title: "ZGC"
+description: "Understanding ZGC in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Garbage Collection"
+order: 10
+---
+## TL;DR
+
+- **ZGC (Z Garbage Collector)** is a highly advanced, ultra-low latency Garbage Collector introduced as an experimental feature in Java 11 (production-ready in Java 15).
+- It guarantees Stop-The-World pause times of **under 1 millisecond** (10ms in older versions).
+- It can handle massive Terabyte-sized heaps (up to 16TB) with zero impact on pause times!
+
+## Concept
+
+How is it possible to clean 16 Terabytes of memory in under 1 millisecond? 
+Because ZGC does almost everything **concurrently**.
+
+In standard GCs, when objects are moved (compacted) to a new memory address, the application must be completely frozen. If a thread tried to read an object while the GC was moving it, it would read a corrupted memory address and crash.
+
+ZGC uses a hardware-level trick called **Colored Pointers** and **Load Barriers**. 
+In ZGC, the memory address pointer itself contains extra metadata ("colors"). When an application thread tries to read an object, the JVM intercepts it (Load Barrier). If the object is currently being moved by the GC, the JVM instantly updates the thread's pointer to the new address *before* handing the object to the thread. 
+This allows the GC and the application to physically run at the exact same time, moving objects around without ever needing to stop the world!
+
+## Examples
+
+```bash
+# How to enable ZGC from the command line
+
+# Java 15+ (Production ready)
+java -XX:+UseZGC \
+     -Xms128G \
+     -Xmx128G \
+     -jar massive-database-app.jar
+
+# Java 21 introduces Generational ZGC!
+# It combines the ultra-low latency of ZGC with the high throughput 
+# of generational memory segregation.
+java -XX:+UseZGC \
+     -XX:+ZGenerational \
+     -jar modern-app.jar
+```
+
+## Interview Questions
+
+Q: If ZGC is so perfect, why doesn't everyone use it instead of G1GC?
+A: There is a trade-off between **Latency** and **Throughput**. 
+ZGC provides incredible latency (no pauses), but because it constantly intercepts object reads with Load Barriers and runs heavily in the background, it consumes a significant amount of raw CPU power. A heavy batch-processing application (like generating a nightly financial report) doesn't care about microsecond latency; it just wants to finish ASAP. G1GC or Parallel GC will provide higher overall throughput (completing the job faster) than ZGC. 
+
+Q: What is the primary difference between ZGC and Shenandoah GC?
+A: Both are ultra-low latency concurrent collectors. 
+- **ZGC** was developed by Oracle and uses **Colored Pointers** (altering the 64-bit memory pointer metadata). Because it manipulates pointers directly, early versions of ZGC were completely incompatible with 32-bit Operating Systems or Compressed OOPs.
+- **Shenandoah** was developed by Red Hat (now integrated into OpenJDK). It achieves the same concurrent compaction using an extra forwarding pointer (Brooks Pointer) embedded directly inside the object's header. It does not manipulate the actual 64-bit pointer, making it compatible with more architectures.

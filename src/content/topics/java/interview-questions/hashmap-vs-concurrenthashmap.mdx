@@ -1,0 +1,57 @@
+---
+title: "HashMap vs ConcurrentHashMap"
+description: "Understanding HashMap vs ConcurrentHashMap in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Interview Questions"
+order: 5
+---
+
+## TL;DR
+
+- **`HashMap`** is fast but completely unsafe for multithreading. Concurrent modifications will cause data corruption or infinite loops.
+- **`ConcurrentHashMap`** is designed for highly concurrent multithreaded environments. It uses "Lock Striping" or fine-grained node-level locking to allow hundreds of threads to read and write simultaneously without blocking each other.
+
+## Concept
+
+If two threads try to call `.put()` on a standard `HashMap` at the same time, and they both try to modify the same bucket, the internal Linked List pointers get corrupted. In older versions of Java, this could literally create a circular Linked List, causing the server's CPU to permanently spike to 100% in an infinite loop!
+
+You *could* use `Collections.synchronizedMap()`, but that places one giant lock over the entire map. If Thread A is writing, Threads B through Z are completely frozen, destroying throughput.
+
+`ConcurrentHashMap` (Java 8+) uses an advanced algorithm where it only locks the *specific bucket (Node)* being modified. If Thread A is writing to bucket `[4]`, Thread B can simultaneously write to bucket `[12]` with zero locking contention! Furthermore, read operations (`.get()`) are completely lock-free.
+
+## Examples
+
+```java
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.Map;
+
+public class ConcurrentMapDemo {
+
+    public static void main(String[] args) {
+        Map<String, Integer> cache = new ConcurrentHashMap<>();
+
+        // Multiple threads can safely execute this concurrently
+        cache.put("user123", 100);
+
+        // Atomic Operations unique to ConcurrentHashMap
+        // "If user123 is already in the map, don't overwrite it!"
+        cache.putIfAbsent("user123", 500); 
+
+        // Safely updates a value atomically without race conditions
+        cache.computeIfPresent("user123", (key, val) -> val + 50);
+
+        System.out.println(cache.get("user123")); // Prints 150
+    }
+}
+```
+
+## Interview Questions
+
+Q: How did `ConcurrentHashMap` locking change between Java 7 and Java 8?
+A: - **Java 7:** Used "Segment Locking." The map was divided into 16 distinct segments, each protected by its own `ReentrantLock`. It allowed up to 16 threads to write concurrently.
+- **Java 8:** Abandoned segments. It now uses the `synchronized` keyword directly on the individual `Node` inside the bucket, along with Compare-And-Swap (CAS) operations for empty buckets. Because it locks at the individual bucket level, it supports vastly higher concurrency (thousands of threads) than Java 7.
+
+Q: Does `ConcurrentHashMap` allow `null` keys or values?
+A: No. Standard `HashMap` allows exactly one `null` key and multiple `null` values. `ConcurrentHashMap` throws a `NullPointerException` if you try to insert a `null` key or value. This is because `null` introduces ambiguity in a concurrent environment. If `map.get("A")` returns `null`, does it mean the key doesn't exist, or does it mean another thread explicitly mapped the key to `null`? In a single-threaded map, you can check `map.containsKey("A")`, but in a multithreaded map, the state could change between those two method calls.

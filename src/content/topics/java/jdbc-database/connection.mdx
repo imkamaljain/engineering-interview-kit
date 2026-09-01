@@ -1,0 +1,69 @@
+---
+title: "Connection"
+description: "Understanding Connection in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "JDBC & Database"
+order: 3
+---
+## TL;DR
+
+- The `java.sql.Connection` interface represents a physical network session with the database.
+- It is the factory used to create `Statement`, `PreparedStatement`, and `CallableStatement` objects.
+- Connections are extremely expensive to create and must always be closed, preferably using a `try-with-resources` block to prevent resource leaks.
+
+## Concept
+
+When you request a `Connection` via `DriverManager.getConnection()`, a tremendous amount of work happens:
+1. The driver establishes a physical TCP socket connection to the database server.
+2. The server performs a handshake and authenticates your credentials.
+3. The server allocates dedicated memory and a worker thread for your session.
+
+Because this process takes several milliseconds, you never want to open a new connection for every single query in a high-traffic application. (This is why we use Connection Pools). 
+The `Connection` object holds transaction state (autocommit settings) and acts as the gateway to send queries and receive results.
+
+## Examples
+
+```java
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.SQLException;
+
+public class ConnectionDemo {
+    
+    // The standard JDBC URL format: jdbc:<subprotocol>:<subname>
+    private static final String URL = "jdbc:postgresql://localhost:5432/mydb";
+    private static final String USER = "admin";
+    private static final String PASS = "secret";
+
+    public static void main(String[] args) {
+        
+        // 1. ALWAYS use Try-With-Resources to manage Connections.
+        // It guarantees that conn.close() is called, even if an exception occurs.
+        try (Connection conn = DriverManager.getConnection(URL, USER, PASS)) {
+            
+            System.out.println("Connection valid: " + conn.isValid(5));
+            
+            // 2. The Connection acts as a factory for statements
+            var stmt = conn.createStatement();
+            var prepStmt = conn.prepareStatement("SELECT * FROM users WHERE id = ?");
+            
+            // 3. The Connection manages Transaction settings
+            conn.setAutoCommit(false); // Begin manual transaction
+            
+        } catch (SQLException e) {
+            System.err.println("Database connection failed: " + e.getMessage());
+        }
+        // At this closing brace, conn.close() is automatically called!
+    }
+}
+```
+
+## Interview Questions
+
+Q: What happens if you forget to call `conn.close()`?
+A: You cause a **Connection Leak**. The database server will keep the physical socket and memory allocated for that session open. Eventually, the database server will reach its `max_connections` limit (e.g., 100 or 200). Once that limit is hit, the database will refuse any new connections, bringing your entire application down with a "Too many connections" error.
+
+Q: What is the `AutoCommit` mode?
+A: By default, every new JDBC `Connection` is created in auto-commit mode (`conn.setAutoCommit(true)`). This means every individual SQL statement you execute is instantly committed to the database as its own separate transaction. If you want to execute multiple SQL statements together as a single atomic transaction (all succeed or all fail), you must set it to `false`.

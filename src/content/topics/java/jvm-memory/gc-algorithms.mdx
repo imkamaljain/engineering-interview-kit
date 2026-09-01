@@ -1,0 +1,66 @@
+---
+title: "GC Algorithms"
+description: "Understanding GC Algorithms in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "JVM & Memory"
+order: 10
+---
+## TL;DR
+
+- The JVM uses various algorithms to manage memory efficiently. The foundational algorithm is **Mark-and-Sweep**.
+- **Mark Phase:** Traverses the object graph to identify which objects are still alive.
+- **Sweep Phase:** Deletes the unreferenced (dead) objects.
+- **Compact Phase:** Rearranges the remaining live objects to eliminate memory fragmentation.
+
+## Concept
+
+### 1. Reference Counting (Not used by Java)
+An old algorithm where every object has a counter. If a variable points to it, count = 1. If the variable is reassigned, count = 0, and the object is deleted. It fails catastrophically with "Circular References" (A points to B, B points to A; both counts are 1, but neither is accessible from the main app).
+
+### 2. Mark-and-Sweep (Used by Java)
+Java uses **GC Roots** (active threads, static variables, local variables on stacks). 
+During the **Mark** phase, the GC starts at the Roots and follows every single reference, painting every object it touches as "Alive". 
+During the **Sweep** phase, the GC scans the entire Heap. Any object that wasn't painted as "Alive" is immediately deleted. This easily solves the circular reference problem!
+
+### 3. Mark-Sweep-Compact
+Sweeping leaves random "holes" of empty space in the Heap (Fragmentation). If you need to allocate a massive Array, there might not be a single contiguous hole large enough, even though the total free memory is sufficient. The **Compact** phase slides all surviving live objects to the very beginning of the Heap, tightly packing them together, leaving one massive contiguous block of free space at the end.
+
+## Examples
+
+```java
+public class GcRootsExample {
+    
+    // STATIC VARIABLE: This is a GC Root!
+    // Anything this list holds will NEVER be garbage collected as long as the class is loaded.
+    static List<String> gcRootList = new ArrayList<>();
+    
+    public static void main(String[] args) {
+        
+        // LOCAL VARIABLE on the main thread's Stack: This is a GC Root!
+        String localStr = new String("I am alive!"); 
+        
+        // The Mark phase starts at 'localStr' and 'gcRootList'. 
+        // It traces everything they point to.
+        
+        localStr = null; 
+        
+        // The Mark phase starts at the roots. 'localStr' is null, so the String 
+        // "I am alive!" is never reached. It is not marked.
+        // The Sweep phase will delete it.
+    }
+}
+```
+
+## Interview Questions
+
+Q: What is a GC Root?
+A: A GC Root is a special object that serves as the starting point for the Garbage Collector's tracing algorithm (Mark-and-Sweep). The JVM assumes GC Roots are inherently "Alive". They typically include:
+- Local variables currently sitting on a thread's Stack.
+- Static variables stored in the Metaspace.
+- Active Java Threads.
+- JNI (Native) references.
+
+Q: Why is Compaction necessary?
+A: Compaction prevents **Memory Fragmentation**. If you create and destroy millions of small objects, the Heap becomes a Swiss cheese of tiny empty holes. If you then try to allocate a large 10MB array, the JVM will throw an `OutOfMemoryError` because it cannot find a single 10MB contiguous block of free space, even if the sum of all the tiny holes equals 500MB. Compaction solves this by sliding all live objects together.

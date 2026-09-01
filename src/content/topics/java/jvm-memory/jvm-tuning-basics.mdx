@@ -1,0 +1,51 @@
+---
+title: "JVM Tuning Basics"
+description: "Understanding JVM Tuning Basics in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "JVM & Memory"
+order: 16
+---
+## TL;DR
+
+JVM Tuning involves tweaking command-line flags to optimize how the JVM uses memory and performs Garbage Collection.
+- **`-Xms`**: Sets the initial Heap size.
+- **`-Xmx`**: Sets the maximum Heap size.
+- **`-Xss`**: Sets the Stack size for each thread.
+- **`-XX:+UseG1GC`**: Specifies the Garbage Collector algorithm to use.
+
+## Concept
+
+When you launch a Java application (`java -jar app.jar`), the JVM makes educated guesses about how much memory it should use based on the host OS. In production environments, relying on defaults is dangerous. 
+
+### Why Tune the Heap?
+If your server has 32GB of RAM, the default JVM might only allocate 8GB for the Heap. If your app needs 12GB, it will crash with an OutOfMemoryError, despite the physical server having 20GB of unused RAM! 
+Conversely, if you set `-Xmx` to 31GB on a 32GB server, the OS will run out of memory for its own background processes (or for Metaspace/Native Stacks) and the Linux OOM Killer will violently terminate your Java process without warning.
+
+### Best Practice: -Xms == -Xmx
+In high-performance production servers, it is standard practice to set the initial heap size (`-Xms`) and max heap size (`-Xmx`) to the exact same value. This prevents the JVM from constantly pausing the application to request more memory from the OS as the heap grows.
+
+## Examples
+
+```bash
+# Launching a Java application with tuned parameters
+
+java \
+  -Xms4g \
+  -Xmx4g \
+  -XX:MetaspaceSize=256m \
+  -XX:MaxMetaspaceSize=256m \
+  -XX:+UseG1GC \
+  -XX:MaxGCPauseMillis=200 \
+  -XX:+HeapDumpOnOutOfMemoryError \
+  -jar my-application.jar
+```
+
+## Interview Questions
+
+Q: What does `-XX:+HeapDumpOnOutOfMemoryError` do?
+A: It is the most critical flag for diagnosing memory leaks. If the JVM crashes with an OutOfMemoryError, this flag instructs the JVM to take a complete snapshot (Heap Dump) of every single object in memory at the exact moment of the crash, and save it to an `.hprof` file on the hard drive. You can then analyze this file later to see exactly which objects caused the leak.
+
+Q: If you give the JVM a 20GB Heap, is that always better than a 4GB Heap?
+A: No! In older Garbage Collectors (like Parallel GC), a larger heap is actually a massive liability. If it takes the GC 1 second to sweep a 4GB heap, it might take 5 seconds to sweep a 20GB heap. This results in massive 5-second Stop-The-World pauses that ruin application responsiveness. You must balance Heap size with acceptable GC pause times, or use modern concurrent collectors like ZGC that scale to Terabyte-sized heaps without penalty.

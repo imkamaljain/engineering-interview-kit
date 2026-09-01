@@ -1,0 +1,61 @@
+---
+title: "Full GC"
+description: "Understanding Full GC in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Garbage Collection"
+order: 8
+---
+## TL;DR
+
+- A **Full GC** is the ultimate, most aggressive garbage collection event. 
+- It cleans the entire JVM memory: **Young Generation**, **Old Generation**, and the **Metaspace**.
+- It acts as an emergency fail-safe, but it causes catastrophic **Stop-The-World** pauses.
+
+## Concept
+
+A Full GC is usually a sign that the JVM is struggling. It is a desperate attempt to free up memory before throwing an `OutOfMemoryError`.
+
+Common triggers for a Full GC:
+1. **Promotion Failure:** A Minor GC tries to promote objects from the Young to the Old Generation, but the Old Generation physically does not have enough free space to accept them. The JVM pauses everything and runs a Full GC.
+2. **Concurrent Mode Failure:** The Concurrent GC (like G1GC) is actively cleaning the Old Gen in the background, but the application is creating garbage faster than the GC can clean it. The JVM panics, stops the application entirely, and runs a Full GC.
+3. **Explicit Call:** Someone wrote `System.gc()` in the code.
+4. **Metaspace Full:** The application dynamically loads too many classes, filling the Metaspace.
+
+## Examples
+
+```java
+public class FullGCDemo {
+    public static void main(String[] args) {
+        
+        // Let's assume JVM is started with -Xmx50m (50MB Max Heap)
+        
+        List<Object> list = new ArrayList<>();
+        
+        try {
+            while (true) {
+                // We rapidly create objects. 
+                // Minor GCs will happen constantly.
+                // Objects will be promoted to the Old Generation.
+                list.add(new long[10000]); 
+                
+                // When Old Gen hits ~95% full, a FULL GC will trigger.
+                // The application will freeze completely as the JVM 
+                // frantically tries to compact the entire Heap.
+            }
+        } catch (OutOfMemoryError e) {
+            // The Full GC failed to free enough space. The JVM gives up.
+            System.out.println("JVM crashed: " + e.getMessage());
+        }
+    }
+}
+```
+
+## Interview Questions
+
+Q: Why is `System.gc()` considered an anti-pattern?
+A: Calling `System.gc()` is a "suggestion" to the JVM to run a Full GC. If the JVM accepts the suggestion, it will immediately trigger a Stop-The-World pause across the entire application to scan the entire Heap, even if the Heap is mostly empty. This destroys application throughput and latency. Memory management should be left entirely to the JVM's optimized heuristics. (Note: Many production JVMs run with the flag `-XX:+DisableExplicitGC` to intentionally ignore `System.gc()` calls).
+
+Q: How do you monitor if Full GCs are happening?
+A: You should monitor GC logs. You can enable them using `-Xlog:gc*` (Java 9+) or `-XX:+PrintGCDetails` (Java 8). In a healthy application, you should see thousands of fast Minor GCs and very rare Major/Full GCs. If your logs show Full GCs happening every few minutes, your application is suffering from a memory leak or your Heap is configured too small.

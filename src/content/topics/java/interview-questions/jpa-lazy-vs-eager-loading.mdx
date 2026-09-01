@@ -1,0 +1,61 @@
+---
+title: "JPA Lazy vs Eager Loading"
+description: "Understanding JPA Lazy vs Eager Loading in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Interview Questions"
+order: 29
+---
+
+## TL;DR
+
+- **Eager Loading:** When you load an entity from the database, all its related entities (children) are fetched *immediately* using a SQL JOIN.
+- **Lazy Loading:** Related entities are *not* fetched until you explicitly call their getter method (e.g., `user.getOrders()`). It is achieved using Hibernate Proxies.
+- **Rule of Thumb:** Default everything to LAZY. Use JOIN FETCH queries when you specifically need the children.
+
+## Concept
+
+If a `User` has a `List<Order>`, and you query the database for 100 Users, what should Hibernate do?
+If it uses **EAGER** loading, it will run a massive SQL query joining the Users and Orders tables, pulling down thousands of rows of Order data into RAM. This is terrible for performance if you only wanted to display the Users' names on a webpage!
+
+If it uses **LAZY** loading, Hibernate only queries the `users` table. Instead of putting a real `List<Order>` inside the User object, Hibernate injects a fake "Proxy" list. 
+If your code never calls `user.getOrders()`, no extra queries are run. If your code *does* call `user.getOrders()`, the Proxy intercepts the method call, pauses the thread, runs a quick `SELECT * FROM orders WHERE user_id = ?`, populates the real list, and returns it.
+
+## Examples
+
+```java
+import javax.persistence.*;
+import java.util.List;
+
+@Entity
+public class User {
+    
+    @Id
+    private Long id;
+    private String name;
+
+    // LAZY (Default for OneToMany / ManyToMany)
+    // Orders will not be loaded from DB until user.getOrders() is called.
+    @OneToMany(fetch = FetchType.LAZY, mappedBy = "user")
+    private List<Order> orders;
+
+    // EAGER (Default for ManyToOne / OneToOne)
+    // Profile will be instantly loaded via a SQL JOIN every single time a User is fetched.
+    @OneToOne(fetch = FetchType.EAGER)
+    private UserProfile profile;
+    
+    // getters/setters
+}
+```
+
+## Interview Questions
+
+Q: What causes a `LazyInitializationException`?
+A: A Hibernate Session (or Transaction) acts as the connection to the database. If you load a `User` entity, and then the Transaction closes (e.g., you return the `User` from the `@Service` layer to the `@RestController` layer), the database connection is closed. 
+If the controller then tries to convert the `User` to JSON, Jackson will call `user.getOrders()`. The Lazy Proxy wakes up and tries to run a SQL query, but the database connection is gone! This throws a `LazyInitializationException`.
+
+Q: If I default everything to LAZY, how do I load the children when I actually need them?
+A: You write a custom JPQL query using **`JOIN FETCH`**. 
+For example: `@Query("SELECT u FROM User u JOIN FETCH u.orders WHERE u.id = :id")`. 
+This overrides the global LAZY setting for this specific query only. It forces Hibernate to execute a single, efficient SQL JOIN to pull the User and all their Orders in one trip to the database.

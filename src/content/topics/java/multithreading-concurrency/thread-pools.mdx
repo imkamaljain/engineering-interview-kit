@@ -1,0 +1,67 @@
+---
+title: "Thread Pools"
+description: "Understanding Thread Pools in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Multithreading & Concurrency"
+order: 20
+---
+## TL;DR
+
+- A **Thread Pool** is a collection of pre-instantiated, reusable threads managed by an `ExecutorService`.
+- Thread pools eliminate the overhead of constantly creating and destroying threads.
+- The `Executors` utility class provides factory methods to create various types of thread pools.
+
+## Concept
+
+Under the hood, most thread pools are implemented via the `ThreadPoolExecutor` class. It manages a core pool size, a maximum pool size, a keep-alive time for idle threads, and a `BlockingQueue` where pending tasks wait.
+
+Java provides a utility class called `Executors` with static factory methods to quickly spawn pre-configured pools.
+
+### Common Thread Pools:
+1. **FixedThreadPool:** A pool with a fixed number of threads. If all threads are busy, new tasks wait in an unbounded queue.
+2. **CachedThreadPool:** A pool that creates new threads as needed, but reuses previously constructed threads when they become available. Idle threads are killed after 60 seconds. Good for many short-lived tasks.
+3. **SingleThreadExecutor:** A pool with exactly one thread. Guarantees that tasks execute sequentially.
+4. **ScheduledThreadPool:** A pool designed to execute tasks after a delay, or periodically.
+
+## Examples
+
+```java
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+
+public class ThreadPoolExample {
+    public static void main(String[] args) {
+        
+        // 1. Fixed Thread Pool (Good for CPU intensive / predictable loads)
+        ExecutorService fixedPool = Executors.newFixedThreadPool(4);
+        
+        // 2. Cached Thread Pool (Good for massive amounts of quick I/O tasks)
+        ExecutorService cachedPool = Executors.newCachedThreadPool();
+        
+        // 3. Single Thread Executor (Good for sequential queue processing)
+        ExecutorService singlePool = Executors.newSingleThreadExecutor();
+        
+        // 4. Scheduled Thread Pool (Good for cron jobs / timeouts)
+        ScheduledExecutorService scheduledPool = Executors.newScheduledThreadPool(2);
+        
+        scheduledPool.scheduleAtFixedRate(() -> {
+            System.out.println("Ping!");
+        }, 1, 3, TimeUnit.SECONDS); // Delay 1s, repeat every 3s
+        
+    }
+}
+```
+
+## Interview Questions
+
+Q: Why does Alibaba/SonarLint warn against using `Executors.newFixedThreadPool()` in production?
+A: If you look at the source code for `Executors.newFixedThreadPool()`, it utilizes an `LinkedBlockingQueue` with an **unbounded capacity** (`Integer.MAX_VALUE`). If your server receives 10 million requests suddenly, the thread pool will happily queue all 10 million tasks in memory, causing a catastrophic `OutOfMemoryError` (OOM). 
+In production, it is highly recommended to manually instantiate a `ThreadPoolExecutor` and pass in a bounded queue (e.g., `ArrayBlockingQueue(1000)`) so the system rejects excess tasks instead of crashing the server.
+
+Q: How do you decide the correct Thread Pool size?
+A: - **CPU-Bound tasks** (encryption, math): Pool size should be `CPU_CORES` or `CPU_CORES + 1`. Having more threads than cores just wastes time on context switching.
+- **I/O-Bound tasks** (database queries, HTTP calls): Pool size can be much larger (e.g., 50-200), because threads spend 99% of their time in the `WAITING` state, not consuming CPU cycles.

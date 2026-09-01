@@ -1,0 +1,63 @@
+---
+title: "Scoped Values"
+description: "Understanding Scoped Values in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Virtual Threads & Modern Concurrency"
+order: 6
+---
+## TL;DR
+
+- **Scoped Values** (Preview feature in modern Java) are a modern, high-performance alternative to `ThreadLocal`.
+- They allow you to safely share immutable data (like a security principal or transaction ID) deeply down a call stack without passing it as method parameters.
+- They are specifically designed to work safely and efficiently with millions of Virtual Threads.
+
+## Concept
+
+For decades, Java developers used `ThreadLocal` variables to store context. For example, Spring Security extracts your User ID from an HTTP request and stores it in a `ThreadLocal`. Any method deep in the codebase can access the User ID without needing it passed as a parameter.
+
+**The Problem:** `ThreadLocal` variables are mutable (anyone can change them), and they leak memory if you forget to explicitly call `.remove()`. Worse, if you spawn 100,000 Virtual Threads and they all inherit a `ThreadLocal` map, the memory overhead becomes catastrophic.
+
+**Scoped Values** fix this. A `ScopedValue` is:
+1. **Immutable:** Once bound, it cannot be changed.
+2. **Lexically Scoped:** It is only valid for the duration of a specific `Runnable` or `Callable` block. As soon as the block exits, the JVM automatically destroys the value.
+3. **Cheap:** It requires almost no memory overhead, making it perfect for Virtual Threads.
+
+## Examples
+
+```java
+import java.lang.ScopedValue;
+
+public class ScopedValueDemo {
+    
+    // 1. Declare the ScopedValue (usually static final)
+    private static final ScopedValue<String> USERNAME = ScopedValue.newInstance();
+
+    public static void main(String[] args) {
+        
+        // 2. Bind a value and execute a block of code within that scope
+        ScopedValue.where(USERNAME, "alice_admin").run(() -> {
+            
+            // Any method called inside this block has access to the value!
+            performBusinessLogic();
+            
+        }); // The value is instantly destroyed the moment this block ends.
+    }
+    
+    public static void performBusinessLogic() {
+        // 3. Read the value deep in the call stack
+        if (USERNAME.isBound()) {
+            System.out.println("Current User: " + USERNAME.get());
+        }
+    }
+}
+```
+
+## Interview Questions
+
+Q: What happens if you try to modify a `ScopedValue`?
+A: You can't! Unlike `ThreadLocal` which has a `.set()` method, `ScopedValue` has no setter. The value is strictly bound to the lexical scope using the `where(key, value).run(...)` syntax. If you need a different value, you must create a new nested scope. This prevents deep, buried methods from secretly mutating security contexts.
+
+Q: How do Scoped Values interact with Structured Concurrency?
+A: Beautifully. When you use a `StructuredTaskScope` to fork child Virtual Threads, those child threads automatically inherit the `ScopedValue` from the parent thread. Because Scoped Values are immutable, the JVM doesn't need to perform expensive deep copies of data for every child thread; they all just safely read the same memory reference.

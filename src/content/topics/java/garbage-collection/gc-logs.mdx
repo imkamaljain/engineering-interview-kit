@@ -1,0 +1,60 @@
+---
+title: "GC Logs"
+description: "Understanding GC Logs in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Garbage Collection"
+order: 13
+---
+## TL;DR
+
+- **GC Logs** are the single most important diagnostic tool for solving memory issues and latency spikes.
+- They record the exact timestamp, duration, memory cleaned, and type of every Garbage Collection event.
+- In Java 9+, the logging framework was unified using `-Xlog:gc`.
+
+## Concept
+
+When a Java application experiences unexplained 3-second freezes, developers often guess it's a database or network issue. 90% of the time, it's a Garbage Collection Stop-The-World pause.
+
+You cannot manage what you cannot measure. By enabling GC Logs, the JVM writes a tiny line of text to a file every time a GC occurs. This has virtually **zero performance overhead** (less than 1%), so it should be strictly enabled in **all** production environments.
+
+A typical GC log tells you:
+- The phase (e.g., `Pause Young (Normal)`)
+- The memory before and after (e.g., `1200M->200M(2048M)`)
+- The pause duration (e.g., `15.321ms`)
+
+## Examples
+
+```bash
+# ---------------------------------------------------------
+# JAVA 8 (Legacy syntax)
+# ---------------------------------------------------------
+java -Xms2G -Xmx2G \
+     -XX:+PrintGCDetails \
+     -XX:+PrintGCDateStamps \
+     -Xloggc:/var/log/myapp/gc.log \
+     -jar app.jar
+
+# ---------------------------------------------------------
+# JAVA 9+ (Unified Logging syntax)
+# ---------------------------------------------------------
+java -Xms2G -Xmx2G \
+     # Logs GC info to a file, rotates up to 10 files of 50MB each
+     -Xlog:gc*:file=/var/log/myapp/gc.log:time,uptime:filecount=10,filesize=50m \
+     -jar app.jar
+```
+
+### Example Log Output
+```text
+[2023-10-27T10:15:30.123+0000] GC(12) Pause Young (Normal) (G1 Evacuation Pause) 1024M->150M(2048M) 4.23ms
+```
+*Translation:* At 10:15 AM, the 12th GC event occurred. It was a Minor GC. The heap was at 1024MB, and it cleaned it down to 150MB. The total heap size is 2048MB. The application was paused for 4.23 milliseconds.
+
+## Interview Questions
+
+Q: How do you read massive GC Log files?
+A: You rarely read them manually. You feed the `gc.log` file into an analysis tool like **GCViewer**, **GCEasy.io**, or **Chewiebug**. These tools parse the thousands of lines and generate beautiful graphs showing your JVM's memory usage over time, the exact duration of your longest pauses, and throughput percentages.
+
+Q: What is a "Concurrent Mode Failure" in GC logs?
+A: If you are using G1GC or CMS, you might see `Concurrent Mode Failure` or `Promotion Failed` followed by a massive 5-second `Pause Full`. This is the smoking gun that your GC is failing. It means your application is creating garbage much faster than the background concurrent threads can clean it up. The JVM panicked, aborted the background clean, and stopped the entire application to do a desperate Full GC. You fix this by allocating more Heap, tuning the initiating heap occupancy, or reducing the app's allocation rate.

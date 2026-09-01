@@ -1,0 +1,66 @@
+---
+title: "Atomicity"
+description: "Understanding Atomicity in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Java Memory Model"
+order: 4
+---
+## TL;DR
+
+- **Atomicity** means an operation is indivisible; it either completely succeeds or completely fails, with no intermediate states visible to other threads.
+- Operations like `i++` are **not** atomic; they actually consist of three separate operations: Read, Increment, Write.
+- You must use `synchronized` blocks or `java.util.concurrent.atomic` classes to enforce atomicity.
+
+## Concept
+
+In a multithreaded environment, the OS constantly context-switches threads on and off CPU cores. 
+If Thread A is halfway through a calculation, it can be paused, and Thread B can jump in and manipulate the exact same variables, causing data corruption (a Race Condition).
+
+Consider `counter++`. At the CPU level, this is three instructions:
+1. `LOAD`: Read `counter` from memory to register.
+2. `ADD`: Add 1 to register.
+3. `STORE`: Write register back to memory.
+
+If `counter` is 5, Thread A might execute step 1 and 2 (register holds 6). Then it gets paused! Thread B executes steps 1, 2, and 3 (reads 5, writes 6). Thread A resumes and executes step 3 (writes 6). Two increments occurred, but the counter only went from 5 to 6. One increment was lost. This operation lacks atomicity.
+
+## Examples
+
+```java
+import java.util.concurrent.atomic.AtomicInteger;
+
+public class AtomicityDemo {
+    
+    // Not atomic! Will lose counts in a multithreaded environment.
+    private int badCounter = 0; 
+    
+    // Atomic! Guaranteed to never lose a count.
+    private AtomicInteger goodCounter = new AtomicInteger(0);
+
+    public void incrementBad() {
+        // Read, Modify, Write (Can be interrupted halfway)
+        badCounter++; 
+    }
+    
+    public void incrementGood() {
+        // Handled by the hardware (Compare-And-Swap). Indivisible!
+        goodCounter.incrementAndGet(); 
+    }
+    
+    // Alternatively, enforce atomicity using a lock
+    public synchronized void incrementWithLock() {
+        // While a thread is in here, no other thread can enter.
+        // Therefore, the Read-Modify-Write sequence is practically atomic.
+        badCounter++;
+    }
+}
+```
+
+## Interview Questions
+
+Q: Is writing to a primitive variable atomic?
+A: Usually, yes. Reading or writing to 32-bit primitives (like `int`, `boolean`, `float`, references) is inherently atomic in Java. However, reading or writing to 64-bit primitives (`long` and `double`) is **NOT atomic** on a 32-bit operating system! The JVM might write the first 32 bits, get preempted by the OS, and then another thread might read the variable while only half of it has been updated, resulting in garbage data. You must mark `long`/`double` as `volatile` to guarantee atomic reads/writes, or run on a 64-bit OS.
+
+Q: Does `volatile` guarantee atomicity?
+A: **No.** This is a very common interview trap. The `volatile` keyword *only* guarantees Visibility and prevents instruction reordering. If you have `private volatile int count = 0;` and multiple threads do `count++`, you will still suffer from lost updates and race conditions because the Read-Modify-Write operation is not atomic. You must use `AtomicInteger` or `synchronized`.

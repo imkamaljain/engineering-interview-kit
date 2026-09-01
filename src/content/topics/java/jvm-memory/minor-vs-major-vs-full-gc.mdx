@@ -1,0 +1,56 @@
+---
+title: "Minor vs Major vs Full GC"
+description: "Understanding Minor vs Major vs Full GC in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "JVM & Memory"
+order: 11
+---
+## TL;DR
+
+The Java Heap is physically separated into two generations based on the **Weak Generational Hypothesis**: the **Young Generation** and the **Old Generation**.
+- **Minor GC:** Cleans only the Young Generation. Extremely fast and frequent.
+- **Major GC:** Cleans only the Old Generation. Slower.
+- **Full GC:** Cleans the entire Heap (Young + Old + Metaspace). The slowest and most disruptive.
+
+## Concept
+
+The **Weak Generational Hypothesis** states: *Most objects die young.* (e.g., temporary loop variables, HTTP request wrappers). 
+Because of this, it is highly inefficient to scan the entire massive Heap every time we need memory. 
+
+The JVM splits the Heap:
+1. **Young Generation:** All brand new objects are allocated here. It fills up quickly. When full, a **Minor GC** triggers. Because 98% of the objects here are already dead, the GC only has to copy the surviving 2% to a new space and instantly wipe the rest. It takes roughly ~2 milliseconds.
+2. **Old Generation:** If an object survives multiple Minor GCs (it is long-lived, like a cache or session data), it is "promoted" to the Old Generation. This space fills up very slowly. When it gets full, a **Major GC** triggers. Because objects here are likely to stay alive, tracing and compacting them is significantly slower.
+
+## Examples
+
+```java
+public class GenerationalGCDemo {
+    
+    // Lives for the entire life of the app. 
+    // Will quickly be promoted to the OLD GENERATION.
+    static List<Object> longLivedCache = new ArrayList<>();
+    
+    public static void main(String[] args) {
+        
+        for (int i = 0; i < 1000000; i++) {
+            // These objects are used for one loop iteration and instantly abandoned.
+            // They are created in the YOUNG GENERATION.
+            // They will be wiped out efficiently by a MINOR GC.
+            Object shortLived = new Object(); 
+        }
+        
+        // This object survives. After ~15 Minor GCs, it gets moved to Old Gen.
+        longLivedCache.add(new Object());
+    }
+}
+```
+
+## Interview Questions
+
+Q: What is the "Survivor Space"?
+A: The Young Generation is further divided into an **Eden space** (where all new objects are born) and two **Survivor spaces** (S0 and S1). During a Minor GC, surviving objects from Eden are copied into S0. In the next Minor GC, surviving objects from Eden *and* S0 are copied into S1, and Eden and S0 are completely cleared. Objects bounce back and forth between S0 and S1. This copying mechanism inherently compacts the memory without needing a heavy compaction algorithm.
+
+Q: What triggers a Full GC?
+A: A Full GC (cleaning Young, Old, and Metaspace simultaneously) is an emergency operation. It is typically triggered when the Old Generation is full, but the JVM attempts to promote a large batch of objects from the Young Generation and realizes there isn't enough space. It must perform a massive, global cleanup to avoid crashing. Full GCs cause massive "Stop-The-World" pauses and ruin application latency.

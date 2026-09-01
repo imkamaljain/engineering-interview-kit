@@ -1,0 +1,60 @@
+---
+title: "Serialization Security"
+description: "Understanding Serialization Security in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "I/O & Serialization"
+order: 13
+---
+## TL;DR
+
+- Java's native Serialization is widely considered a **massive security vulnerability**.
+- Attackers can craft malicious byte streams that, when deserialized by your server, can execute arbitrary code (Remote Code Execution - RCE).
+- To secure it, you should avoid native serialization entirely, or use **ObjectInputFilters** (introduced in Java 9).
+
+## Concept
+
+The fundamental flaw in Java Serialization is that **Deserialization executes logic**. 
+When an `ObjectInputStream` reads a byte stream, it looks at the class name embedded in the bytes (e.g., `com.example.HackerClass`) and attempts to instantiate it. 
+
+If the attacker's class happens to exist on your server's classpath (perhaps deep inside a forgotten 3rd party dependency like Apache Commons Collections), the JVM will instantiate it. Even though constructors are bypassed, the JVM *does* execute the `readObject()` method if the class overrides it, as well as static initializers.
+Hackers construct "Gadget Chains"—carefully linking existing classes on your classpath so that when the JVM deserializes the payload, it accidentally triggers a chain reaction that runs a malicious terminal command (like `Runtime.getRuntime().exec("rm -rf /")`).
+
+## Examples
+
+```java
+import java.io.*;
+
+public class SecureDeserializationDemo {
+    public static void main(String[] args) throws Exception {
+        
+        try (FileInputStream fis = new FileInputStream("untrusted_payload.ser");
+             ObjectInputStream ois = new ObjectInputStream(fis)) {
+             
+            // Java 9+ Security Feature: ObjectInputFilter
+            // We strictly define an Allow-List of classes we are willing to deserialize.
+            ObjectInputFilter filter = ObjectInputFilter.Config.createFilter(
+                "com.mycompany.models.User;" + // Allow our User class
+                "java.lang.String;" +          // Allow Strings
+                "!*"                           // REJECT EVERYTHING ELSE
+            );
+            
+            // Apply the filter to this specific stream
+            ois.setObjectInputFilter(filter);
+            
+            // If the payload contains a malicious class, the filter will instantly 
+            // reject it and throw an InvalidClassException before instantiation!
+            Object obj = ois.readObject(); 
+        }
+    }
+}
+```
+
+## Interview Questions
+
+Q: Why is JSON safer than Java Serialization?
+A: Data formats like JSON or XML are purely data-driven. When you parse JSON, you are simply mapping strings and numbers to fields. The JSON parser does not have the magical ability to instantiate arbitrary hidden classes from the JVM classpath or automatically execute `readObject()` lifecycle methods. It just builds plain objects.
+
+Q: What is a "Gadget Chain" in the context of Java Serialization?
+A: A Gadget Chain is a sequence of classes that, when linked together during deserialization, result in arbitrary code execution. A "Gadget" is a class already present on the application's classpath (usually in a common library like Spring or Apache Commons) that has a vulnerability in its `readObject()`, `hashCode()`, or `finalize()` methods. The attacker doesn't upload new code; they craft a payload that tricks the server into executing the server's own existing code in a dangerous sequence.

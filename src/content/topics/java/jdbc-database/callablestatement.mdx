@@ -1,0 +1,65 @@
+---
+title: "CallableStatement"
+description: "Understanding CallableStatement in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "JDBC & Database"
+order: 5
+---
+## TL;DR
+
+- `CallableStatement` extends `PreparedStatement` and is used exclusively to execute **Stored Procedures** inside the database.
+- It supports `IN` parameters (data you send to the procedure), `OUT` parameters (data the procedure returns), and `INOUT` parameters.
+- It is commonly used in enterprise applications with heavy database-side logic (like PL/SQL in Oracle).
+
+## Concept
+
+Sometimes, complex business logic (like calculating end-of-year tax returns across a million rows) is written directly into the database as a Stored Procedure. This is much faster than pulling a million rows across the network into Java to process them.
+
+To trigger that Stored Procedure from Java, you use a `CallableStatement`. 
+The syntax for calling a procedure uses a standard JDBC escape format: `{call procedure_name(?, ?, ?)}`.
+
+## Examples
+
+```java
+import java.sql.*;
+
+public class CallableStatementDemo {
+    
+    // Assume we have a Stored Procedure in MySQL:
+    // CREATE PROCEDURE calculate_bonus(IN emp_id INT, OUT bonus DECIMAL)
+    
+    public void getBonus(Connection conn, int employeeId) throws SQLException {
+        
+        String sql = "{call calculate_bonus(?, ?)}";
+        
+        try (CallableStatement cstmt = conn.prepareCall(sql)) {
+            
+            // 1. Set the IN parameter (Index 1)
+            cstmt.setInt(1, employeeId);
+            
+            // 2. Register the OUT parameter (Index 2)
+            // We must tell JDBC what data type to expect back from the database.
+            cstmt.registerOutParameter(2, Types.DECIMAL);
+            
+            // 3. Execute the procedure
+            cstmt.execute();
+            
+            // 4. Retrieve the OUT parameter value
+            double bonus = cstmt.getDouble(2);
+            System.out.println("Bonus calculated by DB: " + bonus);
+        }
+    }
+}
+```
+
+## Interview Questions
+
+Q: What is the difference between `execute()`, `executeQuery()`, and `executeUpdate()`?
+A: - `executeQuery()`: Returns a `ResultSet`. Used strictly for `SELECT` statements.
+- `executeUpdate()`: Returns an `int` (number of rows affected). Used for `INSERT`, `UPDATE`, `DELETE`, or DDL statements (`CREATE TABLE`).
+- `execute()`: Returns a `boolean`. Used when the statement could return *either* a ResultSet or an update count, or *multiple* ResultSets. This is most commonly used with `CallableStatement` because a Stored Procedure might return anything.
+
+Q: What is the purpose of `registerOutParameter`?
+A: When calling a Stored Procedure, the database will output variables directly into the statement parameters. Before execution, the JDBC driver needs to know what memory structure to allocate to receive that data. `registerOutParameter` tells the driver, *"Expect the second parameter to be returned as a SQL DECIMAL,"* so the driver can parse the incoming bytes correctly.

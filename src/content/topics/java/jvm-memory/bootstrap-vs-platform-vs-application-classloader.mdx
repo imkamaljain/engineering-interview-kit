@@ -1,0 +1,64 @@
+---
+title: "Bootstrap vs Platform vs Application ClassLoader"
+description: "Understanding Bootstrap vs Platform vs Application ClassLoader in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "JVM & Memory"
+order: 3
+---
+## TL;DR
+
+The JVM uses a strict hierarchy of Class Loaders to ensure security and prevent core Java classes from being overridden:
+1. **Bootstrap ClassLoader:** Loads core Java API classes (`java.lang.*`, `java.util.*`).
+2. **Platform ClassLoader:** Loads Java platform extensions.
+3. **Application ClassLoader:** Loads the developer's application classes (from the classpath).
+
+## Concept
+
+When a class needs to be loaded, the JVM doesn't just scan the hard drive randomly. It uses the **Parent Delegation Model**.
+
+If your code requests `MyService.class`:
+1. The **Application ClassLoader** receives the request. Before doing anything, it delegates the request to its parent.
+2. The **Platform ClassLoader** receives the request. It delegates to its parent.
+3. The **Bootstrap ClassLoader** receives the request. It checks the core Java libraries (like `rt.jar` in older Javas, or `jmods`). It doesn't find `MyService`, so it returns control to the child.
+4. The **Platform ClassLoader** checks the extension directories. Doesn't find it. Returns control to child.
+5. The **Application ClassLoader** checks your application's classpath (your project folder/JARs). It finds `MyService.class` and loads it.
+
+## Examples
+
+```java
+public class ClassLoaderHierarchy {
+    public static void main(String[] args) {
+        
+        // 1. Application ClassLoader (Loads our custom classes)
+        ClassLoader myClassLoader = ClassLoaderHierarchy.class.getClassLoader();
+        System.out.println("My ClassLoader: " + myClassLoader); 
+        // Output: jdk.internal.loader.ClassLoaders$AppClassLoader
+        
+        // 2. Platform ClassLoader (Parent of AppClassLoader)
+        ClassLoader parentLoader = myClassLoader.getParent();
+        System.out.println("Parent ClassLoader: " + parentLoader);
+        // Output: jdk.internal.loader.ClassLoaders$PlatformClassLoader
+        
+        // 3. Bootstrap ClassLoader (Parent of PlatformClassLoader)
+        ClassLoader grandParent = parentLoader.getParent();
+        System.out.println("Grandparent ClassLoader: " + grandParent);
+        // Output: null (Bootstrap is written in native C/C++, so Java represents it as null)
+        
+        // String is a core Java class, so it is loaded by the Bootstrap ClassLoader
+        System.out.println("String ClassLoader: " + String.class.getClassLoader());
+        // Output: null
+    }
+}
+```
+
+## Interview Questions
+
+Q: Why does the JVM use the Parent Delegation Model?
+A: **Security.** Imagine a malicious developer writes their own class and names it `java.lang.String`, embedding code that steals passwords, and places it in their application classpath. 
+Because of Parent Delegation, the Application ClassLoader will immediately delegate the request for `java.lang.String` all the way up to the Bootstrap ClassLoader. The Bootstrap ClassLoader will find the *real*, safe `java.lang.String` in the core JDK libraries and load it. The malicious class is completely ignored, protecting the JVM.
+
+Q: What is the difference between `ClassNotFoundException` and `NoClassDefFoundError`?
+A: - **`ClassNotFoundException`:** An `Exception` thrown explicitly when an application tries to load in a class at runtime using `Class.forName("com.mysql.jdbc.Driver")` but the class does not exist in the classpath.
+- **`NoClassDefFoundError`:** An `Error` thrown by the JVM. It occurs when a class *was* present during compile time (so the code compiled successfully), but when the JVM actually runs the code and attempts to link the class, it is suddenly missing from the classpath.

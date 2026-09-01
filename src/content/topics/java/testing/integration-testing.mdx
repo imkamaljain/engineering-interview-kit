@@ -1,0 +1,66 @@
+---
+title: "Integration Testing"
+description: "Understanding Integration Testing in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Testing"
+order: 3
+---
+## TL;DR
+
+- **Integration Testing** verifies that different modules or services in your application work correctly *when connected together*.
+- Unlike Unit Tests, Integration Tests interact with real databases, file systems, and external APIs.
+- They are slower, more expensive to run, and prone to flakiness, but they prove the system actually works in reality.
+
+## Concept
+
+Your `UserService` might pass all its Unit Tests flawlessly because the mocked database always returns success. But in production, the application crashes because the actual SQL query has a syntax error. 
+
+Integration testing catches this. You boot up a real database (often using **Testcontainers** via Docker or an in-memory database like H2), let your `UserService` connect to it, insert a real row, query it back, and assert the results. 
+
+Because they require network/disk access and full application context (like the Spring Framework), Integration Tests take seconds or minutes to run. They form the middle layer of the Testing Pyramid.
+
+## Examples
+
+```java
+// Spring Boot Integration Test Example
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.junit.jupiter.api.Test;
+import static org.junit.jupiter.api.Assertions.*;
+
+// This annotation boots up the ENTIRE Spring Application Context!
+// It connects to the database, reads configuration, and wires all beans.
+@SpringBootTest 
+class UserServiceIntegrationTest {
+
+    @Autowired
+    private UserService userService; // Real service
+
+    @Autowired
+    private UserRepository userRepository; // Real repository talking to a real DB
+
+    @Test
+    void testUserCreationFlow() {
+        // ACT - Call the real service
+        userService.registerUser("alice", "password123");
+        
+        // ASSERT - Verify the data ACTUALLY made it into the real database
+        User savedUser = userRepository.findByUsername("alice");
+        assertNotNull(savedUser);
+        assertEquals("alice", savedUser.getUsername());
+        
+        // CLEANUP (Or use @Transactional to auto-rollback)
+        userRepository.delete(savedUser);
+    }
+}
+```
+
+## Interview Questions
+
+Q: What is Testcontainers?
+A: Testcontainers is a modern Java library that allows you to spin up throwaway Docker containers directly from your JUnit tests. Instead of mocking a database or using an unrealistic in-memory DB like H2, your Integration Test asks Testcontainers to boot up a real PostgreSQL Docker image, runs the tests against it, and then destroys the container when the tests finish. This provides 100% production parity.
+
+Q: Why should you use `@Transactional` on a Spring Integration Test?
+A: If an Integration Test inserts a user into the real test database, it leaves dirty data behind that could break the next test. If you annotate your test method with Spring's `@Transactional`, Spring will wrap the test in a database transaction, and at the end of the test, it will **automatically rollback** the transaction. The database is instantly restored to its pristine state, ensuring test isolation.

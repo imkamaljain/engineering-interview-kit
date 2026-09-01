@@ -1,0 +1,72 @@
+---
+title: "When to Use Virtual Threads"
+description: "Understanding When to Use Virtual Threads in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Virtual Threads & Modern Concurrency"
+order: 7
+---
+
+## TL;DR
+
+- **USE Virtual Threads for:** I/O-bound workloads (Database queries, HTTP requests, File I/O).
+- **DO NOT USE Virtual Threads for:** CPU-bound workloads (Video encoding, heavy math, cryptography).
+- **NEVER Pool Virtual Threads:** Create a new one for every single task.
+
+## Concept
+
+Virtual Threads are not magic pixie dust that makes Java execute code faster. They are a scaling mechanism. 
+
+The JVM scheduler multiplexes Virtual Threads onto a small number of physical CPU cores. 
+If a Virtual Thread encounters an **I/O operation** (e.g., `HttpClient.send()`), it says, *"I'm going to be waiting for 200ms. Take me off the CPU so another thread can use it."* This is brilliant.
+
+However, if a Virtual Thread encounters a **CPU-bound operation** (e.g., calculating the SHA-256 hash of a 1GB file), it never waits. It runs continuously. It never unmounts. If you have 4 CPU cores, and you launch 4 CPU-bound Virtual Threads, they will completely consume the underlying carrier threads. If you launch a 5th Virtual Thread, it will just sit in a queue forever, waiting for one of the first 4 to finish. 
+
+## Examples
+
+```java
+import java.util.concurrent.Executors;
+
+public class VirtualThreadUsage {
+    
+    // --- SCENARIO 1: I/O BOUND (Perfect for Virtual Threads) ---
+    public void fetchUrls() {
+        // We create a new unpooled Virtual Thread per task.
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            for (int i = 0; i < 10000; i++) {
+                executor.submit(() -> {
+                    // Simulating a network call. Thread unmounts safely!
+                    Thread.sleep(200); 
+                    System.out.println("Fetched URL");
+                    return null;
+                });
+            }
+        }
+    }
+    
+    // --- SCENARIO 2: CPU BOUND (Terrible for Virtual Threads) ---
+    public void processVideoFrames() {
+        // Use a standard Platform Thread Pool sized to your CPU cores!
+        int cores = Runtime.getRuntime().availableProcessors();
+        try (var executor = Executors.newFixedThreadPool(cores)) {
+            for (int i = 0; i < 10000; i++) {
+                executor.submit(() -> {
+                    // Heavy math. Never yields. 
+                    // Virtual threads would choke here. Platform threads are correct.
+                    calculateCryptography(); 
+                });
+            }
+        }
+    }
+}
+```
+
+## Interview Questions
+
+Q: Why shouldn't you pool Virtual Threads?
+A: Thread Pools were invented to solve a specific problem: OS Threads are expensive to create (taking milliseconds and megabytes). Therefore, we create them once, keep them alive in a pool, and reuse them. 
+Virtual Threads are cheap (taking microseconds and bytes). The overhead of managing a Virtual Thread Pool is actually higher than just creating a new Virtual Thread from scratch! Always create a fresh Virtual Thread for every task using `Thread.ofVirtual().start()`.
+
+Q: How do `synchronized` blocks affect Virtual Threads?
+A: They cause "Thread Pinning". If a Virtual Thread makes a blocking I/O call *while holding a `synchronized` monitor lock*, the JVM currently cannot unmount it. It gets permanently glued to the OS carrier thread until the I/O finishes, degrading performance. You should replace `synchronized` with `ReentrantLock` when writing code intended for Virtual Threads.

@@ -1,0 +1,64 @@
+---
+title: "SQL Injection Prevention"
+description: "Understanding SQL Injection Prevention in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "JDBC & Database"
+order: 11
+---
+## TL;DR
+
+- **SQL Injection (SQLi)** is a devastating attack where a hacker manipulates user input to execute arbitrary SQL commands on your database.
+- It occurs when developers use String Concatenation to build SQL queries.
+- **The absolute defense is to ALWAYS use `PreparedStatement` (Parameterized Queries).**
+
+## Concept
+
+Imagine a login query built with string concatenation:
+`String sql = "SELECT * FROM users WHERE user = '" + username + "' AND pass = '" + password + "'";`
+
+If the attacker enters `admin' --` as the username, the resulting query becomes:
+`SELECT * FROM users WHERE user = 'admin' --' AND pass = '...'`
+The `--` is the SQL comment indicator. The database ignores the password check entirely and logs the attacker in as admin!
+
+To prevent this, you use a `PreparedStatement`. A PreparedStatement separates the query structure (the blueprint) from the data. The database compiles the blueprint first (`SELECT * FROM users WHERE user = ?`). When you pass the malicious string `admin' --`, the database treats it strictly as a literal text string. It looks for a user whose literal name is exactly `admin' --`. The attack neutralizes completely.
+
+## Examples
+
+```java
+import java.sql.*;
+
+public class SqlInjectionDemo {
+    
+    // ❌ VULNERABLE: String Concatenation (Never do this!)
+    public void deleteUserUnsafe(Connection conn, String userId) throws SQLException {
+        // If userId = "1 OR 1=1", this deletes EVERY user in the database!
+        String sql = "DELETE FROM users WHERE id = " + userId; 
+        try (Statement stmt = conn.createStatement()) {
+            stmt.executeUpdate(sql);
+        }
+    }
+    
+    // ✅ SECURE: PreparedStatement (Always do this)
+    public void deleteUserSafe(Connection conn, String userId) throws SQLException {
+        String sql = "DELETE FROM users WHERE id = ?"; 
+        try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            // If userId = "1 OR 1=1", it will attempt to cast it to an integer or string
+            // and look for literally that ID. It will safely find nothing.
+            pstmt.setString(1, userId);
+            pstmt.executeUpdate();
+        }
+    }
+}
+```
+
+## Interview Questions
+
+Q: Does escaping special characters prevent SQL Injection?
+A: It can help, but it is **not a reliable defense**. Historically, developers tried to sanitize input by writing regex functions to strip out single quotes (`'`) or semicolons (`;`). Hackers constantly invent bypasses for sanitization scripts using different character encodings or obscure SQL syntax. The only 100% foolproof defense at the JDBC layer is using Parameterized Queries (`PreparedStatement`).
+
+Q: How does JPA/Hibernate prevent SQL Injection?
+A: Object-Relational Mapping (ORM) frameworks like Hibernate automatically use `PreparedStatement` under the hood. When you use Hibernate's Criteria API or Spring Data JPA (`userRepository.findByUsername(name)`), you are inherently safe. 
+However, you can still create vulnerabilities in Hibernate if you manually concatenate strings into HQL queries:
+`entityManager.createQuery("FROM User WHERE name = '" + name + "'");` // Still vulnerable!

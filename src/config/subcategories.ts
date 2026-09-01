@@ -37,6 +37,28 @@ export const SUBCATEGORY_ORDER: Record<string, string[]> = {
     "Advanced",
     "Interview Questions"
   ],
+  "java": [
+    "Fundamentals",
+    "Object-Oriented Programming",
+    "Collections",
+    "Generics",
+    "Exception Handling",
+    "Java 8+ Features",
+    "Stream API",
+    "Multithreading & Concurrency",
+    "JVM & Memory",
+    "Garbage Collection",
+    "Interfaces & Advanced OOP",
+    "Java Memory Model",
+    "I/O & Serialization",
+    "Reflection & Annotations",
+    "Modern Java",
+    "Virtual Threads & Modern Concurrency",
+    "JDBC & Database",
+    "Testing",
+    "Performance & Best Practices",
+    "Interview Questions"
+  ],
   "javascript": [
     "Fundamentals",
     "Functions",

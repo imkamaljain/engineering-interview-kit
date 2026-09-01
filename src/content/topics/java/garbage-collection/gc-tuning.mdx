@@ -1,0 +1,52 @@
+---
+title: "GC Tuning"
+description: "Understanding GC Tuning in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Garbage Collection"
+order: 12
+---
+## TL;DR
+
+- **GC Tuning** is the art of balancing three competing goals: **Latency** (pause times), **Throughput** (overall CPU efficiency), and **Footprint** (memory usage).
+- You cannot optimize all three simultaneously. Improving one usually degrades another.
+- The Golden Rule: *Don't tune the GC unless you have proven, via metrics, that the defaults are failing your SLAs.*
+
+## Concept
+
+### The Three Trade-offs
+1. **Latency:** A high-frequency trading app cannot tolerate a 2-second pause. You use **ZGC** or **G1GC** tuned for low latency (`-XX:MaxGCPauseMillis=10`). The trade-off? The GC runs constantly in the background, consuming CPU and lowering Throughput.
+2. **Throughput:** A nightly batch job computing payroll doesn't care about a 5-second pause. It just needs to finish fast. You use **Parallel GC** (`-XX:+UseParallelGC`). It gives 100% of the CPU to the application, then completely stops everything for a massive, hyper-efficient cleanup.
+3. **Footprint:** A microservice running on a tiny 256MB Docker container doesn't have the memory overhead required for complex concurrent GCs. You might use **Serial GC** (`-XX:+UseSerialGC`) to minimize memory usage.
+
+## Examples
+
+```bash
+# Scenario 1: Low Latency Web Server (G1GC)
+# We accept some CPU overhead to guarantee no pause exceeds 100ms.
+java -XX:+UseG1GC \
+     -Xms8G -Xmx8G \
+     -XX:MaxGCPauseMillis=100 \
+     -jar web-server.jar
+
+# Scenario 2: Maximum Throughput Batch Processor (Parallel GC)
+# We want the job done fast. We don't care about pause lengths.
+java -XX:+UseParallelGC \
+     -Xms16G -Xmx16G \
+     -jar payroll-job.jar
+
+# Scenario 3: Tiny IoT Device (Serial GC)
+# Single CPU core, tiny memory footprint.
+java -XX:+UseSerialGC \
+     -Xms64m -Xmx64m \
+     -jar iot-sensor.jar
+```
+
+## Interview Questions
+
+Q: Why is `-Xms` usually set equal to `-Xmx` in production?
+A: If `-Xms` (Initial Heap) is lower than `-Xmx` (Max Heap), the JVM starts with a small heap. When it fills up, the JVM must pause the application, request more RAM from the Operating System, resize its internal data structures, and resume. This happens repeatedly as the application warms up, causing terrible latency spikes. Setting them equal guarantees the JVM claims all necessary memory at startup, preventing resizing pauses.
+
+Q: How do you fix an `OutOfMemoryError`?
+A: The amateur answer is "increase `-Xmx`". The professional answer is: "First, generate a Heap Dump (`-XX:+HeapDumpOnOutOfMemoryError`) to prove it's not a memory leak. If a static HashMap is infinitely growing, increasing `-Xmx` to 100GB will just delay the crash by an hour. If the heap dump proves there is no leak, and the application genuinely needs more memory to hold its legitimate working set, *then* you increase `-Xmx`."

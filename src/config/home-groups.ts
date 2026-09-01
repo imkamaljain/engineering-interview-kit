@@ -16,6 +16,11 @@ export const TECHNOLOGY_GROUPS = [
 				title: "Go",
 				slug: "go",
 				samples: ["Goroutines", "Channels", "Scheduler", "Memory model"]
+			},
+			{
+				title: "Java",
+				slug: "java",
+				samples: ["Class", "Interface", "Inheritance", "Polymorphism"]
 			}
 		]
 	},

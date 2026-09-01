@@ -1,0 +1,62 @@
+---
+title: "Java Memory Model"
+description: "Understanding Java Memory Model in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Java Memory Model"
+order: 1
+---
+## TL;DR
+
+- The **Java Memory Model (JMM)** is a specification that defines how threads interact through memory.
+- It guarantees when changes made to a shared variable in one thread become visible to other threads.
+- It is designed to abstract away the underlying hardware complexities (CPU caches, registers, instruction reordering) so Java code runs predictably across all CPU architectures.
+
+## Concept
+
+Modern CPUs do not read from main RAM for every operation; it's too slow. Instead, each CPU core has its own high-speed cache (L1/L2/L3) and registers. 
+When Thread A runs on CPU Core 1, and Thread B runs on CPU Core 2, they might both hold a copy of a shared variable `int x = 0` in their respective CPU caches. 
+
+If Thread A executes `x = 1`, it updates its *local CPU cache*. Main memory might not be updated immediately. Thread B might still read `x = 0` from its own cache!
+Furthermore, modern compilers and CPUs aggressively **reorder** instructions to run faster, as long as the reordering doesn't break single-threaded execution logic. However, this reordering can break multithreaded logic.
+
+The JMM defines a set of strict rules (like the **Happens-Before** relationship) that dictate exactly when a JVM is forced to flush CPU caches to main memory and when it is forbidden from reordering instructions.
+
+## Examples
+
+```java
+public class JmmDemo {
+    private boolean ready = false;
+    private int number = 0;
+
+    private class ReaderThread extends Thread {
+        public void run() {
+            // Without JMM rules (like volatile/synchronized), Thread 2 
+            // might NEVER see 'ready == true' because Thread 1's update 
+            // is stuck in CPU Core 1's cache.
+            // Even worse, due to instruction reordering, Thread 2 might 
+            // see 'ready == true' but print '0' for number!
+            while (!ready) {
+                Thread.yield();
+            }
+            System.out.println(number); 
+        }
+    }
+
+    private class WriterThread extends Thread {
+        public void run() {
+            number = 42;
+            ready = true;
+        }
+    }
+}
+```
+
+## Interview Questions
+
+Q: Does the JMM define where objects are stored (Heap vs Stack)?
+A: No. This is a common misconception. The division of memory into Heap and Stack is part of the JVM Architecture, not the Java Memory Model. The JMM is purely concerned with the *behavior* of variables across threads (Visibility, Atomicity, and Ordering).
+
+Q: What happens if you don't follow JMM rules?
+A: Your multithreaded application will suffer from **Data Races**. It will exhibit bizarre, non-deterministic behavior that is virtually impossible to reproduce in a debugger. It might run perfectly on your developer laptop (Intel CPU) but crash randomly in production (ARM CPU) because different hardware architectures have different baseline caching and reordering behaviors. The JMM abstracts this away—if you follow JMM rules (using `volatile`, `synchronized`, `java.util.concurrent`), Java guarantees it will behave correctly everywhere.

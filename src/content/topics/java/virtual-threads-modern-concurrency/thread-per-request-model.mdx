@@ -1,0 +1,56 @@
+---
+title: "Thread-per-request Model"
+description: "Understanding Thread-per-request Model in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Virtual Threads & Modern Concurrency"
+order: 4
+---
+## TL;DR
+
+- The **Thread-per-Request** model is the traditional architecture for web servers (like Tomcat), where every incoming HTTP request is assigned a dedicated thread for its entire lifecycle.
+- This model broke down at scale because Platform Threads are too heavy.
+- Virtual Threads **save** the Thread-per-Request model, allowing it to scale massively while keeping code simple and synchronous.
+
+## Concept
+
+In the Thread-per-Request model, a user sends an HTTP request, the server allocates a Thread from a Thread Pool, and that Thread executes the Controller, fetches data from the DB, renders the JSON, and sends it back. 
+**Pros:** The code is incredibly easy to read, write, and debug. Stack traces are clear. `ThreadLocal` variables work perfectly for storing user sessions.
+**Cons:** If the DB query takes 2 seconds, the thread sits blocked for 2 seconds. Because OS threads are limited, a server under heavy load runs out of threads and starts rejecting connections.
+
+For years, the industry abandoned Thread-per-Request in favor of **Reactive Programming** (WebFlux, RxJava, Node.js event loops). Reactive scales well, but the code is highly complex, debugging is a nightmare, and stack traces are useless.
+
+**Virtual Threads bring back Thread-per-Request.** 
+By using Virtual Threads, Tomcat can assign a dedicated thread to every single request. If 100,000 requests hit the server, Tomcat just creates 100,000 Virtual Threads. When they block on the DB, they unmount. The code remains simple and synchronous, but achieves the extreme scalability of Reactive Programming!
+
+## Examples
+
+```java
+// How standard Spring Boot code looks (Thread-Per-Request)
+// This code is synchronous, blocking, and easy to read.
+
+@RestController
+public class UserController {
+    
+    @Autowired
+    private UserRepository repo;
+
+    @GetMapping("/users/{id}")
+    public User getUser(@PathVariable String id) {
+        // Blocks the current thread until the DB returns.
+        // If this runs on a Virtual Thread, the JVM unmounts it here,
+        // saving server resources! No complex reactive Mono/Flux needed.
+        return repo.findById(id); 
+    }
+}
+```
+
+## Interview Questions
+
+Q: To take advantage of Virtual Threads in a web application, do you have to rewrite your code?
+A: Usually, no! That is the magic of Project Loom. If you are using Spring Boot 3.2+, you just add a single configuration property: `spring.threads.virtual.enabled=true`. 
+Spring Boot will automatically swap out its underlying Tomcat Platform Thread Pool for a Virtual Thread Executor. All your standard synchronous JDBC and HTTP calls will automatically yield and unmount. 
+
+Q: Why not just use Reactive Programming (e.g., Spring WebFlux)?
+A: Reactive programming is very difficult to reason about. It requires "coloring" your entire codebase (a reactive repository forces a reactive service, which forces a reactive controller). Error handling requires complex combinators, and `ThreadLocal` variables (which power Spring Security context) break completely across asynchronous boundaries. Virtual Threads give you the performance of WebFlux with the simplicity of traditional Spring MVC.

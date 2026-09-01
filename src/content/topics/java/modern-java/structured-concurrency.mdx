@@ -1,0 +1,64 @@
+---
+title: "Structured Concurrency"
+description: "Understanding Structured Concurrency in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Modern Java"
+order: 9
+---
+## TL;DR
+
+- **Structured Concurrency** (in preview in Java 21) is a new paradigm that treats multiple concurrent tasks running in different threads as a single logical unit of work.
+- It ensures that if a parent task fails or is cancelled, all its child threads are automatically cancelled and cleaned up, preventing thread leaks.
+- It is designed to work hand-in-hand with Virtual Threads to manage massive concurrency cleanly.
+
+## Concept
+
+In standard Java concurrency (using `ExecutorService`), thread lifetimes are unstructured. If Method A spawns Thread B and Thread C to fetch data, and Thread B throws an Exception and crashes, Thread C *keeps running in the background*, wasting CPU and network resources on data that Method A no longer needs! This results in "Thread Leaks" and zombie processes.
+
+Structured Concurrency fixes this by enforcing a strict hierarchy. Tasks are spawned within a structural block (a `StructuredTaskScope`). If any sub-task fails, or if the main task's timeout is reached, the scope automatically interrupts and shuts down all other sibling tasks. The code flows logically, just like a standard `try-catch` block, but applied to multi-threading.
+
+## Examples
+
+```java
+import java.util.concurrent.StructuredTaskScope;
+import java.util.concurrent.StructuredTaskScope.ShutdownOnFailure;
+
+public class StructuredConcurrencyDemo {
+    
+    // Imagine fetching user details requires querying two separate microservices.
+    // We want to fetch them concurrently, but if EITHER fails, we want to cancel the other immediately.
+    public UserDetails fetchUser(int userId) throws Exception {
+        
+        // 1. Open a Structured Scope using try-with-resources
+        try (var scope = new ShutdownOnFailure()) {
+            
+            // 2. Fork (spawn) virtual threads for the sub-tasks
+            StructuredTaskScope.Subtask<String> profile = scope.fork(() -> fetchProfile(userId));
+            StructuredTaskScope.Subtask<String> billing = scope.fork(() -> fetchBilling(userId));
+            
+            // 3. Join the scope. This blocks until ALL sub-tasks succeed, OR UNTIL ONE FAILS.
+            scope.join();
+            
+            // 4. If any task failed, this throws the exception.
+            scope.throwIfFailed();
+            
+            // 5. If we reach here, both succeeded. We safely retrieve the results.
+            return new UserDetails(profile.get(), billing.get());
+        }
+        // When the try-block exits, if the scope hasn't finished, it automatically 
+        // cancels any remaining running threads!
+    }
+}
+```
+
+## Interview Questions
+
+Q: How does `ShutdownOnSuccess` differ from `ShutdownOnFailure`?
+A: Java provides two built-in policies for `StructuredTaskScope`:
+1. `ShutdownOnFailure`: Used when you need the results of *all* tasks (e.g., getting user profile AND billing data). If one fails, cancel the rest.
+2. `ShutdownOnSuccess`: Used when you only need the result of *one* task (e.g., querying three redundant weather APIs, and you just want whichever one responds the fastest). As soon as the first task completes successfully, it automatically cancels the other two.
+
+Q: Can't you achieve the same thing with `CompletableFuture.allOf()`?
+A: You can, but it is vastly more complicated. `CompletableFuture` relies on complex callbacks, combinators, and explicit cancellation logic (`future.cancel(true)`). It is notoriously difficult to debug because stack traces are fragmented across asynchronous boundaries. Structured Concurrency allows you to write concurrent code that looks and behaves exactly like synchronous, sequential code, with highly readable stack traces.

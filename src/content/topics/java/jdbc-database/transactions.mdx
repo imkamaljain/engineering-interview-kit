@@ -1,0 +1,88 @@
+---
+title: "Transactions"
+description: "Understanding Transactions in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "JDBC & Database"
+order: 7
+---
+## TL;DR
+
+- A **Transaction** is a logical unit of work that contains one or more SQL statements.
+- Transactions must guarantee **ACID properties**: Atomicity, Consistency, Isolation, and Durability.
+- In JDBC, transaction management is handled directly through the `Connection` object by disabling AutoCommit.
+
+## Concept
+
+By default, every JDBC `Connection` is in "AutoCommit" mode. If you execute 3 `INSERT` statements, the database commits them instantly one by one. If the JVM crashes after the 2nd insert, your database is in a corrupted state (the first 2 inserts exist, the 3rd does not).
+
+To perform a proper transaction (e.g., transferring money from Alice to Bob), you must:
+1. Turn off AutoCommit (`conn.setAutoCommit(false)`).
+2. Execute all queries (Deduct from Alice, Add to Bob).
+3. If everything succeeds, manually call `conn.commit()`.
+4. If ANY exception occurs, jump to a `catch` block and call `conn.rollback()` to undo everything.
+
+## Examples
+
+```java
+import java.sql.*;
+
+public class TransactionDemo {
+    public void transferMoney(Connection conn, int fromAcc, int toAcc, double amount) throws SQLException {
+        
+        String deductSql = "UPDATE accounts SET balance = balance - ? WHERE id = ?";
+        String addSql = "UPDATE accounts SET balance = balance + ? WHERE id = ?";
+        
+        try (PreparedStatement deductStmt = conn.prepareStatement(deductSql);
+             PreparedStatement addStmt = conn.prepareStatement(addSql)) {
+            
+            // 1. START TRANSACTION
+            conn.setAutoCommit(false); 
+            
+            // Step 1: Deduct
+            deductStmt.setDouble(1, amount);
+            deductStmt.setInt(2, fromAcc);
+            deductStmt.executeUpdate();
+            
+            // Simulate a catastrophic crash mid-transfer!
+            // if (true) throw new SQLException("Database crash!");
+            
+            // Step 2: Add
+            addStmt.setDouble(1, amount);
+            addStmt.setInt(2, toAcc);
+            addStmt.executeUpdate();
+            
+            // 2. COMMIT TRANSACTION (Atomic success)
+            conn.commit(); 
+            
+        } catch (SQLException e) {
+            // 3. ROLLBACK TRANSACTION (Undo partial changes)
+            if (conn != null) {
+                System.err.println("Transaction failed. Rolling back.");
+                conn.rollback();
+            }
+        } finally {
+            // 4. CLEANUP (Restore default state for the Connection Pool)
+            if (conn != null) {
+                conn.setAutoCommit(true);
+            }
+        }
+    }
+}
+```
+
+## Interview Questions
+
+Q: What are ACID properties?
+A: - **Atomicity:** All operations in the transaction succeed, or they all fail. No partial states.
+- **Consistency:** The transaction takes the database from one valid state to another valid state (obeying all foreign keys and constraints).
+- **Isolation:** Concurrent transactions execute independently without interfering with each other.
+- **Durability:** Once a transaction is committed, the changes are permanent, even if the database instantly loses power.
+
+Q: What are Transaction Isolation Levels?
+A: They define how aggressively the database locks rows to prevent concurrent transactions from seeing each other's incomplete data. JDBC supports setting them via `conn.setTransactionIsolation()`:
+1. `TRANSACTION_READ_UNCOMMITTED`: Fastest, but allows "Dirty Reads" (reading uncommitted data).
+2. `TRANSACTION_READ_COMMITTED`: Default in PostgreSQL/Oracle. Prevents Dirty Reads.
+3. `TRANSACTION_REPEATABLE_READ`: Default in MySQL. Prevents "Non-Repeatable Reads".
+4. `TRANSACTION_SERIALIZABLE`: Slowest. Locks entire tables. Absolutely safe from all concurrency anomalies.

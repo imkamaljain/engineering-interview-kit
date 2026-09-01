@@ -1,0 +1,64 @@
+---
+title: "N+1 Query Problem"
+description: "Understanding N+1 Query Problem in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Interview Questions"
+order: 30
+---
+## TL;DR
+
+- The **N+1 Query Problem** is the most common performance killer in ORMs like Hibernate/JPA.
+- It occurs when you run **1** query to fetch a list of Parent entities, and then, while looping through them, you run **N** additional individual queries to fetch their Lazy children.
+- **Solution:** Use JPQL `JOIN FETCH` or JPA EntityGraphs to fetch the parents and children together in a single query.
+
+## Concept
+
+Imagine you want to print the names of 100 `Author`s and the titles of their `Book`s. The relationship is `@OneToMany(fetch = FetchType.LAZY)`.
+
+First, you call `authorRepository.findAll()`. Hibernate executes **1 query**: `SELECT * FROM authors`. It returns 100 Authors. 
+Then, you write a `for` loop over those 100 authors. Inside the loop, you call `author.getBooks()`. 
+Because the books are Lazy, the first time you call it, the proxy executes a query: `SELECT * FROM books WHERE author_id = 1`. 
+The loop continues, running `SELECT * FROM books WHERE author_id = 2`, then 3, all the way to 100.
+
+You have now executed **1 initial query + 100 individual queries = 101 total queries** to the database, completely destroying your application's performance.
+
+## Examples
+
+```java
+// --- ❌ THE PROBLEM ---
+// Executes 1 query: SELECT * FROM users
+List<User> users = userRepository.findAll(); 
+
+for(User user : users) {
+    // For EVERY user, executes another query: SELECT * FROM orders WHERE user_id = ?
+    // If there are 500 users, this executes 500 additional queries! (N+1)
+    System.out.println(user.getOrders().size()); 
+}
+
+// --- ✅ THE SOLUTION (JOIN FETCH) ---
+public interface UserRepository extends JpaRepository<User, Long> {
+    
+    // Executes exactly 1 SQL query containing an INNER/LEFT JOIN.
+    // SELECT u.*, o.* FROM users u LEFT JOIN orders o ON u.id = o.user_id
+    @Query("SELECT u FROM User u LEFT JOIN FETCH u.orders")
+    List<User> findAllWithOrders();
+}
+
+// Now this loop executes ZERO additional queries, because the data is already in RAM!
+List<User> fastUsers = userRepository.findAllWithOrders();
+for(User user : fastUsers) {
+    System.out.println(user.getOrders().size()); 
+}
+```
+
+## Interview Questions
+
+Q: Can Eager Loading cause the N+1 problem?
+A: **Yes!** This is a massive misconception. If you map `@OneToMany(fetch = FetchType.EAGER)`, and call `entityManager.find(User.class, 1)`, Hibernate uses a JOIN to get everything in 1 query. 
+However, if you execute a JPQL query like `SELECT u FROM User u`, Hibernate executes that exact SQL (fetching just Users). Then, before returning the list to you, Hibernate sees the EAGER tag. It realizes it *must* populate the orders. So it automatically executes N individual queries in the background to fetch the orders for every single user in the list! Eager loading often makes N+1 problems *harder* to detect.
+
+Q: What is the `@EntityGraph` annotation?
+A: It is a modern alternative to writing `JOIN FETCH` in JPQL. 
+In your Spring Data Repository, you can just add `@EntityGraph(attributePaths = {"orders"})` above your `findAll()` method. Spring will automatically alter the underlying SQL to generate a `LEFT OUTER JOIN` to fetch the `orders` collection in a single query, preventing the N+1 problem without you having to write manual JPQL strings.

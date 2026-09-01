@@ -1,0 +1,63 @@
+---
+title: "volatile"
+description: "Understanding volatile in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Multithreading & Concurrency"
+order: 11
+---
+
+## TL;DR
+
+- **`volatile`** is a keyword applied to variables to guarantee **visibility** of changes across threads.
+- It tells the JVM: "Never cache this variable in a local CPU cache. Always read it directly from Main Memory."
+- It does **not** provide atomicity (it doesn't prevent race conditions for operations like `count++`).
+
+## Concept
+
+Modern CPUs have L1/L2 caches that are blazingly fast. To optimize performance, if Thread A repeatedly reads a boolean `isRunning`, the CPU will copy `isRunning` from Main RAM into its local L1 cache.
+
+If Thread B (running on a different CPU core) changes `isRunning = false` in Main RAM, Thread A will not see the change! Thread A keeps reading `true` from its local cache, causing an infinite loop. This is a **Visibility Problem**.
+
+Declaring `private volatile boolean isRunning;` disables caching for that variable. Every read fetches fresh data from Main RAM, and every write flushes immediately to Main RAM.
+
+## Examples
+
+```java
+public class VolatileExample {
+    
+    // Without volatile, Thread 1 might never see Thread 2's change!
+    private static volatile boolean isRunning = true;
+    
+    public static void main(String[] args) throws InterruptedException {
+        
+        Thread t1 = new Thread(() -> {
+            System.out.println("Thread 1 started.");
+            while (isRunning) {
+                // Spinning, waiting for isRunning to become false
+            }
+            System.out.println("Thread 1 finished.");
+        });
+        
+        t1.start();
+        Thread.sleep(1000);
+        
+        Thread t2 = new Thread(() -> {
+            System.out.println("Thread 2 flipping the flag.");
+            isRunning = false; // Thread 1 instantly sees this change!
+        });
+        
+        t2.start();
+    }
+}
+```
+
+## Interview Questions
+
+Q: Is `volatile` a replacement for `synchronized`?
+A: No! `volatile` solves the **Visibility** problem, but it does *not* solve the **Atomicity** problem. 
+If you have `volatile int count = 0;` and two threads execute `count++`, you will still get a Race Condition. `count++` requires 3 steps (read, increment, write). `volatile` ensures they read the freshest value, but they can still read the same value simultaneously and overwrite each other. Use `synchronized` or `AtomicInteger` for atomicity.
+
+Q: What is the "Happens-Before" guarantee of volatile?
+A: In Java, writing to a volatile variable establishes a "happens-before" relationship. This means that if Thread A writes to a volatile variable, and Thread B subsequently reads that same volatile variable, Thread B is guaranteed to see *every single memory write* (even non-volatile ones) that Thread A made prior to writing to the volatile variable.

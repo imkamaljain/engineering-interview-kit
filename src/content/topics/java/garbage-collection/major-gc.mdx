@@ -1,0 +1,62 @@
+---
+title: "Major GC"
+description: "Understanding Major GC in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Garbage Collection"
+order: 7
+---
+## TL;DR
+
+- A **Major GC** is a garbage collection event that cleans *only* the **Old Generation** space.
+- It is triggered when the Old Generation becomes full (or reaches a certain occupancy threshold).
+- Because the Old Generation is large and contains long-lived objects, Major GCs are significantly slower than Minor GCs.
+
+## Concept
+
+In Generational Garbage Collection, if an object survives enough Minor GCs, it gets promoted to the Old Generation. Over hours or days, the Old Generation slowly fills up.
+
+When the JVM detects that the Old Generation is running out of space, it triggers a Major GC. 
+Unlike the Young Generation (where the GC expects 98% of objects to be dead and just copies the living), the Old Generation is full of objects that are likely *still alive* (like active caches, DB connections). 
+Therefore, the GC cannot simply "copy the living to a new space and wipe the rest." It must perform a heavy **Mark-and-Sweep** (and often **Compact**) algorithm across the entire massive Old Generation memory space. This takes a lot of time.
+
+## Examples
+
+```java
+public class MajorGCDemo {
+    
+    // Simulating an in-memory cache that grows infinitely.
+    static List<byte[]> memoryLeakCache = new ArrayList<>();
+    
+    public static void main(String[] args) throws InterruptedException {
+        
+        while (true) {
+            // We allocate 10MB arrays.
+            byte[] b = new byte[10 * 1024 * 1024];
+            
+            // We add them to a static list. They will NEVER die.
+            memoryLeakCache.add(b);
+            
+            // 1. They are born in the Young Generation.
+            // 2. Minor GCs happen. They survive and are promoted to Old Generation.
+            // 3. Eventually, Old Generation gets 90% full.
+            // 4. A MAJOR GC triggers to try and clean the Old Generation.
+            // 5. It fails to clean anything (because the list holds them).
+            
+            Thread.sleep(100); 
+        }
+    }
+}
+```
+
+## Interview Questions
+
+Q: What is the difference between a Major GC and a Full GC?
+A: Technically, in JVM terminology:
+- **Major GC:** Cleans *only* the Old Generation. 
+- **Full GC:** Cleans the Young Generation, the Old Generation, *and* the Metaspace simultaneously. 
+However, in practical, modern JVM usage (especially with G1GC), the terms are often used interchangeably because a Major GC is almost always accompanied by a Minor GC anyway. 
+
+Q: Why do Major GCs cause noticeable lag in applications?
+A: Because they operate on a massive memory space filled with live objects. Tracing the reference graph of millions of live objects takes significant CPU time. Furthermore, if the GC uses a Compaction algorithm (like sliding all the live objects to the start of the Old Gen), it must physically move Gigabytes of data in RAM and update millions of memory pointers, all while the application threads are paused (Stop-The-World). This can cause latency spikes of several seconds.

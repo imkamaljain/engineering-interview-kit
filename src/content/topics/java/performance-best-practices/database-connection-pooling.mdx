@@ -1,0 +1,54 @@
+---
+title: "Database Connection Pooling"
+description: "Understanding Database Connection Pooling in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Performance & Best Practices"
+order: 8
+---
+## TL;DR
+
+- **Database Connection Pooling** pre-allocates a set of database connections and reuses them across requests.
+- It eliminates the massive network and authentication latency of opening a new TCP connection for every query.
+- Over-sizing a connection pool (e.g., 1000 connections) causes database CPU thrashing and destroys performance.
+
+## Concept
+
+Establishing a connection to a database like PostgreSQL requires: TCP 3-way handshake, TLS cryptographic handshake, Database authentication, and OS thread allocation. This takes tens of milliseconds.
+
+A Connection Pool (like **HikariCP**, the default in Spring Boot) creates 10 physical connections at startup and keeps them open permanently. 
+When a web request needs data, it borrows a connection from the pool, runs the query, and returns the connection. The borrow/return process takes nanoseconds.
+
+## Examples
+
+```properties
+# Spring Boot Configuration (application.properties)
+# Configuring HikariCP for Optimal Performance
+
+# The maximum number of physical connections to the DB.
+# Should remain small (usually 10-30), NOT in the hundreds!
+spring.datasource.hikari.maximum-pool-size=15
+
+# How long a thread will wait for a connection before throwing an exception
+spring.datasource.hikari.connection-timeout=30000
+
+# How long a connection can sit idle in the pool before being closed to save DB resources
+spring.datasource.hikari.idle-timeout=600000
+
+# The absolute maximum time a connection can live before being forcefully retired 
+# (prevents subtle memory/resource leaks on the DB side).
+spring.datasource.hikari.max-lifetime=1800000
+```
+
+## Interview Questions
+
+Q: Why is a larger connection pool NOT always faster?
+A: Many developers think, "I have 500 concurrent web requests, I need 500 database connections." This is a fatal flaw. 
+Databases process queries using CPU cores. If a database has 4 CPU cores, it can physically only execute 4 queries at a time. If you hit it with 500 concurrent active connections, the database's CPU spends all its time context-switching between 500 threads, achieving zero actual work. 
+A highly utilized pool of 10 connections feeding a 4-core database will process transactions vastly faster than a pool of 500 connections.
+
+Q: What is the formula for calculating optimal connection pool size?
+A: A widely accepted formula (popularized by PostgreSQL engineers) is:
+`connections = ((core_count * 2) + effective_spindle_count)`
+For a server with an 8-core CPU and SSDs (no physical spindles), a pool size of roughly 16 to 20 is optimal. You then add a small buffer for connections temporarily blocked on heavy operations. This is why HikariCP defaults to a max size of just 10.

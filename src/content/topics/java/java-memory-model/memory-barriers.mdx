@@ -1,0 +1,62 @@
+---
+title: "Memory Barriers"
+description: "Understanding Memory Barriers in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Java Memory Model"
+order: 8
+---
+## TL;DR
+
+- **Memory Barriers** (or Memory Fences) are low-level hardware instructions injected by the JVM into the CPU's execution stream.
+- They enforce the rules of the Java Memory Model at the silicon level.
+- They prevent the CPU from reordering instructions and force the CPU caches to synchronize with main RAM.
+
+## Concept
+
+The Java compiler and the CPU are aggressively trying to optimize your code by reordering instructions and caching variables in fast L1 registers. When you use keywords like `volatile` or `synchronized`, the JVM must forcefully tell the CPU: *"Stop optimizing right here, flush your caches, and execute exactly in this order."*
+
+It does this using Memory Barriers. There are four theoretical types of barriers:
+1. **LoadLoad:** Ensures that loads (reads) before the barrier complete before loads after the barrier.
+2. **StoreStore:** Ensures that stores (writes) before the barrier hit memory before stores after the barrier.
+3. **LoadStore:** Ensures loads before the barrier complete before stores after the barrier.
+4. **StoreLoad:** The heaviest barrier. Ensures stores before the barrier hit memory before loads after the barrier. It usually flushes the entire CPU write buffer.
+
+## Examples
+
+```java
+public class MemoryBarrierDemo {
+    int a = 0;
+    volatile boolean flag = false;
+
+    public void writer() {
+        a = 1;         // Normal Store
+        
+        // JVM INJECTS [StoreStore] Barrier here
+        // Guarantees 'a=1' is visible to memory before 'flag=true'
+        
+        flag = true;   // Volatile Store
+        
+        // JVM INJECTS [StoreLoad] Barrier here
+    }
+
+    public void reader() {
+        // Volatile Load
+        if (flag) {    
+            // JVM INJECTS [LoadLoad] and [LoadStore] Barriers here
+            // Guarantees we read 'flag' before reading 'a'
+            
+            int b = a; // Normal Load. Guaranteed to see 1.
+        }
+    }
+}
+```
+
+## Interview Questions
+
+Q: Do Java developers need to write Memory Barriers manually?
+A: No. Unlike C++, where developers can manually insert `std::atomic_thread_fence`, Java abstracts this away entirely. You never write a memory barrier directly in Java. You use high-level constructs (`volatile`, `synchronized`, `final`, `AtomicInteger`, `Lock`), and the JIT compiler automatically translates those into the correct CPU-specific hardware barriers (like `mfence` on x86 or `dmb` on ARM) at runtime.
+
+Q: Why does the `volatile` keyword hurt performance?
+A: Because of the **StoreLoad** barrier. When you write to a volatile variable, the JVM must ensure that no subsequent reads from *any* variable happen until the volatile write is fully flushed to main memory. This forces the CPU to stall its instruction pipeline, drain its write buffers, and wait for the slow RAM to respond. This destroys the CPU's ability to execute instructions asynchronously.

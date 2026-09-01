@@ -1,6 +1,7 @@
 export const CATEGORY_DISPLAY_NAMES: Record<string, string> = {
   'dsa': 'Data Structures & Algorithms',
   'go': 'Go',
+  'java': 'Java',
   'javascript': 'JavaScript',
   'nestjs': 'NestJS',
   'nodejs': 'Node.js',

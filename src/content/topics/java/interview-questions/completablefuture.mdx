@@ -1,0 +1,69 @@
+---
+title: "CompletableFuture"
+description: "Understanding CompletableFuture in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Interview Questions"
+order: 20
+---
+
+## TL;DR
+
+- **`CompletableFuture`** (Java 8) is a framework for writing non-blocking, asynchronous, reactive code. 
+- It allows you to chain multiple asynchronous tasks together, combine their results, and handle exceptions cleanly without writing messy callback logic.
+- It is the modern evolution of the old `Future` interface, which frustratingly required you to "block" the main thread using `.get()`.
+
+## Concept
+
+If you submit a task to an `ExecutorService`, you get a `Future<String>`. To read the result, you must call `future.get()`. But `get()` is a **blocking call**. Your main thread freezes completely until the background thread finishes! This destroys the entire point of concurrency.
+
+`CompletableFuture` solves this using a **callback/reactive** model. Instead of blocking the main thread, you say: "Go fetch the user data in the background. *Then*, when it's done, pass the result to this lambda function to process it." 
+The main thread instantly moves on to other work. When the background thread finishes the DB call, it automatically triggers the lambda function.
+
+## Examples
+
+```java
+import java.util.concurrent.CompletableFuture;
+
+public class AsyncDemo {
+    public static void main(String[] args) throws Exception {
+        
+        // 1. Start a task on a background thread
+        CompletableFuture<String> future = CompletableFuture.supplyAsync(() -> {
+            // Simulating a slow database call
+            System.out.println("Fetching user from DB...");
+            return "Alice";
+        });
+        
+        // 2. Chain operations without blocking!
+        future.thenApply(name -> {
+            // This runs automatically when the first task finishes
+            System.out.println("Formatting name...");
+            return name.toUpperCase();
+        }).thenAccept(formattedName -> {
+            // This runs when the formatting finishes
+            System.out.println("Final Result: " + formattedName);
+        }).exceptionally(ex -> {
+            // Global error handler if anything in the chain crashes
+            System.err.println("Task failed: " + ex.getMessage());
+            return null;
+        });
+
+        // The main thread never blocks! It instantly reaches here.
+        System.out.println("Main thread is free to do other things!");
+        
+        Thread.sleep(2000); // Just keeping JVM alive for the demo
+    }
+}
+```
+
+## Interview Questions
+
+Q: What is the difference between `thenApply()` and `thenCompose()`?
+A: - `thenApply()`: Similar to `.map()` in Streams. You take the result of the previous task, process it, and return a standard value (like a `String`).
+- `thenCompose()`: Similar to `.flatMap()`. You use this when your processing function *also* returns a `CompletableFuture`. If you used `thenApply`, you would end up with a nested `CompletableFuture<CompletableFuture<String>>`. `thenCompose()` flattens it so you just get a single `CompletableFuture<String>`.
+
+Q: How do you wait for two separate `CompletableFutures` to finish before proceeding?
+A: You use `CompletableFuture.allOf(future1, future2)`. 
+This creates a master Future that only completes when both `future1` and `future2` are finished. This is incredibly useful in microservices, where you want to fire off three simultaneous REST API calls in the background, wait for all three to return, combine their JSON data, and return a single aggregated response.

@@ -1,0 +1,69 @@
+---
+title: "synchronized"
+description: "Understanding synchronized in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Java Memory Model"
+order: 7
+---
+
+## TL;DR
+
+- The `synchronized` keyword acts as a Mutual Exclusion Lock (Mutex).
+- It guarantees **Atomicity**: Only one thread can execute a synchronized block of code on the same object at a time.
+- It guarantees **Visibility**: Acquiring a lock fetches fresh data from main memory, and releasing a lock flushes modifications to main memory.
+- It guarantees **Ordering**: Instructions inside the block cannot be reordered outside of it.
+
+## Concept
+
+In Java, every single object inherently possesses an internal "Monitor Lock" (Intrinsic Lock). 
+
+When a thread encounters a `synchronized` block, it asks to acquire the monitor lock for the specified object. If no other thread holds the lock, it acquires it and executes the code. If another thread *does* hold the lock, the current thread is blocked (put to sleep by the OS) until the lock is released.
+
+This guarantees that a sequence of operations (like checking a bank balance and then withdrawing money) is executed as one indivisible, atomic transaction without interference from other threads.
+
+## Examples
+
+```java
+public class BankAccount {
+    private int balance = 100;
+    
+    // Method-level synchronization.
+    // The lock is implicitly 'this' (the BankAccount instance).
+    public synchronized void withdraw(int amount) {
+        if (balance >= amount) {
+            balance -= amount;
+        }
+    }
+    
+    public void transfer(BankAccount target, int amount) {
+        // Block-level synchronization.
+        // You can explicitly specify which object's lock to acquire.
+        synchronized(this) {
+            if (balance >= amount) {
+                this.balance -= amount;
+                
+                // Nesting locks is possible, but risks Deadlocks!
+                synchronized(target) {
+                    target.balance += amount;
+                }
+            }
+        }
+    }
+    
+    // Static methods lock on the Class object (BankAccount.class), 
+    // NOT an instance.
+    public static synchronized void globalAudit() {
+        System.out.println("Auditing all accounts...");
+    }
+}
+```
+
+## Interview Questions
+
+Q: What is the difference between a `synchronized` method and a `synchronized(this)` block?
+A: Functionally, they are identical; both acquire the intrinsic lock of the current object instance (`this`). However, the block-level syntax is considered better practice because it minimizes the scope of the lock. You should only synchronize the specific lines of code that manipulate shared mutable state. Synchronizing an entire method forces threads to wait even when executing safe, read-only setup logic at the start of the method, severely degrading throughput.
+
+Q: If a thread calls `Thread.sleep()` inside a synchronized block, does it release the lock?
+A: **No.** `Thread.sleep()` pauses the execution of the thread, but the thread *keeps holding the lock*. Any other thread trying to enter the synchronized block will be blocked until the sleeping thread wakes up and finishes the block. If you want a thread to release a lock while waiting, you must use `Object.wait()`.

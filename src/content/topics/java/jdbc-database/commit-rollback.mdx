@@ -1,0 +1,77 @@
+---
+title: "Commit & Rollback"
+description: "Understanding Commit & Rollback in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "JDBC & Database"
+order: 8
+---
+## TL;DR
+
+- `commit()` applies all changes made during the current transaction permanently to the database.
+- `rollback()` discards all changes made since the transaction began.
+- You can use **Savepoints** to perform a partial rollback within a large transaction.
+
+## Concept
+
+When you disable AutoCommit (`conn.setAutoCommit(false)`), the database begins tracking your changes in memory/temporary transaction logs, but does not apply them to the actual disk tables. 
+Other users connected to the database cannot see your changes during this time (due to Isolation).
+
+When you call `conn.commit()`, the database synchronizes the logs to disk and makes the changes visible to everyone.
+When you call `conn.rollback()`, the database simply throws away the temporary logs, returning the database to the exact state it was in before you started.
+
+## Examples
+
+```java
+import java.sql.*;
+
+public class SavepointDemo {
+    public void complexProcess(Connection conn) throws SQLException {
+        conn.setAutoCommit(false);
+        Savepoint savepoint = null;
+        
+        try (Statement stmt = conn.createStatement()) {
+            
+            // Phase 1: Successful operations
+            stmt.executeUpdate("INSERT INTO users VALUES (1, 'Alice')");
+            
+            // Create a Savepoint (A checkpoint in the transaction)
+            savepoint = conn.setSavepoint("Savepoint1");
+            
+            // Phase 2: Operations that might fail
+            stmt.executeUpdate("INSERT INTO users VALUES (2, 'Bob')");
+            
+            // Trigger a failure
+            if (true) throw new SQLException("Bob failed!");
+            
+            // If we succeed, commit everything
+            conn.commit();
+            
+        } catch (SQLException e) {
+            if (conn != null) {
+                if (savepoint != null) {
+                    // PARTIAL ROLLBACK!
+                    // Bob's insert is undone, but Alice's insert remains active!
+                    conn.rollback(savepoint);
+                    // We can now commit just Phase 1
+                    conn.commit(); 
+                } else {
+                    // FULL ROLLBACK
+                    conn.rollback();
+                }
+            }
+        } finally {
+            if (conn != null) conn.setAutoCommit(true);
+        }
+    }
+}
+```
+
+## Interview Questions
+
+Q: What is a Savepoint?
+A: A Savepoint is a logical marker created within an active transaction. By default, a rollback throws away the *entire* transaction. By using `conn.setSavepoint()`, you can later call `conn.rollback(savepoint)` to undo only the changes made *after* the savepoint was created, while keeping the changes made *before* the savepoint intact.
+
+Q: If an exception occurs and you forget to call `rollback()`, what happens?
+A: If your code throws an exception, skips your `commit()` call, and the Connection is returned to a Connection Pool (or closed) without calling `rollback()`, the behavior is technically driver-dependent. However, almost all modern connection pools (like HikariCP) will detect that the connection has an active, uncommitted transaction and will automatically execute a `rollback()` before handing the connection to the next user, preventing data corruption. Still, always explicitly rollback in a `catch` block!

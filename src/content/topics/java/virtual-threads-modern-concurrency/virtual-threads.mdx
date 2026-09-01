@@ -1,0 +1,62 @@
+---
+title: "Virtual Threads"
+description: "Understanding Virtual Threads in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Virtual Threads & Modern Concurrency"
+order: 1
+---
+## TL;DR
+
+- **Virtual Threads** (Project Loom, Java 21) are lightweight threads managed entirely by the Java Virtual Machine (JVM).
+- Unlike traditional threads, they are not mapped 1:1 to OS threads.
+- You can create millions of virtual threads simultaneously, solving the scaling bottlenecks of traditional Java web servers.
+
+## Concept
+
+Traditional Java `Thread` objects are wrappers around OS Platform Threads. OS threads are "heavy." They take ~1MB of memory for their stack space and take time to allocate. If an application blocks (e.g., waiting for a database), the OS thread sits idle, wasting that 1MB of memory. Because servers have limited RAM, you can only run a few thousand threads before crashing.
+
+A **Virtual Thread** is fundamentally different. It is just an object on the Java Heap. 
+When you start a virtual thread, the JVM schedules it to run on a small pool of underlying OS threads (called Carrier Threads). 
+Crucially, when a virtual thread performs a blocking I/O operation (like a network call), the JVM automatically *unmounts* the virtual thread from the Carrier Thread. The Carrier Thread is immediately free to run a different virtual thread! When the network call finishes, the JVM mounts the virtual thread back onto an available Carrier Thread.
+
+## Examples
+
+```java
+import java.util.concurrent.Executors;
+import java.util.stream.IntStream;
+
+public class VirtualThreadBasic {
+    public static void main(String[] args) {
+        
+        // 1. Creating via the Thread API
+        Thread vThread = Thread.ofVirtual().start(() -> {
+            System.out.println("Running in virtual thread");
+        });
+        
+        // 2. Creating massive scale using Executors
+        // This will launch 100,000 concurrent sleep tasks.
+        // On Platform threads, this would crash the JVM with OutOfMemoryError.
+        // On Virtual threads, this runs effortlessly in milliseconds.
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            
+            IntStream.range(0, 100_000).forEach(i -> {
+                executor.submit(() -> {
+                    Thread.sleep(1000); 
+                    return i;
+                });
+            });
+            // Try-with-resources implicitly calls executor.close() which waits for all tasks.
+        }
+    }
+}
+```
+
+## Interview Questions
+
+Q: Do Virtual Threads run faster than normal threads?
+A: No. Virtual Threads do not increase the execution speed of your code, nor do they give you more CPU power. They simply allow your server to handle vastly more *concurrent waiting tasks*. They increase **Throughput** and **Scalability**, but not pure computational speed.
+
+Q: When should you NOT use Virtual Threads?
+A: You should not use Virtual Threads for long-running, CPU-intensive tasks (like video rendering, heavy cryptography, or complex math). Because these tasks never block on I/O, the Virtual Thread will never unmount from the Carrier Thread. It will just hog the OS thread indefinitely. For pure CPU work, use traditional Platform Threads sized to your physical CPU core count.

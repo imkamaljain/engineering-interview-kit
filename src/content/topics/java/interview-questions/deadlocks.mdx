@@ -1,0 +1,79 @@
+---
+title: "Deadlocks"
+description: "Understanding Deadlocks in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Interview Questions"
+order: 26
+---
+## TL;DR
+
+- A **Deadlock** occurs when two or more threads are permanently blocked, waiting for each other to release locks.
+- It completely freezes the affected parts of the application.
+- It happens when Thread A holds Lock 1 and waits for Lock 2, while Thread B holds Lock 2 and waits for Lock 1.
+
+## Concept
+
+In multithreading, `synchronized` is used to prevent race conditions by locking an object. 
+Imagine a banking system where you transfer money between two accounts. To prevent data corruption, you lock both accounts. 
+Thread 1 (Alice sending to Bob): Locks Alice's account, then tries to lock Bob's account.
+Thread 2 (Bob sending to Alice): Locks Bob's account, then tries to lock Alice's account.
+
+If both threads run at the exact same millisecond:
+1. Thread 1 locks Alice.
+2. Thread 2 locks Bob.
+3. Thread 1 tries to lock Bob, but Bob is locked. It pauses and waits forever.
+4. Thread 2 tries to lock Alice, but Alice is locked. It pauses and waits forever.
+**Deadlock.** Neither thread will ever proceed. The JVM does not automatically fix this; the threads remain frozen until you manually restart the server.
+
+## Examples
+
+```java
+public class DeadlockDemo {
+
+    // Two lock objects
+    private static final Object lock1 = new Object();
+    private static final Object lock2 = new Object();
+
+    public static void main(String[] args) {
+        
+        Thread threadA = new Thread(() -> {
+            synchronized (lock1) {
+                System.out.println("Thread A: Holding Lock 1...");
+                try { Thread.sleep(100); } catch (InterruptedException e) {}
+                
+                System.out.println("Thread A: Waiting for Lock 2...");
+                synchronized (lock2) {
+                    System.out.println("Thread A: Acquired both locks!");
+                }
+            }
+        });
+
+        Thread threadB = new Thread(() -> {
+            synchronized (lock2) {
+                System.out.println("Thread B: Holding Lock 2...");
+                try { Thread.sleep(100); } catch (InterruptedException e) {}
+                
+                System.out.println("Thread B: Waiting for Lock 1...");
+                synchronized (lock1) { // ❌ DEADLOCK HAPPENS HERE
+                    System.out.println("Thread B: Acquired both locks!");
+                }
+            }
+        });
+
+        threadA.start();
+        threadB.start();
+    }
+}
+```
+
+## Interview Questions
+
+Q: How do you prevent a Deadlock?
+A: The most reliable way to prevent a deadlock is **Lock Ordering**. 
+Deadlocks only happen if threads acquire multiple locks in different orders (A then B, vs B then A). If you enforce a strict global rule that *every* thread must acquire locks in the exact same mathematical order (e.g., always lock the account with the smaller ID first, then the larger ID), deadlocks become mathematically impossible. 
+Alternatively, use `ReentrantLock.tryLock(timeout)`, which will give up if it cannot acquire the lock within 5 seconds, avoiding a permanent freeze.
+
+Q: How do you diagnose a deadlock on a running production server?
+A: You take a **Thread Dump**. You can use the `jstack <pid>` command in the terminal, or connect via JMX using VisualVM. The JVM will print the stack trace of every active thread. The JVM has built-in deadlock detection; at the bottom of the output, it will explicitly highlight: *"Found one Java-level deadlock!"* and list exactly which threads are frozen and exactly which locks they are fighting over.

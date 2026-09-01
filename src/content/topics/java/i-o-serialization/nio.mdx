@@ -1,0 +1,70 @@
+---
+title: "NIO"
+description: "Understanding NIO in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "I/O & Serialization"
+order: 5
+---
+## TL;DR
+
+- **Java NIO (New I/O)** was introduced in Java 1.4 to provide high-speed, scalable, block-oriented I/O operations.
+- The original `java.io` package is **Stream-oriented** (reading one byte at a time) and **Blocking** (the thread hangs while waiting for data).
+- NIO is **Buffer-oriented** (reading chunks of data at once) and supports **Non-Blocking I/O** (a single thread can manage thousands of connections simultaneously using Selectors).
+
+## Concept
+
+Imagine a web server built with old `java.io`. If 10,000 users connect, the server must create 10,000 Threads. If a user is on a slow 3G connection sending data, the thread dedicated to that user just sits there `blocked`, waiting for the next byte to arrive over the network. 10,000 threads consume Gigabytes of RAM and crash the server.
+
+**NIO** solves this using the Reactor pattern.
+1. **Channels:** The non-blocking equivalent of streams. You can read/write to them asynchronously.
+2. **Buffers:** Data is written directly into large memory buffers, rather than byte-by-byte.
+3. **Selectors:** The magic component. One single Thread can register 10,000 Channels with a Selector. The Selector asks the OS: *"Are any of these 10,000 channels ready with data?"* If User #452 sends a packet, the Selector wakes up the thread, the thread processes that specific packet, and then goes right back to monitoring all 10,000 channels. This allows tools like Netty, Tomcat, and Node.js to handle massive concurrency with just 1 or 2 threads.
+
+## Examples
+
+```java
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
+import java.nio.file.*;
+
+public class NioDemo {
+    public static void main(String[] args) throws Exception {
+        
+        // 1. Open a Channel to a file
+        Path path = Paths.get("data.txt");
+        try (FileChannel channel = FileChannel.open(path, StandardOpenOption.READ)) {
+            
+            // 2. Allocate a Buffer (48 bytes)
+            ByteBuffer buffer = ByteBuffer.allocate(48);
+            
+            // 3. Read data from the Channel into the Buffer
+            int bytesRead = channel.read(buffer);
+            
+            while (bytesRead != -1) {
+                // Flip the buffer from "writing mode" to "reading mode"
+                buffer.flip(); 
+                
+                // Read the bytes out of the buffer
+                while (buffer.hasRemaining()) {
+                    System.out.print((char) buffer.get()); 
+                }
+                
+                // Clear the buffer to get ready for the next chunk
+                buffer.clear(); 
+                bytesRead = channel.read(buffer);
+            }
+        }
+    }
+}
+```
+
+## Interview Questions
+
+Q: What is NIO.2?
+A: Introduced in Java 7, NIO.2 completely overhauled file system interactions. It introduced the `java.nio.file` package, replacing the ancient and clunky `java.io.File` class with the vastly superior `Path`, `Paths`, and `Files` classes. It added support for symbolic links, reading file attributes (like owner and permissions), and asynchronous file operations.
+
+Q: Is NIO always faster than standard I/O?
+A: No! This is a massive misconception. If you are reading a single file from a local hard drive, standard `java.io.BufferedInputStream` is often actually *faster* and much easier to code than NIO. 
+NIO shines strictly in **Network Programming** (scaling a server to handle thousands of concurrent socket connections) and **Memory-Mapped Files** (mapping massive multi-gigabyte files directly into RAM). For everyday file parsing, standard I/O (or the `Files.readAllLines()` utility) is preferred.

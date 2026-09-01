@@ -1,0 +1,64 @@
+---
+title: "Statement vs PreparedStatement"
+description: "Understanding Statement vs PreparedStatement in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "JDBC & Database"
+order: 4
+---
+## TL;DR
+
+- `Statement` is used for executing static, hardcoded SQL queries. It is vulnerable to SQL Injection.
+- `PreparedStatement` extends `Statement` and is used for executing dynamic, parameterized SQL queries.
+- **You should ALWAYS use `PreparedStatement`** because it pre-compiles the query on the database, runs faster in loops, and completely prevents SQL Injection.
+
+## Concept
+
+### Statement
+When you execute a `Statement`, the Java driver sends the raw string exactly as you concatenated it to the database. The database must parse, compile, and optimize the execution plan for that *exact* string every single time. If you use string concatenation to build the query from user input, a hacker can inject malicious SQL commands.
+
+### PreparedStatement
+A `PreparedStatement` uses placeholders (`?`). When you create it, Java sends the *blueprint* of the query to the database immediately. The database parses and compiles the blueprint once. 
+When you execute the query, Java only sends the parameter *values*. The database safely inserts the values into the pre-compiled plan. Because the database already compiled the logic, it treats the parameters strictly as data (strings/numbers), making SQL injection mathematically impossible.
+
+## Examples
+
+```java
+import java.sql.*;
+
+public class StatementDemo {
+    
+    // --- TERRIBLE WAY (Statement) ---
+    public void insecureLogin(Connection conn, String username) throws SQLException {
+        try (Statement stmt = conn.createStatement()) {
+            // DANGER! If username is: admin' OR '1'='1
+            // The query becomes: SELECT * FROM users WHERE name = 'admin' OR '1'='1'
+            String sql = "SELECT * FROM users WHERE name = '" + username + "'";
+            ResultSet rs = stmt.executeQuery(sql);
+        }
+    }
+    
+    // --- CORRECT WAY (PreparedStatement) ---
+    public void secureLogin(Connection conn, String username) throws SQLException {
+        String sql = "SELECT * FROM users WHERE name = ?";
+        
+        try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            // Safely bind the parameter. 
+            // Note: JDBC parameter indexes start at 1, not 0!
+            pstmt.setString(1, username);
+            
+            // Even if username is malicious, the DB treats it purely as a literal string.
+            ResultSet rs = pstmt.executeQuery();
+        }
+    }
+}
+```
+
+## Interview Questions
+
+Q: Why is PreparedStatement faster than Statement?
+A: Because of **Query Plan Caching**. When the database receives a `PreparedStatement` like `SELECT * FROM users WHERE id = ?`, it parses the syntax and creates an execution plan. It saves this plan in its cache. If you execute this statement 1,000 times in a loop with different IDs, the database reuses the exact same execution plan 1,000 times, saving immense CPU overhead. A raw `Statement` with hardcoded values requires the database to parse and plan the query 1,000 different times.
+
+Q: Can you use `?` placeholders for table names or column names?
+A: No. Placeholders (`?`) can only be used for **values** (like strings, numbers, dates). You cannot use them to dynamically substitute table names, column names, or SQL keywords (like `ASC`/`DESC`). The database needs the table and column names upfront in order to compile the execution plan and verify that the columns actually exist.

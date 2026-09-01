@@ -1,0 +1,83 @@
+---
+title: "Double-Checked Locking"
+description: "Understanding Double-Checked Locking in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Java Memory Model"
+order: 10
+---
+## TL;DR
+
+- **Double-Checked Locking (DCL)** is a design pattern used to reduce the performance overhead of acquiring a lock when lazily initializing a Singleton.
+- It checks if the instance is null, then locks, then checks if it is null *again*.
+- In Java, DCL is fundamentally **broken and dangerous** unless the Singleton variable is declared as `volatile`.
+
+## Concept
+
+If you want to lazy-load a Singleton thread-safely, the easiest way is to add `synchronized` to the `getInstance()` method. But this causes a performance bottleneck: every single thread that calls the method must wait in line for the lock, even if the object was initialized years ago.
+
+Developers invented DCL to fix this: check if it's null without locking (fast path). If it is null, acquire the lock, check again (to ensure another thread didn't initialize it while you were waiting for the lock), and initialize.
+
+### The Fatal Flaw
+Due to Instruction Reordering, the JVM can allocate memory for the object and assign it to the `instance` variable *before* the constructor finishes executing. Thread B comes along, checks the first `if (instance == null)`, sees it is NOT null (because the memory address is assigned), bypasses the lock, and returns a partially constructed, corrupted object!
+
+## Examples
+
+```java
+public class BrokenSingleton {
+    // FATAL FLAW: Missing 'volatile'!
+    private static BrokenSingleton instance; 
+    
+    public static BrokenSingleton getInstance() {
+        if (instance == null) {                 // First check (no lock)
+            synchronized(BrokenSingleton.class) {
+                if (instance == null) {         // Second check (with lock)
+                    instance = new BrokenSingleton();
+                }
+            }
+        }
+        return instance;
+    }
+}
+
+public class FixedSingleton {
+    // FIXED: Volatile prevents the CPU from reordering the constructor 
+    // execution with the memory assignment.
+    private static volatile FixedSingleton instance; 
+    
+    public static FixedSingleton getInstance() {
+        if (instance == null) {
+            synchronized(FixedSingleton.class) {
+                if (instance == null) {
+                    instance = new FixedSingleton();
+                }
+            }
+        }
+        return instance;
+    }
+}
+```
+
+## Interview Questions
+
+Q: Is Double-Checked Locking the best way to create a Singleton?
+A: No. While making the variable `volatile` fixes the JMM issue (since Java 5), DCL is considered an archaic and overly complex anti-pattern. 
+The absolute best ways to create a Singleton in Java are:
+1. **Enums:** `public enum Singleton { INSTANCE; }` (Provides free thread-safety and serialization protection).
+2. **Initialization-on-Demand Holder Idiom:** Relies on the JVM's class-loader to guarantee thread-safe lazy initialization without requiring any explicit synchronization or `volatile` keywords at all.
+
+```java
+// The perfect lazy Singleton (Initialization-on-Demand Holder)
+public class PerfectSingleton {
+    private PerfectSingleton() {}
+    
+    private static class InstanceHolder {
+        private static final PerfectSingleton INSTANCE = new PerfectSingleton();
+    }
+    
+    public static PerfectSingleton getInstance() {
+        return InstanceHolder.INSTANCE;
+    }
+}
+```

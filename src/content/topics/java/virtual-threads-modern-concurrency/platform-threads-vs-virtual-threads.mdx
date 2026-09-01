@@ -1,0 +1,64 @@
+---
+title: "Platform Threads vs Virtual Threads"
+description: "Understanding Platform Threads vs Virtual Threads in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Virtual Threads & Modern Concurrency"
+order: 2
+---
+## TL;DR
+
+- **Platform Threads** (Classic Threads) are managed by the OS. They are heavy, expensive, and limited in number.
+- **Virtual Threads** are managed by the JVM. They are cheap, fast to create, and virtually limitless.
+- Virtual threads are not a replacement for Platform threads; they run *on top* of them.
+
+## Concept
+
+### Platform Threads (OS Threads)
+Every time you call `new Thread().start()` in Java (pre-Java 21), you ask the OS to allocate a thread. 
+- **Cost:** ~1MB-2MB of RAM per thread stack.
+- **Context Switching:** Managed by the OS kernel, which is a slow and expensive operation requiring system calls.
+- **Limit:** Typically a few thousand before the OS begins thrashing or runs out of memory.
+
+### Virtual Threads
+A Virtual Thread is entirely in the JVM's "User Space".
+- **Cost:** A few hundred bytes on the Java Heap. The JVM manages its call stack dynamically, growing and shrinking it as needed.
+- **Context Switching:** When a virtual thread blocks, the JVM (not the OS) copies its stack to the heap and suspends it. This takes nanoseconds.
+- **Limit:** You can easily run millions of them.
+
+## Examples
+
+```java
+public class ThreadComparison {
+    public static void main(String[] args) {
+        
+        // --- PLATFORM THREAD ---
+        // Heavyweight. Do not create 100,000 of these.
+        Thread platformThread = Thread.ofPlatform()
+                                      .name("classic-thread-1")
+                                      .start(() -> doWork());
+                                      
+        // --- VIRTUAL THREAD ---
+        // Lightweight. Go ahead and create 1,000,000 of these.
+        Thread virtualThread = Thread.ofVirtual()
+                                     .name("virtual-thread-1")
+                                     .start(() -> doWork());
+                                     
+        // Check what kind of thread you are currently on
+        boolean isVirtual = Thread.currentThread().isVirtual();
+    }
+    
+    public static void doWork() {
+        try { Thread.sleep(100); } catch (Exception e) {}
+    }
+}
+```
+
+## Interview Questions
+
+Q: Can a Virtual Thread be a Daemon thread?
+A: Yes, in fact, **all** Virtual Threads are daemon threads by default, and you cannot change them to non-daemon threads. This means that if your main application thread finishes, the JVM will instantly shut down, terminating all running Virtual Threads without waiting for them to complete.
+
+Q: Do Virtual Threads have priorities?
+A: No. The `Thread.setPriority()` method has no effect on Virtual Threads. The JVM treats all Virtual Threads equally. If you require strict priority-based scheduling, you must use Platform Threads.

@@ -1,0 +1,58 @@
+---
+title: "Virtual Threads"
+description: "Understanding Virtual Threads in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Interview Questions"
+order: 27
+---
+## TL;DR
+
+- **Virtual Threads** (Project Loom, Java 21+) are lightweight, ultra-cheap threads managed by the JVM, not the Operating System.
+- You can create millions of Virtual Threads concurrently without crashing the server.
+- They automatically "unmount" from the CPU when blocked (e.g., waiting for a database response), allowing the CPU to instantly execute a different virtual thread.
+
+## Concept
+
+Historically, every Java `Thread` was directly mapped 1-to-1 to an OS Thread. OS Threads are heavy. If you created 10,000 threads, you would run out of RAM, and the OS would spend 90% of its CPU time just context-switching between them. 
+This is why Thread Pools (like Tomcat's default 200 threads) exist. But if a thread makes a 2-second database call, that heavy OS thread is completely frozen for 2 seconds doing nothing. If you get 201 concurrent requests, the 201st request is queued.
+
+**Virtual Threads** solve this. They are incredibly cheap objects on the Heap. The JVM maintains a tiny pool of real OS threads (Carrier Threads). When a Virtual Thread hits a blocking operation (like an HTTP call), the JVM instantly pauses it, copies its tiny state to the heap, and runs a *different* Virtual Thread on that same OS Carrier Thread. When the HTTP call finishes, the Virtual Thread is resumed. This gives you NodeJS-style non-blocking IO performance, but using standard, highly readable, synchronous Java code.
+
+## Examples
+
+```java
+import java.util.concurrent.*;
+
+public class VirtualThreadDemo {
+    public static void main(String[] args) throws InterruptedException {
+        
+        // Let's create 10,000 threads!
+        // In older Java, this would crash the JVM with OutOfMemoryError.
+        // With Virtual Threads, this takes milliseconds and barely any RAM.
+        
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            for (int i = 0; i < 10000; i++) {
+                final int taskId = i;
+                
+                executor.submit(() -> {
+                    // Simulating a 1 second database call
+                    try { Thread.sleep(1000); } catch (InterruptedException e) {}
+                    System.out.println("Task " + taskId + " finished on " + Thread.currentThread());
+                });
+            }
+        } 
+        // The try-with-resources block waits for all 10,000 virtual threads to finish.
+        // The whole program will finish in ~1.1 seconds!
+    }
+}
+```
+
+## Interview Questions
+
+Q: Should I pool Virtual Threads?
+A: **Never.** Virtual threads are so cheap that pooling them is an anti-pattern. You should create a brand new Virtual Thread for every single incoming web request, and let it die when the request is over. The `Executors.newVirtualThreadPerTaskExecutor()` specifically creates a new thread for every task, rather than pooling them.
+
+Q: What is "Thread Pinning"?
+A: Virtual threads achieve their speed by "unmounting" from the OS Carrier Thread when they block. However, if a virtual thread executes a blocking operation *while inside a `synchronized` block*, it becomes "pinned" to the Carrier Thread. The JVM cannot unmount it. The OS thread remains frozen, destroying the performance benefits of virtual threads. To fix this, you should replace `synchronized` blocks with `ReentrantLock` when using Virtual Threads, as `ReentrantLock` natively supports unmounting.

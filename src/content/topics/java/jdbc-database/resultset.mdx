@@ -1,0 +1,69 @@
+---
+title: "ResultSet"
+description: "Understanding ResultSet in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "JDBC & Database"
+order: 6
+---
+## TL;DR
+
+- A `ResultSet` represents the tabular data returned by executing a `SELECT` query.
+- It maintains a **Cursor** pointing to its current row of data. Initially, the cursor is positioned *before* the first row.
+- You must call `rs.next()` to move the cursor to the first (and subsequent) rows.
+
+## Concept
+
+When you query the database, it doesn't instantly dump 100,000 rows into your JVM's memory (which would cause an OutOfMemoryError). Instead, it returns a `ResultSet`.
+The `ResultSet` is essentially a streaming pointer (a cursor) connected to the database's memory. 
+
+When you call `rs.next()`, the driver asks the database to stream the next row (or batch of rows) over the network. You then use getter methods (`getInt`, `getString`) to read column data from that specific row. Once you call `next()` again, the previous row's data is discarded from memory.
+
+## Examples
+
+```java
+import java.sql.*;
+
+public class ResultSetDemo {
+    public void printUsers(Connection conn) throws SQLException {
+        String sql = "SELECT id, username, active FROM users";
+        
+        try (Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery(sql)) {
+            
+            // rs.next() moves the cursor to the next row.
+            // It returns true if a row exists, and false if we reached the end.
+            while (rs.next()) {
+                
+                // You can access columns by index (1-based, slightly faster)
+                int id = rs.getInt(1); 
+                
+                // Or you can access columns by name (much more readable!)
+                String username = rs.getString("username");
+                boolean isActive = rs.getBoolean("active");
+                
+                System.out.printf("User %d: %s (Active: %b)%n", id, username, isActive);
+            }
+        }
+        // Because ResultSet is in the try-with-resources, it is safely closed.
+    }
+}
+```
+
+## Interview Questions
+
+Q: What does `rs.getInt()` return if the database value is NULL?
+A: This is a notorious JDBC trap. `rs.getInt()` (and `getDouble`, `getBoolean`) return primitive types, which cannot be null. If the value in the database is `NULL`, `rs.getInt()` will return `0` (and `getBoolean` returns `false`). 
+To verify if the value was actually `NULL` or just legitimately `0`, you must immediately call `rs.wasNull()` after reading the column:
+```java
+int score = rs.getInt("score");
+if (rs.wasNull()) {
+    // It was actually NULL in the database!
+}
+```
+
+Q: Can you scroll backwards through a ResultSet?
+A: By default, No. A standard `ResultSet` is `TYPE_FORWARD_ONLY`. You can only call `next()` to move forward. However, when creating a Statement, you can explicitly request a scrollable ResultSet:
+`conn.createStatement(ResultSet.TYPE_SCROLL_INSENSITIVE, ResultSet.CONCUR_READ_ONLY)`. 
+If supported by the driver, this allows you to call `rs.previous()`, `rs.first()`, or `rs.absolute(10)`. (Note: Scrollable ResultSets require significantly more memory).

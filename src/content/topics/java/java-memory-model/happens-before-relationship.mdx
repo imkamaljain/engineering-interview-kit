@@ -1,0 +1,60 @@
+---
+title: "Happens-Before Relationship"
+description: "Understanding Happens-Before Relationship in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Java Memory Model"
+order: 2
+---
+## TL;DR
+
+- The **Happens-Before Relationship** is the foundational rule of the Java Memory Model.
+- If Action A *happens-before* Action B, then the memory changes made by Action A are **guaranteed to be visible** to Action B.
+- It is a mathematical guarantee provided by the JVM that prevents stale data reads and unsafe instruction reordering.
+
+## Concept
+
+"Happens-before" does *not* strictly mean "occurs earlier in real-time." It is a contractual guarantee about memory visibility. 
+If Thread 1 updates `x = 5` at 12:00:00, and Thread 2 reads `x` at 12:00:01, Thread 2 might still see `x = 0` if there is no happens-before relationship connecting them (because the value 5 is stuck in Thread 1's CPU cache).
+
+The JMM defines specific scenarios that establish a happens-before relationship. The most common ones are:
+1. **Program Order Rule:** Within a single thread, every action happens-before every subsequent action.
+2. **Monitor Lock Rule:** An unlock on a `synchronized` monitor happens-before every subsequent lock on that *same* monitor.
+3. **Volatile Variable Rule:** A write to a `volatile` variable happens-before every subsequent read of that *same* variable.
+4. **Thread Start/Join Rule:** A call to `Thread.start()` happens-before any action in the started thread. Any action in a thread happens-before any other thread successfully returns from `Thread.join()` on it.
+
+## Examples
+
+```java
+public class HappensBeforeDemo {
+    private volatile boolean flag = false;
+    private int data = 0;
+    
+    // Thread 1 executes this
+    public void write() {
+        data = 42;      // Action A
+        flag = true;    // Action B (volatile write)
+    }
+    
+    // Thread 2 executes this
+    public void read() {
+        if (flag) {     // Action C (volatile read)
+            // If we get here, C read the 'true' written by B.
+            // By JMM rules: B happens-before C.
+            // By Program Order: A happens-before B, and C happens-before D.
+            // Therefore, A happens-before D! 
+            // Thread 2 is absolutely guaranteed to print 42, not 0.
+            System.out.println(data); // Action D
+        }
+    }
+}
+```
+
+## Interview Questions
+
+Q: Is the "Happens-Before" relationship transitive?
+A: Yes! Transitivity is a core property. If A happens-before B, and B happens-before C, then the JVM guarantees that A happens-before C. This is exactly how the `volatile` flag in the example above guarantees the visibility of the non-volatile `data` variable.
+
+Q: If Thread A writes to a variable at 1:00 PM, and Thread B reads it at 1:05 PM, is that a happens-before relationship?
+A: **No.** Time is completely irrelevant to the Java Memory Model. If there is no synchronization mechanism (like a lock, a volatile variable, or a thread join) connecting Thread A and Thread B, there is no happens-before relationship. Thread B could theoretically read stale data for hours or days. You must explicitly establish the relationship using Java concurrency constructs.

@@ -1,0 +1,63 @@
+---
+title: "Caching"
+description: "Understanding Caching in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Performance & Best Practices"
+order: 10
+---
+## TL;DR
+
+- **Caching** stores frequently accessed, rarely changing data in fast RAM to avoid expensive recalculations or slow database/network calls.
+- It provides the single largest performance leap for read-heavy applications.
+- The hardest part of caching is **Cache Invalidation** (knowing when the underlying data has changed and removing the stale data from the cache).
+
+## Concept
+
+If your application displays a list of "Supported Countries" on the checkout page, querying the database every time a user hits the page is a massive waste of resources. The list of countries changes maybe once a year.
+
+By caching that data in RAM, you reduce database load and serve the user the data in nanoseconds instead of milliseconds. 
+Caches can be **Local** (stored in the JVM heap using libraries like Caffeine or Guava) or **Distributed** (stored in a separate cluster like Redis or Memcached so all microservices share the same cache).
+
+## Examples
+
+```java
+import org.springframework.cache.annotation.Cacheable;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.stereotype.Service;
+
+@Service
+public class ProductService {
+
+    // 1. CACHING DATA
+    // When called, Spring checks the "products" cache for the given ID.
+    // If found, it returns instantly. If NOT found, it executes the DB query,
+    // puts the result into the cache, and then returns it.
+    @Cacheable(value = "products", key = "#id")
+    public Product getProduct(Long id) {
+        System.out.println("Executing slow database query...");
+        return database.findById(id);
+    }
+
+    // 2. CACHE INVALIDATION
+    // When an admin updates a product, the cached version is now stale!
+    // @CacheEvict instantly deletes the old entry from the cache.
+    @CacheEvict(value = "products", key = "#product.id")
+    public void updateProduct(Product product) {
+        database.save(product);
+    }
+}
+```
+
+## Interview Questions
+
+Q: What is the difference between a Local Cache and a Distributed Cache?
+A: - **Local Cache (Caffeine, Ehcache):** Lives entirely inside the JVM memory of the application node. It is insanely fast (nanoseconds). However, if you have 5 server instances, each has its own separate cache. If Server A updates a product, Server B will still show the stale cached data.
+- **Distributed Cache (Redis, Hazelcast):** An external service. It requires a network call (milliseconds), making it slightly slower than a local cache, but it guarantees consistency across all microservice instances. If Server A updates the Redis cache, Server B instantly sees the update.
+
+Q: What is Cache Eviction Strategy (LRU vs LFU)?
+A: Caches are stored in limited RAM, so they cannot grow forever. When the cache is full, it must evict an old item to make room for a new one.
+- **LRU (Least Recently Used):** Discards the item that hasn't been accessed for the longest time. (Most common and generally the best default).
+- **LFU (Least Frequently Used):** Tracks how many times items are accessed and discards the item with the lowest access count.
+- **TTL (Time to Live):** An item is automatically discarded after a set duration (e.g., 5 minutes) regardless of usage.

@@ -1,0 +1,61 @@
+---
+title: "Safe Publication"
+description: "Understanding Safe Publication in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Java Memory Model"
+order: 9
+---
+## TL;DR
+
+- **Safe Publication** is the process of making an object constructed in one thread safely available to other threads.
+- If an object is not safely published, another thread might see a partially constructed, corrupted version of the object.
+- You safely publish an object using `final` fields, `volatile` references, locks, or concurrent collections.
+
+## Concept
+
+Object construction is not a single atomic operation at the CPU level. 
+When you write `Map config = new HashMap();`, the JVM allocates memory, runs the constructor, initializes the fields, and then assigns the memory address to the `config` reference. 
+
+Due to instruction reordering (by the CPU or Compiler), the JVM might assign the memory address to the `config` reference *before* the constructor finishes running!
+If Thread B reads the `config` reference without proper synchronization (Unsafe Publication), it might see a non-null object, but when it tries to read the object's internal fields, they might be empty or corrupted (stale data).
+
+## Examples
+
+```java
+public class PublicationDemo {
+    
+    // UNSAFE PUBLICATION
+    // Another thread might see 'data' as non-null, but 'data.value' as 0!
+    public Data data; 
+    
+    public void initializeUnsafe() {
+        data = new Data(42); 
+    }
+
+    // ----------------------------------------------------
+    
+    // SAFE PUBLICATION (Using volatile)
+    // The volatile write guarantees the constructor finishes first.
+    public volatile Data safeData;
+    
+    public void initializeSafe() {
+        safeData = new Data(42);
+    }
+    
+    class Data {
+        int value;
+        Data(int value) { this.value = value; }
+    }
+}
+```
+
+## Interview Questions
+
+Q: How does the `final` keyword ensure Safe Publication?
+A: The Java Memory Model provides a very special guarantee for the `final` keyword. When a constructor finishes, the JMM guarantees that the initialization of all `final` fields will be completely visible to any thread that obtains a reference to that object. A thread will *never* see a partially constructed state for a `final` field, even if the object is published unsafely (e.g., without `volatile` or locks). This is why creating deeply immutable objects (using only `final` fields) is the gold standard for thread-safe programming.
+
+Q: What is the "This Escape" anti-pattern?
+A: It happens when an object publishes a reference to itself (`this`) *before* its constructor has finished executing. 
+For example, if a constructor creates an EventListener and registers `this` with a global EventManager, a background thread might trigger the event and call a method on `this` object while the constructor is only halfway done running. The object is fundamentally corrupted. You should never pass `this` to external classes from inside a constructor.

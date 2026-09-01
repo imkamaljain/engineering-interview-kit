@@ -1,0 +1,62 @@
+---
+title: "Suppressed Exceptions"
+description: "Understanding Suppressed Exceptions in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Exception Handling"
+order: 11
+---
+## TL;DR
+
+- **Suppressed Exceptions** occur when multiple exceptions are thrown, but only one can be propagated. The others are "suppressed" and attached to the primary exception.
+- This is primarily encountered when using the **Try-with-Resources** construct.
+- You can retrieve suppressed exceptions using the `Throwable.getSuppressed()` method.
+
+## Concept
+
+Imagine a `try` block that throws a `RuntimeException`. 
+In a traditional `finally` block, you call `file.close()`. What if `file.close()` *also* throws an `IOException`? 
+In pre-Java 7 code, the `IOException` from the `finally` block would completely overwrite and hide the original `RuntimeException`. The developer would spend hours trying to debug the `IOException` without ever knowing the `RuntimeException` caused the failure!
+
+With Java 7's **Try-with-Resources**, this problem is solved. The exception thrown inside the `try` block is treated as the **primary exception**. Any subsequent exceptions thrown while auto-closing the resources are **suppressed** and attached to the primary exception.
+
+## Examples
+
+```java
+// A custom resource that throws an exception when closed
+class BrokenDoor implements AutoCloseable {
+    @Override
+    public void close() throws Exception {
+        throw new Exception("The door is stuck (Exception from close!)");
+    }
+}
+
+public class SuppressedExample {
+    public static void main(String[] args) {
+        
+        try (BrokenDoor door = new BrokenDoor()) {
+            
+            // 1. Primary Exception thrown in try block
+            throw new Exception("Thief in the house! (Primary Exception)");
+            
+        } catch (Exception e) {
+            System.err.println("Primary Exception Caught: " + e.getMessage());
+            
+            // 2. Retrieve the suppressed exception from the auto-close
+            Throwable[] suppressed = e.getSuppressed();
+            for (Throwable t : suppressed) {
+                System.err.println("Suppressed Exception: " + t.getMessage());
+            }
+        }
+    }
+}
+```
+
+## Interview Questions
+
+Q: Can you manually add suppressed exceptions to an Exception?
+A: Yes. Every `Throwable` class inherits the `addSuppressed(Throwable exception)` method. While it is done automatically by `try-with-resources`, you can manually catch an exception, attach it to another exception via `addSuppressed()`, and then throw the primary exception.
+
+Q: Why is suppressing exceptions better than overwriting them in a `finally` block?
+A: Overwriting exceptions destroys the stack trace of the root cause. If a database query fails due to bad SQL (Exception A), and the subsequent connection closure fails because the DB crashed (Exception B), returning only Exception B hides the bad SQL error. By returning Exception A and suppressing Exception B, the developer has full visibility into the entire chain of failures.

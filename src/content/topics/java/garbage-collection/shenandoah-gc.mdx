@@ -1,0 +1,51 @@
+---
+title: "Shenandoah GC"
+description: "Understanding Shenandoah GC in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Garbage Collection"
+order: 11
+---
+## TL;DR
+
+- **Shenandoah GC** is an ultra-low latency Garbage Collector developed by Red Hat (introduced in JDK 12).
+- Like ZGC, it performs the expensive "Evacuation" (Compaction) phase *concurrently* alongside application threads.
+- It achieves sub-millisecond pause times regardless of the Heap size (whether it's 200MB or 200GB).
+
+## Concept
+
+In traditional collectors like G1GC, when the GC wants to move an object to a new memory address to prevent fragmentation, it must freeze the application (Stop-The-World).
+
+Shenandoah achieves **Concurrent Evacuation** using a technique called the **Brooks Pointer**. 
+Every single object in the JVM is injected with an extra hidden field: a forwarding pointer. By default, this pointer just points to the object itself. 
+
+When Shenandoah wants to move an object, it:
+1. Copies the object to the new memory address.
+2. Updates the original object's Brooks Pointer to point to the *new* address.
+3. If an application thread tries to write to the old object, it is instantly redirected (via a memory barrier) to write to the new object instead.
+This ensures the application and the GC can run simultaneously without memory corruption.
+
+## Examples
+
+```bash
+# How to enable Shenandoah GC from the command line
+
+# It is available in many JDK builds (like OpenJDK, Corretto)
+# but note that Oracle JDK specifically excludes it in favor of ZGC.
+java -XX:+UseShenandoahGC \
+     -Xms16G \
+     -Xmx16G \
+     -XX:ShenandoahGCHeuristics=adaptive \
+     -jar high-frequency-trading-app.jar
+```
+
+## Interview Questions
+
+Q: What is the difference between Shenandoah and ZGC?
+A: They both aim to solve the exact same problem: ultra-low latency concurrent compaction. 
+- **ZGC** (Oracle) achieves this by altering the actual 64-bit memory pointer metadata ("Colored Pointers"). This makes it highly efficient but requires 64-bit architecture and disables Compressed OOPs in earlier versions.
+- **Shenandoah** (Red Hat) achieves this by physically injecting an extra pointer into the object's memory header ("Brooks Pointer"). This makes it compatible with more CPU architectures (including 32-bit) and supports Compressed OOPs out of the box, but arguably has slightly more memory overhead per object.
+
+Q: Why would you NOT use Shenandoah?
+A: Because concurrent collection is highly CPU-intensive. Shenandoah sacrifices overall application **Throughput** to achieve perfect **Latency**. If your application is a backend batch-processor where you just want a massive job to finish as quickly as possible, Shenandoah will slow it down. Use Parallel GC or G1GC instead.

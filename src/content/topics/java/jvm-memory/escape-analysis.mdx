@@ -1,0 +1,60 @@
+---
+title: "Escape Analysis"
+description: "Understanding Escape Analysis in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "JVM & Memory"
+order: 18
+---
+## TL;DR
+
+- **Escape Analysis** is a highly advanced optimization technique performed by the JIT Compiler.
+- It determines if a newly created Object "escapes" the scope of the method it was created in.
+- If it doesn't escape, the JVM optimizes performance by allocating the object on the **Stack** instead of the Heap, eliminating the need for Garbage Collection.
+
+## Concept
+
+By definition in the Java specification, "All objects are created on the Heap." But allocating memory on the Heap and eventually garbage collecting it is computationally expensive.
+
+When the JIT Compiler analyzes a hot method, it looks at the lifecycle of locally created objects. 
+- Does the method `return` the object? (It escapes)
+- Does the method pass the object to another thread? (It escapes)
+- Does the method assign the object to a global `static` variable? (It escapes)
+
+If the answer to all of these is **No**, the object is entirely isolated within that single method execution. The JVM performs **Scalar Replacement**: it breaks the object down into its primitive fields (`int`, `double`) and stores them directly on the ultra-fast thread **Stack**. When the method finishes, the stack frame pops, and the memory vanishes instantly. No Garbage Collection required!
+
+## Examples
+
+```java
+public class EscapeAnalysisDemo {
+    
+    static class Point {
+        int x, y;
+        Point(int x, int y) { this.x = x; this.y = y; }
+    }
+    
+    public void processPoint() {
+        // We create a new Point object. 
+        // We never return it. We never pass it to another method.
+        // It never "escapes" processPoint().
+        Point p = new Point(10, 20); 
+        
+        int result = p.x + p.y;
+        System.out.println(result);
+        
+        // Without Escape Analysis: 'p' goes to the Heap, and GC has to clean it up later.
+        // With Escape Analysis: The JVM just puts integers 10 and 20 on the Stack!
+    }
+}
+```
+
+## Interview Questions
+
+Q: Why does Escape Analysis improve performance?
+A: 1. **Zero Garbage Collection:** Because the object is allocated on the Stack, it is instantly destroyed when the method completes. The Garbage Collector never even knows it existed, drastically reducing GC pauses.
+2. **Cache Locality:** Memory allocated on the Stack is physically closer together in the CPU L1/L2 cache, making read/write operations significantly faster than chasing pointers to random addresses on the massive Heap.
+3. **Lock Elision:** If the JIT proves an object never escapes the thread, and you use a `synchronized` block on that object, the JIT will aggressively delete the lock entirely, knowing no other thread could possibly access it.
+
+Q: Can I turn off Escape Analysis?
+A: Yes, it can be disabled via the JVM argument `-XX:-DoEscapeAnalysis`. Doing so is usually a terrible idea, as it forces all local objects to the Heap, massively increasing the workload of the Garbage Collector and hurting application throughput.

@@ -1,0 +1,67 @@
+---
+title: "CountDownLatch"
+description: "Understanding CountDownLatch in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Multithreading & Concurrency"
+order: 24
+---
+## TL;DR
+
+- **`CountDownLatch`** is a synchronization aid that allows one or more threads to wait until a set of operations being performed by other threads completes.
+- It is initialized with a specific count (e.g., 3).
+- Threads call `await()` to block until the count reaches zero. Other threads call `countDown()` to decrement the counter.
+- **Crucial:** It cannot be reset. It is a single-use object.
+
+## Concept
+
+Imagine a horse race. There are 5 horses at the starting gates. The race cannot start until all 5 horses are ready. 
+We create a `CountDownLatch(5)`. The main thread (the announcer) calls `latch.await()` and freezes. 
+As each horse gets into position, it calls `latch.countDown()`. (Count goes 4, 3, 2, 1...). 
+The exact moment the last horse calls `countDown()` and the counter hits 0, the gates burst open—the main thread instantly unblocks and yells "GO!".
+
+Alternatively, it can be used in reverse: 5 worker threads call `await()` on a latch initialized to `1`, waiting for a single master thread to call `countDown()` to release them all simultaneously.
+
+## Examples
+
+```java
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+public class CountDownLatchExample {
+    public static void main(String[] args) throws InterruptedException {
+        
+        int numberOfServices = 3;
+        CountDownLatch latch = new CountDownLatch(numberOfServices);
+        ExecutorService executor = Executors.newFixedThreadPool(3);
+        
+        for (int i = 1; i <= numberOfServices; i++) {
+            executor.submit(() -> {
+                System.out.println(Thread.currentThread().getName() + " is starting up...");
+                try { Thread.sleep(1000); } catch (Exception e) {}
+                
+                System.out.println(Thread.currentThread().getName() + " is UP!");
+                latch.countDown(); // Decrement the count
+            });
+        }
+        
+        System.out.println("Main thread waiting for all services to start...");
+        
+        // Blocks until the count hits 0
+        latch.await(); 
+        
+        System.out.println("All services are up. Application fully started!");
+        executor.shutdown();
+    }
+}
+```
+
+## Interview Questions
+
+Q: Can you reuse a `CountDownLatch` once it hits zero?
+A: No. A `CountDownLatch` is strictly a one-time-use barrier. Once the internal counter hits zero, any future calls to `await()` will immediately pass through without blocking, and calls to `countDown()` do nothing. If you need a reusable barrier (e.g., for cyclic phases in an algorithm), you must use a `CyclicBarrier` or a `Phaser`.
+
+Q: What happens if a thread calls `countDown()` and then throws an exception?
+A: Calling `countDown()` simply decrements an internal integer. It doesn't care about the thread's state afterward. However, if a thread throws an exception *before* it reaches the `countDown()` line, the counter will never reach zero. Any threads stuck at `await()` will wait forever (deadlock). Always put `countDown()` inside a `finally` block!

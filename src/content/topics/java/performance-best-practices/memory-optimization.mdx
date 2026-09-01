@@ -1,0 +1,55 @@
+---
+title: "Memory Optimization"
+description: "Understanding Memory Optimization in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Performance & Best Practices"
+order: 5
+---
+## TL;DR
+
+- **Memory Optimization** focuses on reducing the total RAM required to run a Java application and preventing `OutOfMemoryError`s.
+- Key strategies include: caching reusable objects, avoiding Autoboxing in large collections, and preventing Memory Leaks.
+- Memory leaks in Java occur when you keep strong references to objects that you no longer need, preventing the Garbage Collector from cleaning them up.
+
+## Concept
+
+Java objects have significant memory overhead. An empty object takes 16 bytes. An `Integer` takes 24 bytes, while a primitive `int` takes only 4 bytes. 
+
+If you load a massive dataset into memory (like caching 1,000,000 records from a database), using inefficient data structures can instantly exhaust your JVM Heap. Furthermore, if you store data in a `static` Map or a long-living List and forget to remove items when you are done with them, the Garbage Collector cannot touch them because they are still "reachable." Over days or weeks, the Heap fills up and crashes.
+
+## Examples
+
+```java
+import java.util.*;
+
+public class MemoryLeakDemo {
+    
+    // ❌ VULNERABLE TO MEMORY LEAKS
+    // A static map lives for the entire lifespan of the application.
+    private static Map<String, UserSession> activeSessions = new HashMap<>();
+
+    public void loginUser(String token, UserSession session) {
+        activeSessions.put(token, session);
+    }
+
+    public void logoutUserBad(String token) {
+        // If a user closes their browser without clicking logout, 
+        // this is never called. The session stays in the map FOREVER.
+        // Memory usage will climb endlessly until the JVM crashes.
+        activeSessions.remove(token); 
+    }
+}
+```
+
+## Interview Questions
+
+Q: What is the performance difference between `List<Integer>` and `int[]` for massive datasets?
+A: Huge. A primitive `int[]` containing 1,000,000 elements requires exactly 4MB of contiguous memory (1,000,000 * 4 bytes). 
+A `List<Integer>` containing 1,000,000 elements requires creating 1,000,000 separate `Integer` object wrappers on the heap (24MB), plus the internal Object array of the `ArrayList` (4MB), totaling over 28MB. It takes 7x more memory and shatters CPU Cache Locality. For gigantic numerical datasets, always use primitive arrays or specialized libraries like Trove/Eclipse Collections.
+
+Q: How do you diagnose a Memory Leak in Java?
+A: 1. **Monitor Heap Usage:** Observe the JVM via JMX/APM tools. If the memory usage creates a "sawtooth" pattern that keeps trending upwards over time, you have a leak.
+2. **Take a Heap Dump:** Use `jmap` or VisualVM to trigger a Heap Dump (a snapshot of all objects in RAM) right before the application crashes.
+3. **Analyze the Dump:** Open the file in Eclipse MAT (Memory Analyzer Tool) or VisualVM. It will show you exactly which objects are taking up the most space (e.g., "90% of heap is consumed by a `HashMap$Node` inside `SessionManager`") and trace the strong references keeping them alive.

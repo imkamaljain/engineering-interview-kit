@@ -1,0 +1,64 @@
+---
+title: "Runnable vs Callable"
+description: "Understanding Runnable vs Callable in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Interview Questions"
+order: 18
+---
+## TL;DR
+
+- **`Runnable`**: Defines a task that executes in a separate thread. It **cannot** return a result, and it **cannot** throw a checked exception.
+- **`Callable<T>`**: Defines a task that executes in a separate thread. It **can** return a result of type `T`, and it **can** throw checked exceptions.
+
+## Concept
+
+In early Java (1.0), the only way to run code on a separate thread was to implement the `Runnable` interface. The `run()` method has a `void` return type. This is incredibly frustrating. If you spawn a thread to calculate the sum of an array, how do you get the sum back? You had to hack it by storing the result in a shared variable and polling it. Furthermore, if the thread failed (e.g., `IOException`), it couldn't throw it back to the main thread.
+
+Java 1.5 introduced `Callable<T>`. Its `call()` method returns a generic type `T` and throws `Exception`. You submit a `Callable` to an `ExecutorService`, and it immediately gives you back a `Future<T>`. You can use the `Future` to safely wait for the thread to finish and retrieve its returned data or exception.
+
+## Examples
+
+```java
+import java.util.concurrent.*;
+
+public class ThreadTaskDemo {
+    public static void main(String[] args) throws Exception {
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+
+        // 1. RUNNABLE
+        // No return value. No checked exceptions. 
+        Runnable runTask = () -> {
+            System.out.println("Runnable executing... doing background work.");
+            // return "Success"; // COMPILE ERROR! Cannot return a value.
+        };
+        executor.execute(runTask);
+
+        // 2. CALLABLE
+        // Returns a String. Can safely throw exceptions.
+        Callable<String> callTask = () -> {
+            Thread.sleep(1000);
+            return "Task completed successfully!"; 
+        };
+        
+        // We get a Future back instantly.
+        Future<String> future = executor.submit(callTask); 
+        
+        // This blocks the main thread until the Callable finishes and returns the data.
+        String result = future.get(); 
+        System.out.println(result);
+        
+        executor.shutdown();
+    }
+}
+```
+
+## Interview Questions
+
+Q: How do you handle an exception thrown inside a `Callable`?
+A: When a `Callable` throws an exception, the thread does not crash the application. Instead, the `ExecutorService` catches the exception and stores it inside the `Future` object. 
+When you later call `future.get()` on the main thread, the `Future` will throw an `ExecutionException`. You can catch this `ExecutionException`, call `.getCause()`, and retrieve the exact exception that originally occurred inside the background thread.
+
+Q: If `Callable` is better, why does `Runnable` still exist?
+A: `Runnable` is perfectly fine for "Fire and Forget" tasks where you don't care about the outcome. For example, logging a metric to an external server, sending an asynchronous email, or cleaning up a temporary directory. If you don't need data back, `Runnable` has slightly less overhead.

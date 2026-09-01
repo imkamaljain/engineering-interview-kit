@@ -1,0 +1,68 @@
+---
+title: "Reflection Performance & Security"
+description: "Understanding Reflection Performance & Security in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Reflection & Annotations"
+order: 8
+---
+## TL;DR
+
+- **Performance:** Reflection is significantly slower than direct code execution because it circumvents JVM JIT optimizations and requires dynamic resolution.
+- **Security:** Reflection breaks encapsulation by bypassing `private` access modifiers, which can compromise system security and data integrity.
+- Java 9 introduced the **Module System (JPMS)** to aggressively restrict illegal reflective access.
+
+## Concept
+
+### Performance Impact
+When you call `user.getName()`, the JVM's JIT compiler heavily optimizes the call. It might even "inline" the method, removing the method call entirely and replacing it with direct memory access. 
+When you invoke a method via `method.invoke(user)`, the JVM cannot inline it. It has to perform security checks, box/unbox arguments, and dynamically look up the method pointer in the class structure. This makes reflection calls fundamentally slower (though modern JVMs optimize frequent reflection calls using "Inflation").
+
+### Security Impact
+Reflection allows a developer to call `setAccessible(true)` on a `private` field, destroying encapsulation. 
+For a long time, this was unchecked. A malicious 3rd-party library could use reflection to read passwords from private variables or modify internal JDK classes (like changing the contents of a `String`, which is supposed to be immutable!).
+
+In Java 9, the Module System was introduced. By default, **modules strongly encapsulate their internal packages**. If you try to use Reflection to access a private field in an internal JDK class (like `java.lang.String`), Java 16+ will instantly throw an `InaccessibleObjectException`.
+
+## Examples
+
+```java
+import java.lang.reflect.Field;
+
+public class SecurityDemo {
+    public static void main(String[] args) {
+        String secret = "ImmutableString";
+        
+        try {
+            // In Java 8, this horrific hack actually worked.
+            // You could reflectively modify the internal byte[] array of a String,
+            // breaking the entire JVM's assumption that Strings are immutable!
+            
+            Field valueField = String.class.getDeclaredField("value");
+            valueField.setAccessible(true); 
+            
+            byte[] internalArray = (byte[]) valueField.get(secret);
+            internalArray[0] = 'M'; // Changes it to "MmmutableString"
+            
+            // In Java 16+, the line `setAccessible(true)` will throw an error:
+            // java.lang.reflect.InaccessibleObjectException: 
+            // Unable to make field private final byte[] java.lang.String.value 
+            // accessible: module java.base does not "opens java.lang" to unnamed module
+            
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+}
+```
+
+## Interview Questions
+
+Q: How do you allow Reflection access in modern Java if the Module System blocks it?
+A: If you genuinely need a framework (like Spring or Hibernate) to use reflection on a module, you must explicitly declare that the module is open to reflection. In your `module-info.java`, you use the `opens` directive:
+`opens com.mycompany.models to spring.core;`
+This tells the JVM: *"It is safe for the Spring Core module to use deep reflection on the models package."* If you are migrating a legacy application without `module-info.java`, you have to use command-line flags like `--add-opens java.base/java.lang=ALL-UNNAMED` to bypass the security.
+
+Q: What is Reflection Inflation?
+A: When you invoke a method via reflection a few times, the JVM uses a native C++ JNI bridge to execute it, which is slow. If you invoke the *same* method via reflection many times (default is 15 times), the JVM optimizes it. It dynamically generates a brand new Java bytecode class on the fly that directly calls the method, and switches the reflection pointer to use this generated class. This is called "Inflation," and it significantly speeds up repeated reflection calls.

@@ -1,0 +1,74 @@
+---
+title: "Enum Internals"
+description: "Understanding Enum Internals in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Interfaces & Advanced OOP"
+order: 9
+---
+## TL;DR
+
+- The Java Compiler magically converts every `enum` declaration into a standard `final class` that extends `java.lang.Enum`.
+- The enum constants are compiled into `public static final` instances of that class.
+- The JVM guarantees that Enums are instantiated exactly once (true Singletons), making them inherently thread-safe.
+
+## Concept
+
+When you write this simple enum:
+```java
+public enum Color { RED, BLUE }
+```
+
+The Java compiler actually generates something akin to this:
+```java
+public final class Color extends java.lang.Enum<Color> {
+    
+    public static final Color RED = new Color("RED", 0);
+    public static final Color BLUE = new Color("BLUE", 1);
+    
+    // An array holding all instances for the values() method
+    private static final Color[] $VALUES = new Color[] { RED, BLUE };
+    
+    private Color(String name, int ordinal) {
+        super(name, ordinal);
+    }
+    
+    public static Color[] values() { return $VALUES.clone(); }
+    public static Color valueOf(String name) { /* logic */ }
+}
+```
+This is why you cannot use the `new` keyword on an Enum. The JVM creates the instances when the Enum class is first loaded into memory.
+
+## Examples
+
+```java
+// Using an Enum to create the safest Singleton pattern in Java
+public enum DatabaseConnectionPool {
+    
+    // The single instance. Guaranteed by the JVM to be created only once.
+    INSTANCE; 
+    
+    // You can add normal instance variables and methods
+    private Connection connection;
+    
+    DatabaseConnectionPool() {
+        this.connection = createConnection();
+    }
+    
+    public Connection getConnection() {
+        return connection;
+    }
+}
+```
+
+## Interview Questions
+
+Q: Why is an Enum considered the best way to create a Singleton?
+A: A standard Java Singleton (private constructor, static `getInstance()` method) is vulnerable to two major attacks:
+1. **Reflection:** An attacker can use Reflection to change the private constructor to public and create a second instance.
+2. **Serialization:** When a serialized singleton is deserialized, the JVM creates a new instance by default.
+Enums are immune to both. The Java language specification strictly prevents Reflection from instantiating Enums, and the serialization mechanism for Enums is explicitly hardcoded by the JVM to return the existing instance rather than creating a new one.
+
+Q: How does the `valueOf()` method work?
+A: The compiler generates `valueOf(String name)` for every enum. It does a strict case-sensitive string match against the names of the constants. If it doesn't find a match, it throws an `IllegalArgumentException`. Because it relies on the internal name, it is highly efficient but brittle if you rename your enum constants later.

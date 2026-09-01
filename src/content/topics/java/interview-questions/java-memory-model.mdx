@@ -1,0 +1,64 @@
+---
+title: "Java Memory Model"
+description: "Understanding Java Memory Model in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Interview Questions"
+order: 25
+---
+## TL;DR
+
+- The **Java Memory Model (JMM)** defines how threads interact through memory, specifically regarding CPU Caches and RAM.
+- It provides guarantees about **Visibility** (when does Thread B see a variable changed by Thread A?) and **Reordering** (can the CPU/Compiler shuffle the order of my code?).
+- It is enforced using the "Happens-Before" relationship, established by keywords like `volatile` and `synchronized`.
+
+## Concept
+
+Modern hardware is wildly chaotic. To maximize speed, your CPU doesn't read from Main RAM; it reads from its own L1 Cache. To maximize speed, the JIT Compiler and the CPU will actively *reorder* your lines of code if they think they can run them faster in a different sequence (as long as it doesn't break single-threaded logic).
+
+If Thread A sets `configReady = true` on Core 1, and Thread B is waiting for `configReady` on Core 2, Thread B might NEVER see the change because it's stuck reading from its own stale L1 cache. Furthermore, the CPU might have reordered Thread A's code, setting `configReady = true` *before* it actually finished loading the config!
+
+The JMM exists to tame this hardware chaos. By using `volatile`, you force the JVM to bypass CPU caches (Visibility). You also establish a "Memory Barrier," completely forbidding the CPU from reordering instructions around that variable.
+
+## Examples
+
+```java
+public class JMMDemo {
+    private int data = 0;
+    
+    // WITHOUT VOLATILE: The CPU could reorder the two assignments below. 
+    // Thread B might see ready=true, but data is still 0!
+    // WITH VOLATILE: The JMM guarantees that if Thread B sees ready=true, 
+    // it is mathematically guaranteed to also see data=100.
+    private volatile boolean ready = false;
+
+    // THREAD A executes this
+    public void writeData() {
+        data = 100;
+        // JMM guarantees all writes before a volatile write are flushed to RAM!
+        ready = true; 
+    }
+
+    // THREAD B executes this
+    public void readData() {
+        if (ready) {
+            // JMM guarantees if ready is true, data MUST be 100.
+            System.out.println(data); 
+        }
+    }
+}
+```
+
+## Interview Questions
+
+Q: What is the "Happens-Before" relationship?
+A: It is the core rule of the JMM. If Action A "happens-before" Action B, the JMM guarantees that the memory changes made by Action A will be perfectly visible to Action B, no matter what CPU caches or reordering try to do. 
+Examples of "happens-before":
+1. Unlocking a `synchronized` block happens-before another thread locks that same block.
+2. Writing to a `volatile` variable happens-before another thread reads that `volatile` variable.
+3. Thread.start() happens-before any code inside that thread begins.
+
+Q: Why is Double-Checked Locking broken in older Java versions?
+A: In the Singleton pattern, developers used to do: `if(instance == null) { synchronized { if(instance == null) instance = new Singleton(); } }`. 
+Before Java 1.5, the JMM allowed the CPU to allocate memory for the object and assign the pointer to `instance`, *before* the constructor actually finished running! Thread B would see `instance != null`, grab the half-constructed object, and crash. Java 1.5 fixed the JMM, and now declaring `private volatile Singleton instance` establishes a happens-before relationship, guaranteeing the constructor finishes before the pointer is assigned.

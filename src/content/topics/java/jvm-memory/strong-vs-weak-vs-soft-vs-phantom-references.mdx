@@ -1,0 +1,66 @@
+---
+title: "Strong vs Weak vs Soft vs Phantom References"
+description: "Understanding Strong vs Weak vs Soft vs Phantom References in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "JVM & Memory"
+order: 13
+---
+## TL;DR
+
+Java provides four levels of references to give developers control over how aggressively the Garbage Collector deletes objects:
+1. **Strong Reference:** Default. GC will *never* delete the object.
+2. **Soft Reference:** GC deletes it *only* if the JVM is running out of memory.
+3. **Weak Reference:** GC deletes it eagerly on the very next GC cycle.
+4. **Phantom Reference:** Cannot be used to access the object; used solely for post-mortem cleanup notifications.
+
+## Concept
+
+When building a large memory Cache, you face a dilemma: You want to hold onto objects to make retrieval fast, but if you hold onto too many, the application will crash with an `OutOfMemoryError`. 
+
+By default, Java uses **Strong References** (`Object obj = new Object()`). The GC refuses to delete strongly referenced objects. 
+
+If you wrap your cache objects in a **SoftReference**, you tell the JVM: *"Keep this object around as long as possible. But if you are desperately out of memory and about to crash, you have my permission to delete this object to save the application."* It is perfect for memory-sensitive caches.
+
+A **WeakReference** is weaker. It says: *"Delete this object the very next time the GC runs, unless someone else has a Strong Reference to it."* It is primarily used in `WeakHashMap` to prevent memory leaks in internal data structures.
+
+## Examples
+
+```java
+import java.lang.ref.SoftReference;
+import java.lang.ref.WeakReference;
+
+public class ReferencesDemo {
+    public static void main(String[] args) {
+        
+        // 1. STRONG REFERENCE
+        // This object is immune to Garbage Collection.
+        String strong = new String("I am strong");
+        
+        // 2. SOFT REFERENCE
+        // Wrap a massive object in a SoftReference.
+        SoftReference<byte[]> softImageCache = new SoftReference<>(new byte[1024 * 1024 * 100]);
+        // To use it, you must "get" it. If the JVM was starving for memory, 
+        // this might return null because the GC deleted the array!
+        byte[] image = softImageCache.get(); 
+        
+        // 3. WEAK REFERENCE
+        WeakReference<String> weakObj = new WeakReference<>(new String("I am weak"));
+        
+        System.gc(); // Force a GC run
+        
+        // weakObj.get() will almost certainly print "null" here.
+        System.out.println("Weak reference holds: " + weakObj.get()); 
+    }
+}
+```
+
+## Interview Questions
+
+Q: What is the primary use case for `WeakHashMap`?
+A: `WeakHashMap` is a special map where the **Keys** are WeakReferences. It is heavily used for caching metadata about objects. 
+Suppose you want to store a custom `CacheProfile` for every `Thread` in the system. If you put `Thread` as a key in a standard `HashMap`, that Thread can *never* be garbage collected because the Map holds a Strong Reference to it, causing a massive memory leak. If you use a `WeakHashMap`, the moment the Thread finishes and dies in the application, the `WeakHashMap` automatically notices that the Thread has no strong references left, and it magically removes the Key-Value pair from the map for you.
+
+Q: What is a PhantomReference?
+A: A PhantomReference is so weak that its `get()` method always returns `null`. You cannot use it to access the object. It is used exclusively in conjunction with a `ReferenceQueue`. When the GC deletes an object, it places the PhantomReference onto the queue. This allows you to write a background thread that monitors the queue and performs highly specialized native memory cleanup (like closing C++ network sockets) *after* the Java object has been definitively wiped from RAM.

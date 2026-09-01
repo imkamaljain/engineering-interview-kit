@@ -1,0 +1,68 @@
+---
+title: "ReadWriteLock"
+description: "Understanding ReadWriteLock in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Multithreading & Concurrency"
+order: 10
+---
+## TL;DR
+
+- **`ReadWriteLock`** maintains a pair of associated locks: one for **reading** and one for **writing**.
+- **Read Lock:** Can be held simultaneously by multiple threads (as long as there is no writer).
+- **Write Lock:** Is exclusive. Only one thread can hold it, and no read locks can exist at the same time.
+- It dramatically improves performance in data structures that are read frequently but modified rarely.
+
+## Concept
+
+If you use a standard `ReentrantLock` on a cache, every time a thread wants to read from the cache, it locks the entire structure. If 100 threads want to read data simultaneously, 99 of them are blocked, even though reading doesn't mutate data or cause race conditions!
+
+`ReadWriteLock` (implemented by `ReentrantReadWriteLock`) solves this. 
+- If 100 threads ask for the `ReadLock`, they all get it simultaneously.
+- If a thread asks for the `WriteLock`, it must wait for all current readers to finish. Once it has the write lock, it blocks all new readers and writers until it finishes updating the data.
+
+## Examples
+
+```java
+import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.locks.ReadWriteLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
+
+class ThreadSafeCache {
+    private final Map<String, String> cache = new HashMap<>();
+    private final ReadWriteLock rwLock = new ReentrantReadWriteLock();
+    
+    // Multiple threads can execute this simultaneously
+    public String readData(String key) {
+        rwLock.readLock().lock();
+        try {
+            System.out.println(Thread.currentThread().getName() + " reading...");
+            return cache.get(key);
+        } finally {
+            rwLock.readLock().unlock();
+        }
+    }
+    
+    // Only ONE thread can execute this. All readers are blocked.
+    public void writeData(String key, String value) {
+        rwLock.writeLock().lock();
+        try {
+            System.out.println(Thread.currentThread().getName() + " writing...");
+            cache.put(key, value);
+        } finally {
+            rwLock.writeLock().unlock();
+        }
+    }
+}
+```
+
+## Interview Questions
+
+Q: Can a thread holding a Read Lock upgrade it to a Write Lock?
+A: No. A read lock cannot be upgraded to a write lock. If a thread holding a read lock attempts to acquire the write lock, it will deadlock permanently. 
+However, **downgrading** is allowed. A thread holding a write lock *can* acquire the read lock before releasing the write lock, effectively downgrading its permissions smoothly.
+
+Q: When should you avoid using `ReadWriteLock`?
+A: `ReadWriteLock` has a significantly higher overhead than a standard `ReentrantLock` because it has to manage complex state for multiple readers and writers. If your data structure is modified almost as often as it is read (e.g., 50% reads, 50% writes), or if the critical sections are extremely fast (e.g., just reading one integer), the overhead of the ReadWriteLock will actually make your application *slower*. It is strictly for read-heavy scenarios (e.g., 95% reads, 5% writes).

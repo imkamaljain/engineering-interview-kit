@@ -1,0 +1,58 @@
+---
+title: "CompletableFuture"
+description: "Understanding CompletableFuture in Java."
+importance: "MEDIUM"
+revisionTime: 5
+category: "Java"
+subcategory: "Multithreading & Concurrency"
+order: 22
+---
+## TL;DR
+
+- **`CompletableFuture`** (introduced in Java 8) is an enormous upgrade over the standard `Future`.
+- It allows for **non-blocking, reactive** programming by chaining callbacks (e.g., "when this finishes, automatically do that").
+- It can easily combine multiple asynchronous tasks without explicitly blocking threads with `.get()`.
+
+## Concept
+
+The biggest flaw of the standard `Future` is that you eventually have to call `future.get()`, which completely freezes the current thread until the result is ready. 
+
+`CompletableFuture` fixes this by introducing a fluent, functional API (similar to Javascript Promises). Instead of waiting, you register a callback. You say: *"Go fetch the user data. **ThenApply** this formatting function to it. **ThenAccept** the result and print it to the console."* The main thread never blocks; the JVM automatically passes the result down the chain as soon as it's ready.
+
+## Examples
+
+```java
+import java.util.concurrent.CompletableFuture;
+
+public class CompletableFutureExample {
+    public static void main(String[] args) throws Exception {
+        
+        // SupplyAsync runs the task in the common ForkJoinPool
+        CompletableFuture<Void> pipeline = CompletableFuture.supplyAsync(() -> {
+            System.out.println("1. Fetching user from DB... " + Thread.currentThread().getName());
+            return "Alice";
+        })
+        .thenApplyAsync(name -> {
+            System.out.println("2. Processing data... " + Thread.currentThread().getName());
+            return name.toUpperCase();
+        })
+        .thenAccept(finalResult -> {
+            System.out.println("3. Printing: Hello " + finalResult + "!");
+        });
+        
+        System.out.println("Main thread is completely free!");
+        
+        // Just for the demo to prevent the program from exiting instantly
+        pipeline.join(); 
+    }
+}
+```
+
+## Interview Questions
+
+Q: What is the difference between `thenApply` and `thenApplyAsync`?
+A: - `thenApply` executes the callback in the exact same thread that completed the previous stage (or in the main thread if the previous stage finished so fast that it's already done). It is highly efficient for quick, non-blocking transformations.
+- `thenApplyAsync` forces the callback to be submitted as a brand new task to the Thread Pool. This is necessary if the callback itself is a heavy, time-consuming operation and you don't want to monopolize the specific thread that finished the first stage.
+
+Q: How do you handle exceptions in a `CompletableFuture` chain?
+A: You use the `.exceptionally()` or `.handle()` methods. They act like a `catch` block for the entire asynchronous pipeline. If any stage in the chain throws an exception, all subsequent stages are skipped, and the flow jumps directly to the `exceptionally` block, allowing you to log the error and provide a default fallback value so the pipeline can continue.
