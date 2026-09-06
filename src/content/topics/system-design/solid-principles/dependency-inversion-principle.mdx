@@ -1,0 +1,104 @@
+---
+title: "Dependency Inversion Principle (DIP)"
+description: "High-level modules should not depend on low-level modules; both should depend on abstractions."
+importance: "HIGH"
+revisionTime: 5
+category: "System Design"
+subcategory: "SOLID Principles"
+order: 6
+---
+
+## Concept
+
+The **Dependency Inversion Principle (DIP)** states two things:
+1. High-level modules (business logic) should not depend on low-level modules (database drivers, APIs, file systems). Both should depend on abstractions (interfaces).
+2. Abstractions should not depend on details. Details should depend on abstractions.
+
+In simple terms: **Decouple your code.** Do not hardcode database clients or API SDKs directly inside your core business logic.
+
+## The Problem (Violation)
+
+Consider an e-commerce checkout service that directly instantiates a specific payment gateway (Stripe).
+
+```typescript
+// Low-level module
+class StripeAPI {
+    chargeCreditCard(amount: number) {
+        console.log(`Charging ${amount} via Stripe...`);
+    }
+}
+
+// High-level module
+class CheckoutService {
+    private stripe: StripeAPI;
+
+    constructor() {
+        // VIOLATION: Hardcoded dependency!
+        this.stripe = new StripeAPI(); 
+    }
+
+    checkout(amount: number) {
+        this.stripe.chargeCreditCard(amount);
+    }
+}
+```
+
+The high-level `CheckoutService` is tightly coupled to the low-level `StripeAPI`. 
+If we want to switch to PayPal, or if we want to run unit tests without hitting the real Stripe API, we are completely stuck.
+
+## The Solution
+
+Introduce an abstraction (interface) and **inject** the dependency.
+
+```typescript
+// 1. Create the abstraction
+interface PaymentGateway {
+    charge(amount: number): void;
+}
+
+// 2. Low-level details implement the abstraction
+class StripeAdapter implements PaymentGateway {
+    charge(amount: number) {
+        console.log(`Charging ${amount} via Stripe...`);
+    }
+}
+
+class PayPalAdapter implements PaymentGateway {
+    charge(amount: number) {
+        console.log(`Charging ${amount} via PayPal...`);
+    }
+}
+
+// 3. High-level module depends ONLY on the abstraction
+class CheckoutService {
+    private paymentGateway: PaymentGateway;
+
+    // Dependency is injected via constructor!
+    constructor(gateway: PaymentGateway) {
+        this.paymentGateway = gateway;
+    }
+
+    checkout(amount: number) {
+        this.paymentGateway.charge(amount);
+    }
+}
+```
+
+Now, the `CheckoutService` has no idea what Stripe or PayPal are. At runtime, we can inject whichever gateway we want:
+```typescript
+const stripeService = new CheckoutService(new StripeAdapter());
+const paypalService = new CheckoutService(new PayPalAdapter());
+const testService = new CheckoutService(new MockPaymentGateway()); // Perfect for unit testing!
+```
+
+## Real-World Use Case
+
+This principle is the backbone of **Dependency Injection (DI)** frameworks like Spring Boot (Java), NestJS (Node), and ASP.NET Core (C#). These frameworks automatically wire up your application by injecting low-level repository classes into high-level service classes at runtime, ensuring complete decoupling.
+
+## Interview Questions
+
+**Q: What is the difference between Dependency Inversion (DIP), Dependency Injection (DI), and Inversion of Control (IoC)?**
+**A:** 
+- **DIP** is the theoretical principle stating that high-level modules should depend on abstractions.
+- **DI (Dependency Injection)** is a design pattern used to *implement* DIP by passing (injecting) dependencies via constructors or setters rather than hardcoding them.
+- **IoC (Inversion of Control)** is the architectural concept where the flow of control is handed over to a framework (like NestJS or Spring) which handles the instantiation and injection of dependencies for you.

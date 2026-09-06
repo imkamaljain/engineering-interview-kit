@@ -162,6 +162,7 @@ export const SUBCATEGORY_ORDER: Record<string, string[]> = {
     "Distributed Systems",
     "Messaging",
     "Real-Time",
+    "SOLID Principles",
     "API & Architecture",
     "Security",
     "Reliability",

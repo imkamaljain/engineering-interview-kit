@@ -11,12 +11,13 @@ interface Props {
 const { title } = Astro.props;
 const pathname = Astro.url.pathname;
 const topics = await getCollection('topics');
-const slugify = (str) => str.toLowerCase().replace(/\s+/g, '-').replace(/\./g, '');
+const slugify = (str: string) => str.toLowerCase().replace(/\s+/g, '-').replace(/\./g, '');
 
 let sidebarMode = 'default';
 let currentCategoryName = '';
-let currentCategoryIcon = null;
-let currentCategoryTopics = [];
+let currentCategoryIcon: string | null = null;
+let currentCategoryTopics: any[] = [];
+let groupedAndSortedTopics: [string, any[]][] = [];
 let currentTopicId = '';
 
 if (pathname.startsWith('/topics/')) {
@@ -25,16 +26,30 @@ if (pathname.startsWith('/topics/')) {
     // We only want to show the sidebar if we are reading a specific topic page only
     if (parts.length >= 2) {
         const topicSlug = parts.slice(1).join('/'); 
-        const currentTopic = topics.find(t => t.id === topicSlug || t.id === parts[1]);
+        const currentTopic = topics.find((t: any) => t.id === topicSlug || t.id === parts[1]);
         
         if (currentTopic) {
             sidebarMode = 'category';
             currentTopicId = currentTopic.id;
             const catSlug = slugify(currentTopic.data.category);
-            currentCategoryTopics = topics.filter(t => slugify(t.data.category) === catSlug);
-            currentCategoryTopics.sort((a, b) => (a.data.order || 99) - (b.data.order || 99));
+            currentCategoryTopics = topics.filter((t: any) => slugify(t.data.category || '') === catSlug);
+            currentCategoryTopics.sort((a: any, b: any) => (a.data.order || 99) - (b.data.order || 99));
             currentCategoryName = currentTopic.data.category;
             currentCategoryIcon = getCategoryIcon(catSlug);
+
+            const grouped = currentCategoryTopics.reduce((acc: Record<string, any[]>, topic: any) => {
+                const sub = topic.data.subcategory || 'Other Topics';
+                if (!acc[sub]) acc[sub] = [];
+                acc[sub].push(topic);
+                return acc;
+            }, {} as Record<string, any[]>);
+
+            groupedAndSortedTopics = Object.entries(grouped).sort(([a]: [string, any[]], [b]: [string, any[]]) => {
+                const orderArr = SUBCATEGORY_ORDER[catSlug] || [];
+                const aIdx = orderArr.indexOf(a);
+                const bIdx = orderArr.indexOf(b);
+                return (aIdx === -1 ? 999 : aIdx) - (bIdx === -1 ? 999 : bIdx);
+            });
         }
     }
 }
@@ -50,6 +65,8 @@ const isTopicPage = currentTopicId !== '';
 		<link rel="icon" type="image/svg+xml" href="/logo.svg" />
 		<meta name="generator" content={Astro.generator} />
 		<title>{title}</title>
+		<!-- Devicon for Social Icons -->
+		<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/gh/devicons/devicon@latest/devicon.min.css" />
 		<!-- KaTeX CSS for math rendering -->
 		<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" integrity="sha384-n8MVd4RsNIU0tAv4ct0nTaAbDJwPJzDEaqSD1odI+WdtXRGWt2kTvGFasHpSy3SV" crossorigin="anonymous">
 		<!-- Mermaid setup -->
@@ -85,12 +102,12 @@ const isTopicPage = currentTopicId !== '';
 		<div class="flex min-h-screen">
 			<!-- Sidebar -->
 			{sidebarMode === 'category' && (
-			<aside id="app-sidebar" class="relative w-64 border-r border-gray-800/60 hidden md:flex flex-col h-screen sticky top-0 bg-[#0d1117] transition-all duration-300 ease-in-out shrink-0">
+			<aside id="app-sidebar" class="relative w-64 border-r border-gray-800/60 hidden md:flex flex-col h-screen sticky top-0 bg-gray-900/40 backdrop-blur-sm transition-all duration-300 ease-in-out shrink-0">
 				<div id="sidebar-content-wrapper" class="w-64 h-full overflow-hidden transition-all duration-300 ease-in-out">
 					<div class="w-64 flex flex-col h-full">
 						
 						<!-- Fixed Header -->
-						<div class="p-5 shrink-0 border-b border-gray-800/40 bg-[#0d1117] z-10">
+						<div class="p-5 shrink-0 border-b border-gray-800/40 bg-transparent z-10">
 							<a href="/" class="flex items-center gap-3 group">
 								<img src="/logo.svg" alt="Logo" class="w-10 h-10 drop-shadow-md group-hover:scale-105 transition-transform duration-300" />
 								<span class="text-[17px] font-bold tracking-tight text-gray-100 group-hover:text-white leading-tight transition-colors">
@@ -108,22 +125,7 @@ const isTopicPage = currentTopicId !== '';
 										{currentCategoryName} Topics
 									</h3>
 									
-									{Object.entries(
-										currentCategoryTopics.reduce((acc, topic) => {
-											const sub = topic.data.subcategory || 'Other Topics';
-											if (!acc[sub]) acc[sub] = [];
-											acc[sub].push(topic);
-											return acc;
-										}, {})
-									)
-									.sort(([a], [b]) => {
-										const catSlug = slugify(currentCategoryName);
-										const orderArr = SUBCATEGORY_ORDER[catSlug] || [];
-										const aIdx = orderArr.indexOf(a);
-										const bIdx = orderArr.indexOf(b);
-										return (aIdx === -1 ? 999 : aIdx) - (bIdx === -1 ? 999 : bIdx);
-									})
-									.map(([subcat, subTopics]) => (
+									{groupedAndSortedTopics.map(([subcat, subTopics]: [string, any[]]) => (
 										<details class="mb-6 last:mb-0 group/details" open>
 											<summary class="font-semibold text-gray-300 mb-2 text-[12px] flex items-center gap-2 group cursor-pointer list-none [&::-webkit-details-marker]:hidden select-none hover:text-gray-100 transition-colors">
 												<svg class="w-3.5 h-3.5 text-gray-500 transition-transform duration-200 group-open/details:rotate-90 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -233,15 +235,30 @@ const isTopicPage = currentTopicId !== '';
 
 
 			<!-- Main content -->
-			<main class="flex-1 max-w-4xl px-5 py-5 mx-auto w-full">
-				<slot />
+			<main class="flex-1 max-w-4xl px-5 py-5 mx-auto w-full flex flex-col">
+				<div class="flex-1">
+					<slot />
+				</div>
+
+				<!-- Footer -->
+				<footer class="mt-10 pt-6 pb-2 border-t border-gray-800/60 flex flex-col sm:flex-row items-center justify-between text-gray-500 text-sm gap-4">
+					<p>&copy; {new Date().getFullYear()} Engineering Interview Kit · Prepare. Practice. Succeed.</p>
+					<div class="flex items-center gap-5">
+						<a href="https://github.com/imkamaljain" target="_blank" rel="noopener noreferrer" class="hover:opacity-80 transition-opacity" aria-label="GitHub">
+							<i class="devicon-github-original text-2xl text-gray-200"></i>
+						</a>
+						<a href="https://www.linkedin.com/in/imkamaljain" target="_blank" rel="noopener noreferrer" class="hover:opacity-80 transition-opacity" aria-label="LinkedIn">
+							<i class="devicon-linkedin-plain text-2xl text-gray-200"></i>
+						</a>
+					</div>
+				</footer>
 			</main>
 		</div>
 
 		<!-- Diagram Zoom Modal -->
 		<div id="diagram-modal" class="fixed inset-0 z-[100] hidden flex items-center justify-center p-4 sm:p-8 opacity-0 transition-opacity duration-300">
 			<div class="absolute inset-0 bg-black/80 backdrop-blur-sm transition-opacity" id="diagram-modal-backdrop"></div>
-			<div class="relative bg-gray-900 border border-gray-700/80 rounded-xl shadow-2xl overflow-hidden w-full max-w-6xl max-h-[90vh] flex flex-col scale-95 transition-transform duration-300" id="diagram-modal-content">
+			<div class="relative bg-gray-900 border border-gray-700/80 rounded-3xl shadow-2xl overflow-hidden w-full max-w-6xl max-h-[90vh] flex flex-col scale-95 transition-transform duration-300" id="diagram-modal-content">
 				<div class="overflow-auto p-4 sm:p-8 bg-gray-950 flex-1 flex justify-center items-center" id="diagram-modal-body">
 					<!-- SVG injected here -->
 				</div>
@@ -259,8 +276,8 @@ const isTopicPage = currentTopicId !== '';
 
 				let isOpen = false;
 
-				function openModal(svgContent) {
-					if (!modal) return;
+				function openModal(svgContent: string) {
+					if (!modal || !body || !content) return;
 					isOpen = true;
 					body.innerHTML = svgContent;
 					
@@ -285,7 +302,7 @@ const isTopicPage = currentTopicId !== '';
 				}
 
 				function closeModal() {
-					if (!modal || !isOpen) return;
+					if (!modal || !isOpen || !content || !body) return;
 					isOpen = false;
 					modal.classList.add('opacity-0');
 					content.classList.remove('scale-100');
@@ -300,21 +317,43 @@ const isTopicPage = currentTopicId !== '';
 					}, 300);
 				}
 
-				window.addEventListener('open-diagram-modal', (e) => openModal(e.detail));
+				window.addEventListener('open-diagram-modal', (e: any) => openModal(e.detail));
 				closeBtn?.addEventListener('click', closeModal);
 				backdrop?.addEventListener('click', closeModal);
 				
-				document.addEventListener('keydown', (e) => {
+				document.addEventListener('keydown', (e: KeyboardEvent) => {
 					if (e.key === 'Escape' && isOpen) closeModal();
 				});
 			})();
 
 			// Keyboard shortcut for search
-			document.addEventListener('keydown', (e) => {
+			document.addEventListener('keydown', (e: KeyboardEvent) => {
 				if (e.key === '/' && document.activeElement?.tagName !== 'INPUT' && document.activeElement?.tagName !== 'TEXTAREA') {
 					e.preventDefault();
 					const searchInput = document.getElementById('search-input') || document.getElementById('global-search-input');
 					searchInput?.focus();
+				}
+
+				// Keyboard shortcuts for Next/Prev topic navigation
+				if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') return;
+
+				let direction = 0;
+				if (e.key === 'ArrowRight' || e.key === 'n' || e.key === 'N') direction = 1;
+				if (e.key === 'ArrowLeft' || e.key === 'p' || e.key === 'P') direction = -1;
+
+				if (direction !== 0) {
+					const links = Array.from(document.querySelectorAll('#app-sidebar a[href^="/topics/"]')) as HTMLAnchorElement[];
+					if (links.length > 0) {
+						const currentIndex = links.findIndex(link => link.classList.contains('active-sidebar-link'));
+						if (currentIndex !== -1) {
+							const targetIndex = currentIndex + direction;
+							if (targetIndex >= 0 && targetIndex < links.length) {
+								// Only prevent default if we're actually navigating, so we don't break normal scrolling if at the end/beginning
+								e.preventDefault(); 
+								window.location.href = links[targetIndex].href;
+							}
+						}
+					}
 				}
 			});
 
@@ -333,7 +372,7 @@ const isTopicPage = currentTopicId !== '';
 			// Copy Code Button Logic
 			(function() {
 				const codeBlocks = document.querySelectorAll('pre');
-				codeBlocks.forEach((pre) => {
+				codeBlocks.forEach((pre: any) => {
 					if (pre.classList.contains('mermaid')) return;
 					
 					const wrapper = document.createElement('div');
