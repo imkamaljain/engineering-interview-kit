@@ -186,5 +186,9 @@ export const SUBCATEGORY_ORDER: Record<string, string[]> = {
     "Backend",
     "Coding Challenges",
     "Interview Questions"
+  ],
+  "neetcode-150": [
+    "Arrays & Hashing",
+    "Two Pointers"
   ]
 };

@@ -6,8 +6,9 @@ const topics = defineCollection({
   schema: z.object({
     title: z.string(),
     description: z.string().optional(),
-    importance: z.enum(['HIGH', 'MEDIUM', 'LOW']).default('MEDIUM'),
-    revisionTime: z.number().default(3), // minutes
+    importance: z.enum(['HIGH', 'MEDIUM', 'LOW']).optional(),
+    difficulty: z.enum(['EASY', 'MEDIUM', 'HARD', 'easy', 'medium', 'hard']).optional(),
+    revisionTime: z.number().optional(), // minutes
     category: z.string(),
       subcategory: z.string().optional(),
       order: z.number().optional(),

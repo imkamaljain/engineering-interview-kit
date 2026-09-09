@@ -68,5 +68,15 @@ export const TECHNOLOGY_GROUPS = [
 				samples: ["Scalability", "Caching", "Databases", "Message Queues"]
 			}
 		]
+	},
+	{
+		groupName: "Coding",
+		items: [
+			{
+				title: "NeetCode 150",
+				slug: "neetcode-150",
+				samples: ["Arrays & Hashing", "Two Pointers", "Sliding Window", "Stack"]
+			}
+		]
 	}
 ];

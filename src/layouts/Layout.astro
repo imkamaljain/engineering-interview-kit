@@ -6,9 +6,15 @@ import { SUBCATEGORY_ORDER } from '../config/subcategories';
 
 interface Props {
 	title: string;
+	description?: string;
+	image?: string;
 }
 
-const { title } = Astro.props;
+const { 
+	title,
+	description = "A comprehensive, high-signal revision kit for Software Engineers preparing for interviews.",
+	image = "/logo.svg"
+} = Astro.props;
 const pathname = Astro.url.pathname;
 const topics = await getCollection('topics');
 const slugify = (str: string) => str.toLowerCase().replace(/\s+/g, '-').replace(/\./g, '');
@@ -64,7 +70,29 @@ const isTopicPage = currentTopicId !== '';
 		<meta name="viewport" content="width=device-width" />
 		<link rel="icon" type="image/svg+xml" href="/logo.svg" />
 		<meta name="generator" content={Astro.generator} />
+		
+		<!-- SEO Meta Tags -->
 		<title>{title}</title>
+		<meta name="description" content={description} />
+		<link rel="canonical" href={new URL(pathname, Astro.site || Astro.url.origin)} />
+
+		<!-- Open Graph / Facebook -->
+		<meta property="og:type" content="website" />
+		<meta property="og:url" content={new URL(pathname, Astro.site || Astro.url.origin)} />
+		<meta property="og:title" content={title} />
+		<meta property="og:description" content={description} />
+		<meta property="og:image" content={new URL(image, Astro.site || Astro.url.origin)} />
+
+		<!-- Twitter -->
+		<meta property="twitter:card" content="summary_large_image" />
+		<meta property="twitter:url" content={new URL(pathname, Astro.site || Astro.url.origin)} />
+		<meta property="twitter:title" content={title} />
+		<meta property="twitter:description" content={description} />
+		<meta property="twitter:image" content={new URL(image, Astro.site || Astro.url.origin)} />
+
+		<!-- Preconnect CDNs -->
+		<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
+
 		<!-- Devicon for Social Icons -->
 		<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/gh/devicons/devicon@latest/devicon.min.css" />
 		<!-- KaTeX CSS for math rendering -->
@@ -73,14 +101,24 @@ const isTopicPage = currentTopicId !== '';
 		<script type="module">
 			const containers = document.querySelectorAll('.mermaid-container');
 			if (containers.length > 0) {
-				const { default: mermaid } = await import('https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs');
-				mermaid.initialize({ startOnLoad: false, theme: 'dark' });
+				let mermaidPromise = null;
 
-				for (let i = 0; i < containers.length; i++) {
-					const div = containers[i];
+				const loadMermaid = () => {
+					if (!mermaidPromise) {
+						mermaidPromise = import('https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs').then(module => {
+							const mermaid = module.default;
+							mermaid.initialize({ startOnLoad: false, theme: 'dark' });
+							return mermaid;
+						});
+					}
+					return mermaidPromise;
+				};
+
+				const renderDiagram = async (div, index) => {
+					const mermaid = await loadMermaid();
 					const rawText = decodeURIComponent(div.getAttribute('data-mermaid-encoded'));
 					try {
-						const { svg } = await mermaid.render('mermaid-svg-' + i, rawText);
+						const { svg } = await mermaid.render('mermaid-svg-' + index, rawText);
 						div.innerHTML = svg;
 						div.style.cursor = 'zoom-in';
 						div.classList.add('hover:opacity-80', 'transition-opacity', 'duration-200');
@@ -91,7 +129,27 @@ const isTopicPage = currentTopicId !== '';
 						console.error('Mermaid render error:', e);
 						div.innerHTML = `<div class="text-red-500 text-xs font-mono block p-4 bg-red-900/20 rounded border border-red-900/50 overflow-x-auto whitespace-pre-wrap"><b>Mermaid Error:</b> ${e.message || e}<br/><br/><b>Raw Text:</b><br/>${rawText.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>`;
 					}
-				}
+				};
+
+				const observer = new IntersectionObserver((entries, obs) => {
+					entries.forEach(entry => {
+						if (entry.isIntersecting) {
+							const div = entry.target;
+							const index = div.getAttribute('data-mermaid-index');
+							renderDiagram(div, index);
+							obs.unobserve(div);
+						}
+					});
+				}, { rootMargin: '500px 0px' });
+
+				containers.forEach((div, i) => {
+					div.setAttribute('data-mermaid-index', i.toString());
+					
+					// Loading state skeleton
+					div.innerHTML = '<div class="animate-pulse flex flex-col space-y-4 p-8 border border-gray-800/60 rounded-xl bg-gray-900/20 w-full max-w-2xl mx-auto"><div class="h-4 bg-gray-800/80 rounded w-1/3 mx-auto"></div><div class="h-24 bg-gray-800/50 rounded w-full"></div><div class="h-4 bg-gray-800/80 rounded w-1/2 mx-auto"></div></div>';
+					
+					observer.observe(div);
+				});
 			}
 		</script>
 	</head>

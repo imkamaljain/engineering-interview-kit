@@ -12,6 +12,8 @@ export const categoryIcons: Record<string, string> = {
     'system-design': 'https://cdn.jsdelivr.net/gh/devicons/devicon@latest/icons/moleculer/moleculer-original.svg',
     'nestjs': 'https://cdn.jsdelivr.net/gh/devicons/devicon@latest/icons/nestjs/nestjs-original.svg',
     'java': 'https://cdn.jsdelivr.net/gh/devicons/devicon@latest/icons/java/java-original.svg',
+    'neetcode 150': 'https://cdn.jsdelivr.net/gh/devicons/devicon@latest/icons/leetcode/leetcode-plain.svg',
+    'neetcode-150': 'https://cdn.jsdelivr.net/gh/devicons/devicon@latest/icons/leetcode/leetcode-plain.svg',
 };
 
 export const getCategoryIcon = (category: string) => {
