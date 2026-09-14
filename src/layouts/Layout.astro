@@ -3,6 +3,7 @@ import '../styles/global.css';
 import { getCollection } from 'astro:content';
 import { getCategoryIcon } from '../utils/icons';
 import { SUBCATEGORY_ORDER } from '../config/subcategories';
+import { TECHNOLOGY_GROUPS } from '../config/home-groups';
 
 interface Props {
 	title: string;
@@ -25,6 +26,7 @@ let currentCategoryIcon: string | null = null;
 let currentCategoryTopics: any[] = [];
 let groupedAndSortedTopics: [string, any[]][] = [];
 let currentTopicId = '';
+let allCategoriesData: any[] = [];
 
 if (pathname.startsWith('/topics/')) {
     const parts = pathname.split('/').filter(Boolean);
@@ -55,6 +57,58 @@ if (pathname.startsWith('/topics/')) {
                 const aIdx = orderArr.indexOf(a);
                 const bIdx = orderArr.indexOf(b);
                 return (aIdx === -1 ? 999 : aIdx) - (bIdx === -1 ? 999 : bIdx);
+            });
+
+            const categoryMap = new Map();
+            topics.forEach((t: any) => {
+                const cat = t.data.category;
+                if (!cat) return;
+                const cSlug = slugify(cat);
+                if (!categoryMap.has(cSlug)) {
+                    categoryMap.set(cSlug, {
+                        name: cat,
+                        slug: cSlug,
+                        topics: []
+                    });
+                }
+                categoryMap.get(cSlug).topics.push(t);
+            });
+
+            allCategoriesData = Array.from(categoryMap.values()).map(catData => {
+                const cGrouped = catData.topics.reduce((acc: Record<string, any[]>, topic: any) => {
+                    const sub = topic.data.subcategory || 'Other Topics';
+                    if (!acc[sub]) acc[sub] = [];
+                    acc[sub].push(topic);
+                    return acc;
+                }, {} as Record<string, any[]>);
+                
+                const cSortedSubcats = Object.keys(cGrouped).sort((a, b) => {
+                    const orderArr = SUBCATEGORY_ORDER[catData.slug] || [];
+                    const aIdx = orderArr.indexOf(a);
+                    const bIdx = orderArr.indexOf(b);
+                    return (aIdx === -1 ? 999 : aIdx) - (bIdx === -1 ? 999 : bIdx);
+                });
+                
+                const firstSubcat = cSortedSubcats[0];
+                const sortedFirstSubcatTopics = cGrouped[firstSubcat]?.sort((a: any, b: any) => (a.data.order || 99) - (b.data.order || 99)) || [];
+                const firstTopic = sortedFirstSubcatTopics[0];
+
+                return {
+                    name: catData.name,
+                    slug: catData.slug,
+                    icon: getCategoryIcon(catData.slug),
+                    url: firstTopic ? `/topics/${firstTopic.id}` : '#'
+                };
+            });
+
+            // Sort according to home-groups order
+            const orderedSlugs = TECHNOLOGY_GROUPS.flatMap(group => group.items.map(item => item.slug));
+            allCategoriesData.sort((a, b) => {
+                const indexA = orderedSlugs.indexOf(a.slug);
+                const indexB = orderedSlugs.indexOf(b.slug);
+                const rankA = indexA === -1 ? 999 : indexA;
+                const rankB = indexB === -1 ? 999 : indexB;
+                return rankA - rankB;
             });
         }
     }
@@ -164,27 +218,54 @@ const isTopicPage = currentTopicId !== '';
 				<div id="sidebar-content-wrapper" class="w-64 h-full overflow-hidden transition-all duration-300 ease-in-out">
 					<div class="w-64 flex flex-col h-full">
 						
-						<!-- Fixed Header -->
-						<div class="p-5 shrink-0 border-b border-gray-800/40 bg-transparent z-10">
-							<a href="/" class="flex items-center gap-3 group">
+						<!-- Fixed Header (Logo + Dropdown) -->
+						<div class="p-5 pb-2 shrink-0 bg-transparent z-20 relative">
+							<a href="/" class="flex items-center gap-3 group mb-5">
 								<img src="/logo.svg" alt="Logo" class="w-10 h-10 drop-shadow-md group-hover:scale-105 transition-transform duration-300" />
 								<span class="text-[17px] font-bold tracking-tight text-gray-100 group-hover:text-white leading-tight transition-colors">
 									Engineering<br/>Interview Kit
 								</span>
 							</a>
+
+							<div class="relative">
+								<button id="category-selector-btn" class="w-full flex items-center justify-between p-2.5 rounded-xl bg-gray-900 border border-gray-800 hover:bg-gray-800 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500/50 cursor-pointer">
+									<div class="flex items-center gap-3">
+										<div class="w-8 h-8 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center shrink-0">
+											{currentCategoryIcon && <img src={currentCategoryIcon} alt="" class="w-4 h-4 object-contain" />}
+										</div>
+										<span class="font-semibold text-gray-200 text-sm tracking-wide">{currentCategoryName}</span>
+									</div>
+									<svg class="w-4 h-4 text-gray-500 transition-transform duration-200" id="category-selector-arrow" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+										<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+									</svg>
+								</button>
+
+								<div id="category-selector-menu" class="absolute top-full left-0 right-0 mt-2 bg-gray-900 border border-gray-800 rounded-xl shadow-xl overflow-hidden z-50 hidden opacity-0 transition-all duration-200 origin-top scale-95">
+									<div class="max-h-64 overflow-y-auto p-1.5 flex flex-col gap-1 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+										{allCategoriesData.map((cat: any) => (
+											<a 
+												href={cat.name === currentCategoryName ? '#' : cat.url} 
+												class={`flex items-center gap-3 p-2 rounded-lg transition-colors ${cat.name === currentCategoryName ? 'bg-blue-500/10 cursor-default' : 'hover:bg-gray-800 cursor-pointer'}`}
+											>
+												<div class={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${cat.name === currentCategoryName ? 'bg-blue-500/20 border border-blue-500/30 shadow-[0_0_10px_rgba(59,130,246,0.2)]' : 'bg-gray-800 border border-gray-700'}`}>
+													{cat.icon && <img src={cat.icon} alt="" class="w-4 h-4 object-contain" />}
+												</div>
+												<span class={`text-sm font-medium ${cat.name === currentCategoryName ? 'text-blue-400' : 'text-gray-300'}`}>{cat.name}</span>
+											</a>
+										))}
+									</div>
+								</div>
+							</div>
 						</div>
 					
 						<!-- Scrollable Content -->
-						<div class="flex-1 overflow-y-auto p-5 pt-6 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+						<div class="flex-1 overflow-y-auto p-5 mt-4 pt-0 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
 							<nav class="text-sm pb-8 -mx-3">
 								<div class="px-3">
-									<h3 class="font-bold text-gray-100 mb-6 text-[13px] flex items-center gap-2 tracking-wide uppercase">
-										{currentCategoryIcon && <img src={currentCategoryIcon} alt="" class="w-4 h-4 object-contain" />}
-										{currentCategoryName} Topics
-									</h3>
-									
-									{groupedAndSortedTopics.map(([subcat, subTopics]: [string, any[]]) => (
-										<details class="mb-6 last:mb-0 group/details" open>
+									{groupedAndSortedTopics.map(([subcat, subTopics]: [string, any[]]) => {
+										const isActiveSubcat = subTopics.some(t => t.id === currentTopicId);
+										return (
+										<details class="mb-6 last:mb-0 group/details" open={isActiveSubcat || undefined}>
 											<summary class="font-semibold text-gray-300 mb-2 text-[12px] flex items-center gap-2 group cursor-pointer list-none [&::-webkit-details-marker]:hidden select-none hover:text-gray-100 transition-colors">
 												<svg class="w-3.5 h-3.5 text-gray-500 transition-transform duration-200 group-open/details:rotate-90 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 													<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 5l7 7-7 7" />
@@ -208,7 +289,8 @@ const isTopicPage = currentTopicId !== '';
 												))}
 											</ul>
 										</details>
-									))}
+										);
+									})}
 								</div>
 							</nav>
 						</div>
@@ -279,6 +361,44 @@ const isTopicPage = currentTopicId !== '';
 							isCollapsed = !isCollapsed;
 							localStorage.setItem('sidebar-collapsed', isCollapsed);
 							applyState(false); // Animate on user click
+						});
+					}
+
+					const catBtn = document.getElementById('category-selector-btn');
+					const catMenu = document.getElementById('category-selector-menu');
+					const catArrow = document.getElementById('category-selector-arrow');
+					
+					if (catBtn && catMenu && catArrow) {
+						let isCatMenuOpen = false;
+						catBtn.addEventListener('click', (e) => {
+							e.stopPropagation();
+							isCatMenuOpen = !isCatMenuOpen;
+							if (isCatMenuOpen) {
+								catMenu.classList.remove('hidden');
+								void catMenu.offsetWidth;
+								catMenu.classList.remove('opacity-0', 'scale-95');
+								catMenu.classList.add('opacity-100', 'scale-100');
+								catArrow.classList.add('rotate-180');
+							} else {
+								catMenu.classList.remove('opacity-100', 'scale-100');
+								catMenu.classList.add('opacity-0', 'scale-95');
+								catArrow.classList.remove('rotate-180');
+								setTimeout(() => {
+									if (!isCatMenuOpen) catMenu.classList.add('hidden');
+								}, 200);
+							}
+						});
+
+						document.addEventListener('click', (e) => {
+							if (isCatMenuOpen && !catBtn.contains(e.target) && !catMenu.contains(e.target)) {
+								isCatMenuOpen = false;
+								catMenu.classList.remove('opacity-100', 'scale-100');
+								catMenu.classList.add('opacity-0', 'scale-95');
+								catArrow.classList.remove('rotate-180');
+								setTimeout(() => {
+									if (!isCatMenuOpen) catMenu.classList.add('hidden');
+								}, 200);
+							}
 						});
 					}
 

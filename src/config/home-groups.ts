@@ -5,22 +5,22 @@ export const TECHNOLOGY_GROUPS = [
 			{
 				title: "JavaScript",
 				slug: "javascript",
-				samples: ["Event loop", "Closures", "Promises", "Prototypal Inheritance"]
+				description: "Master JavaScript fundamentals, from the event loop and closures to prototypal inheritance and modern ES6+ features."
 			},
 			{
 				title: "TypeScript",
 				slug: "typescript",
-				samples: ["Generics", "Utility types", "Type guards", "Declaration merging"]
+				description: "Deep dive into TypeScript's type system, covering generics, utility types, type guards, and advanced configurations."
 			},
 			{
 				title: "Go",
 				slug: "go",
-				samples: ["Goroutines", "Channels", "Scheduler", "Memory model"]
+				description: "Learn Go internals, concurrency patterns like goroutines and channels, and practical backend engineering concepts."
 			},
 			{
 				title: "Java",
 				slug: "java",
-				samples: ["Class", "Interface", "Inheritance", "Polymorphism"]
+				description: "Comprehensive guide to Java, object-oriented principles, JVM memory management, and modern concurrency."
 			}
 		]
 	},
@@ -30,7 +30,7 @@ export const TECHNOLOGY_GROUPS = [
 			{
 				title: "React",
 				slug: "react",
-				samples: ["Hooks", "Context API", "Virtual DOM", "State Management"]
+				description: "Understand React under the hood, state management, hooks, the virtual DOM, and performance optimization techniques."
 			}
 		]
 	},
@@ -40,17 +40,17 @@ export const TECHNOLOGY_GROUPS = [
 			{
 				title: "Node.js",
 				slug: "nodejs",
-				samples: ["Architecture", "Streams", "Event Loop", "Worker Threads"]
+				description: "Explore Node.js architecture, event loop mechanics, streams, worker threads, and building scalable backends."
 			},
 			{
 				title: "NestJS",
 				slug: "nestjs",
-				samples: ["Controllers", "Providers", "Modules", "Dependency Injection"]
+				description: "Master enterprise backend development with NestJS, dependency injection, modules, decorators, and microservices."
 			},
 			{
 				title: "SQL",
 				slug: "sql",
-				samples: ["Joins", "Indexes", "ACID", "Transaction Isolation"]
+				description: "Essential database concepts including complex joins, indexing strategies, ACID properties, and transaction isolation levels."
 			}
 		]
 	},
@@ -60,12 +60,12 @@ export const TECHNOLOGY_GROUPS = [
 			{
 				title: "Data Structures & Algorithms",
 				slug: "dsa",
-				samples: ["Arrays", "Graphs", "Dynamic Programming", "Interview Problems"]
+				description: "A complete guide to data structures, algorithms, and dynamic programming patterns to ace your coding interviews."
 			},
 			{
 				title: "System Design",
 				slug: "system-design",
-				samples: ["Scalability", "Caching", "Databases", "Message Queues"]
+				description: "Learn how to architect large-scale distributed systems, covering caching, databases, load balancing, and scalability."
 			}
 		]
 	},
@@ -75,7 +75,7 @@ export const TECHNOLOGY_GROUPS = [
 			{
 				title: "NeetCode 150",
 				slug: "neetcode-150",
-				samples: ["Arrays & Hashing", "Two Pointers", "Sliding Window", "Stack"]
+				description: "Curated list of 150 top coding interview questions grouped by patterns like Sliding Window, Two Pointers, and more."
 			}
 		]
 	}
