@@ -190,6 +190,9 @@ export const SUBCATEGORY_ORDER: Record<string, string[]> = {
   "neetcode-150": [
     "Arrays & Hashing",
     "Two Pointers",
-    "Sliding Window"
+    "Sliding Window",
+    "Stack",
+    "Binary Search",
+    "Linked List"
   ]
 };

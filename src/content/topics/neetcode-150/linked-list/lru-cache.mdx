@@ -1,0 +1,154 @@
+---
+title: "LRU Cache"
+description: "LeetCode #146"
+category: "NeetCode 150"
+difficulty: "medium"
+subcategory: "Linked List"
+order: 9
+---
+
+## Problem Statement
+
+Design a data structure that follows the constraints of a **Least Recently Used (LRU)** cache.
+
+Implement the `LRUCache` class:
+- `LRUCache(int capacity)` Initialize the LRU cache with positive size `capacity`.
+- `int get(int key)` Return the value of the `key` if the key exists, otherwise return `-1`.
+- `void put(int key, int value)` Update the value of the `key` if the `key` exists. Otherwise, add the `key-value` pair to the cache. If the number of keys exceeds the `capacity` from this operation, **evict** the least recently used key.
+
+The functions `get` and `put` must each run in $O(1)$ average time complexity.
+
+**Example 1:**
+Input:
+`["LRUCache", "put", "put", "get", "put", "get", "put", "get", "get", "get"]`
+`[[2], [1, 1], [2, 2], [1], [3, 3], [2], [4, 4], [1], [3], [4]]`
+Output:
+`[null, null, null, 1, null, -1, null, -1, 3, 4]`
+
+Explanation:
+```javascript
+LRUCache lRUCache = new LRUCache(2);
+lRUCache.put(1, 1); // cache is {1=1}
+lRUCache.put(2, 2); // cache is {1=1, 2=2}
+lRUCache.get(1);    // return 1
+lRUCache.put(3, 3); // LRU key was 2, evicts key 2, cache is {1=1, 3=3}
+lRUCache.get(2);    // returns -1 (not found)
+lRUCache.put(4, 4); // LRU key was 1, evicts key 1, cache is {4=4, 3=3}
+lRUCache.get(1);    // return -1 (not found)
+lRUCache.get(3);    // return 3
+lRUCache.get(4);    // return 4
+```
+
+## Approach: Hash Map + Doubly Linked List
+
+To achieve $O(1)$ time complexity for both `get` and `put`, we must use a combination of two data structures:
+
+1. **Hash Map:** A dictionary that maps a `key` to its corresponding `Node` in a linked list. This gives us $O(1)$ lookup time.
+2. **Doubly Linked List:** Stores the actual key-value pairs. A doubly linked list allows us to add, remove, or move nodes in exactly $O(1)$ time, provided we have a direct reference to the node (which our Hash Map provides!).
+
+**How they work together:**
+- We initialize a `head` and a `tail` **Dummy Node** for the Doubly Linked List. This simplifies edge cases when inserting or removing nodes.
+- **Most Recently Used (MRU):** Any node that is newly inserted or recently accessed via `get` will be moved right next to the `head`.
+- **Least Recently Used (LRU):** The node that sits right before the `tail` is implicitly the LRU node.
+- **`get(key)`:** If the key exists in our Hash Map, we grab the node. We then remove it from its current position in the Linked List and re-insert it right after the `head` to mark it as the MRU. Finally, return its value.
+- **`put(key, value)`:** 
+  - If the key already exists, we remove the old node.
+  - We create a new node, insert it right after the `head` (MRU), and store it in our Hash Map.
+  - If inserting this node causes us to exceed our `capacity`, we simply look at the node right before the `tail` (the LRU node). We remove it from the Linked List and delete its key from the Hash Map.
+
+## Solution
+
+```javascript
+// Definition for a Doubly Linked List Node
+class Node {
+    constructor(key, val) {
+        this.key = key;
+        this.val = val;
+        this.prev = null;
+        this.next = null;
+    }
+}
+
+/**
+ * @param {number} capacity
+ */
+var LRUCache = function(capacity) {
+    this.cap = capacity;
+    this.map = new Map(); // Maps key -> Node
+    
+    // Setup dummy head and tail
+    this.head = new Node(0, 0);
+    this.tail = new Node(0, 0);
+    this.head.next = this.tail;
+    this.tail.prev = this.head;
+};
+
+// Helper: insert a node right after the dummy head (marks it as MRU)
+LRUCache.prototype.insert = function(node) {
+    let nextNode = this.head.next;
+    
+    this.head.next = node;
+    node.prev = this.head;
+    
+    node.next = nextNode;
+    nextNode.prev = node;
+};
+
+// Helper: remove an existing node from the linked list
+LRUCache.prototype.remove = function(node) {
+    let prevNode = node.prev;
+    let nextNode = node.next;
+    
+    prevNode.next = nextNode;
+    nextNode.prev = prevNode;
+};
+
+/** 
+ * @param {number} key
+ * @return {number}
+ */
+LRUCache.prototype.get = function(key) {
+    if (this.map.has(key)) {
+        let node = this.map.get(key);
+        // Mark as Most Recently Used
+        this.remove(node);
+        this.insert(node);
+        return node.val;
+    }
+    return -1;
+};
+
+/** 
+ * @param {number} key 
+ * @param {number} value
+ * @return {void}
+ */
+LRUCache.prototype.put = function(key, value) {
+    // If it already exists, update the value and move to front
+    if (this.map.has(key)) {
+        const node = this.map.get(key);
+        this.remove(node);
+        node.val = value;
+        this.insert(node);
+        return;
+    }
+    
+    // Create and insert the new node
+    const node = new Node(key, value);
+    this.map.set(key, node);
+    this.insert(node);
+    
+    // Check if we exceeded capacity
+    if (this.map.size > this.cap) {
+        // Evict the Least Recently Used node (right before tail)
+        const lastNode = this.tail.prev;
+        this.remove(lastNode);
+        this.map.delete(lastNode.key);
+    }
+};
+```
+
+## Complexity Analysis
+
+- **Time Complexity:** $O(1)$ for both `get` and `put`. Hash Map operations (lookup, insert, delete) take $O(1)$ time on average. Because we use a Doubly Linked List, removing and inserting nodes also takes exactly $O(1)$ time.
+- **Space Complexity:** $O(C)$ where $C$ is the `capacity` of the cache. The Hash Map and the Doubly Linked List will store at most $C$ elements.
