@@ -1,14 +1,14 @@
 # Engineering Interview Kit
 
-A comprehensive, high-signal revision kit for Software Engineers preparing for interviews.
+Crack the interview without the fluff. High-yield, visual revision notes for modern software engineering interviews.
 
 Built with **Astro**, **Tailwind CSS**, and **MDX**, this project provides a lightning-fast, beautifully designed static site that renders technical concepts, Mermaid diagrams, and code snippets effortlessly.
 
 ## 🚀 Features
 
 - **High Signal-to-Noise Ratio**: Every topic follows a strict pattern: TL;DR, Mental Model (Mermaid diagram), Example, Interview Questions, and Gotchas.
-- **Mermaid Diagrams**: Native support for complex system design and architecture models.
-- **Dynamic Routing**: Content is dynamically generated from MDX files organized by category (JavaScript, TypeScript, Go, Node.js, SQL, System Design, DSA).
+- **Mermaid Diagrams**: Native support for complex algorithms and system design architectures.
+- **Extensive Coverage**: Content is dynamically generated from MDX files organized across categories including JavaScript, TypeScript, React, Node.js, NestJS, Go, Java, SQL, System Design, DSA, and NeetCode 150.
 - **Premium Design**: Clean, modern dark UI built with Tailwind CSS.
 
 ## 📂 Project Structure
