@@ -193,6 +193,9 @@ export const SUBCATEGORY_ORDER: Record<string, string[]> = {
     "Sliding Window",
     "Stack",
     "Binary Search",
-    "Linked List"
+    "Linked List",
+    "Backtracking",
+    "Trees",
+    "Heap",
   ]
 };
