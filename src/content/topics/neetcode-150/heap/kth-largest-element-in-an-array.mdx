@@ -1,0 +1,179 @@
+---
+title: "Kth Largest Element in an Array"
+description: "LeetCode #215"
+category: "NeetCode 150"
+difficulty: "medium"
+subcategory: "Heap"
+order: 4
+---
+
+## Problem Statement
+
+Given an integer array `nums` and an integer `k`, return the `k`th largest element in the array.
+
+Note that it is the `k`th largest element in sorted order, not the `k`th distinct element.
+
+Can you solve it without sorting?
+
+**Example 1:**
+```text
+Input: nums = [3,2,1,5,6,4], k = 2
+Output: 5
+```
+
+**Example 2:**
+```text
+Input: nums = [3,2,3,1,2,4,5,5,6], k = 4
+Output: 4
+```
+
+**Constraints:**
+- `1 <= k <= nums.length <= 10^5`
+- `-10^4 <= nums[i] <= 10^4`
+
+---
+
+## Approach 1: Min-Heap of Size K (Optimal for Streaming)
+
+When asked for the **$K$ Largest** elements, our goal is to maintain a running collection of the top $K$ champions.
+
+Instead of a Max-Heap containing all $N$ elements, we use a **Min-Heap capped at size $K$**:
+1. Because the heap is limited to size $K$, it will only hold the $K$ largest elements seen so far.
+2. In a Min-Heap, the **smallest** of those $K$ champions sits at the root (`front()`).
+3. Whenever the heap size exceeds $K$, we dequeue the root—evicting whichever number is smallest and least worthy of remaining in the top $K$.
+4. After processing the entire array, the root of the Min-Heap is precisely the $K$th largest element!
+
+### Mental Model
+
+Tracing `nums = [3, 2, 1, 5, 6, 4]` with `k = 2`:
+
+<div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start my-8">
+  <div>
+    <h3 className="text-center mb-2 text-sm font-semibold text-gray-400">Processing [3, 2, 1, 5] (k = 2)</h3>
+    ```mermaid
+    flowchart TD
+        3(("3\n(2nd Largest)")) --- 5((5))
+        
+        style 3 stroke:#3b82f6,stroke-width:3px
+    ```
+    *Numbers `1` and `2` were evicted. The root `3` is the current 2nd largest candidate.*
+  </div>
+  
+  <div>
+    <h3 className="text-center mb-2 text-sm font-semibold text-gray-400">Final Heap After [6, 4]</h3>
+    ```mermaid
+    flowchart TD
+        5(("5\n(2nd Largest)")) --- 6((6))
+        
+        style 5 stroke:#10b981,stroke-width:3px
+    ```
+    *`6` entered, evicting `3`. `4` entered, but was smaller than `5`, so `4` was evicted. Result: `5`.*
+  </div>
+</div>
+
+### Solution (Min-Heap)
+
+```javascript
+/**
+ * @param {number[]} nums
+ * @param {number} k
+ * @return {number}
+ */
+var findKthLargest = function(nums, k) {
+    // MinPriorityQueue keeps the smallest element at the root
+    const minHeap = new MinPriorityQueue();
+    
+    for (const num of nums) {
+        minHeap.enqueue(num);
+        
+        // If heap exceeds k elements, kick out the smallest
+        if (minHeap.size() > k) {
+            minHeap.dequeue();
+        }
+    }
+    
+    // The root is the kth largest element
+    return minHeap.front();
+};
+```
+
+---
+
+## Approach 2: QuickSelect ($O(N)$ Average Time)
+
+In interviews at top tech companies, you will often be asked: *"Can we do better than $O(N \log K)$ in terms of time?"*
+
+The answer is **QuickSelect**, an adaptation of QuickSort:
+1. Choose a random `pivot` from the array.
+2. Partition the array into three buckets:
+   - `left`: elements **greater** than `pivot`
+   - `mid`: elements **equal** to `pivot`
+   - `right`: elements **smaller** than `pivot`
+3. Decide which partition contains the $k$th largest element:
+   - If $k \le \text{left.length}$, the answer is inside `left`. Recurse on `left` with target $k$.
+   - If $k \le \text{left.length} + \text{mid.length}$, the answer is the `pivot` itself!
+   - Otherwise, the answer must be in `right`. Recurse on `right` with target $k - \text{left.length} - \text{mid.length}$.
+
+Because we discard roughly half the array on each step ($N + N/2 + N/4 + \dots = 2N$), the average time complexity is **$O(N)$**.
+
+### Solution (QuickSelect)
+
+```javascript
+/**
+ * @param {number[]} nums
+ * @param {number} k
+ * @return {number}
+ */
+var findKthLargestQuickSelect = function(nums, k) {
+    // Pick a random pivot to avoid worst-case O(N^2) on sorted inputs
+    const pivot = nums[Math.floor(Math.random() * nums.length)];
+    
+    const left = [];  // Numbers greater than pivot
+    const mid = [];   // Numbers equal to pivot
+    const right = []; // Numbers smaller than pivot
+    
+    for (const num of nums) {
+        if (num > pivot) left.push(num);
+        else if (num === pivot) mid.push(num);
+        else right.push(num);
+    }
+    
+    // Case 1: kth largest is in the 'greater' bucket
+    if (k <= left.length) {
+        return findKthLargestQuickSelect(left, k);
+    }
+    
+    // Case 2: kth largest is in the 'equal' bucket
+    if (k <= left.length + mid.length) {
+        return pivot;
+    }
+    
+    // Case 3: kth largest is in the 'smaller' bucket
+    return findKthLargestQuickSelect(right, k - left.length - mid.length);
+};
+```
+
+---
+
+## Min-Heap vs. QuickSelect: Interview Trade-offs
+
+| Feature | Min-Heap ($O(N \log K)$) | QuickSelect ($O(N)$ Average) |
+| :--- | :--- | :--- |
+| **Average Time** | $O(N \log K)$ | $O(N)$ |
+| **Worst-Case Time** | $O(N \log K)$ | $O(N^2)$ (rare with randomized pivot) |
+| **Space Complexity** | $O(K)$ | $O(N)$ or $O(1)$ in-place |
+| **Streaming Data** | **Excellent** (handles infinite streams) | **Cannot handle** (requires full array in RAM) |
+| **Implementation** | Very simple & clean with PriorityQueue | Requires partitioning logic |
+
+> **Interview Tip:** Start by discussing the **Min-Heap** solution for its stability and streaming advantages ($O(K)$ space). Then introduce **QuickSelect** to demonstrate knowledge of $O(N)$ average time.
+
+---
+
+## Complexity Analysis
+
+- **Min-Heap Approach:**
+  - **Time Complexity:** $O(N \log K)$ — Each of the $N$ insertions/deletions takes $O(\log K)$ time.
+  - **Space Complexity:** $O(K)$ — Heap stores at most $K + 1$ elements at any moment.
+- **QuickSelect Approach:**
+  - **Time Complexity:** $O(N)$ average, $O(N^2)$ worst-case (mitigated by randomized pivot).
+  - **Space Complexity:** $O(N)$ with explicit 3-way partition arrays (or $O(1)$ auxiliary space with in-place two-pointer partitioning).

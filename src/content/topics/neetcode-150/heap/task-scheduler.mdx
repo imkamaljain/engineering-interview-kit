@@ -1,0 +1,210 @@
+---
+title: "Task Scheduler"
+description: "LeetCode #621"
+category: "NeetCode 150"
+difficulty: "medium"
+subcategory: "Heap"
+order: 5
+---
+
+## Problem Statement
+
+You are given an array of CPU `tasks`, each represented by letters `A` to `Z`, and a cooling interval `n`. Each CPU interval can either execute one task or remain idle.
+
+Identical tasks must be separated by at least `n` intervals of cooldown (filled by other tasks or idle cycles).
+
+Return the **minimum number of CPU intervals** required to complete all tasks.
+
+**Example 1:**
+```text
+Input: tasks = ["A","A","A","B","B","B"], n = 2
+Output: 8
+Explanation: 
+A possible optimal execution sequence is:
+A -> B -> idle -> A -> B -> idle -> A -> B
+Total intervals: 8
+```
+
+**Example 2:**
+```text
+Input: tasks = ["A","A","A","B","B","B"], n = 0
+Output: 6
+Explanation: With cooldown n = 0, any order works without idle time.
+```
+
+**Example 3:**
+```text
+Input: tasks = ["A","A","A","A","A","A","B","C","D","E","F","G"], n = 2
+Output: 16
+Explanation:
+One possible sequence:
+A -> B -> C -> A -> D -> E -> A -> F -> G -> A -> idle -> idle -> A -> idle -> idle -> A
+```
+
+**Constraints:**
+- `1 <= tasks.length <= 10^4`
+- `tasks[i]` is an uppercase English letter.
+- `0 <= n <= 100`
+
+---
+
+## Approach 1: Max-Heap + Cooldown Queue (Simulation)
+
+To minimize total idle time, we should always greedily prioritize the tasks with the **highest remaining frequency**. If we delay the most frequent tasks, we will be forced to take idle cycles later waiting for their cooldowns.
+
+### The Algorithm:
+1. Count the frequency of each task (`A-Z`).
+2. Insert all positive frequencies into a **Max-Heap**.
+3. Use a FIFO **cooldown queue** storing tuples of `[remainingCount, readyTime]`.
+4. Run a simulation loop incrementing `time`:
+   - If the Max-Heap is not empty, pop the highest remaining frequency `count`.
+   - If `count - 1 > 0`, it needs more CPU cycles in the future. Add it to the cooldown queue with `readyTime = time + n`.
+   - If the task at the head of the cooldown queue has cooled down (`queue[0].readyTime === time`), move it back into the Max-Heap.
+5. Terminate when both the Max-Heap and cooldown queue are empty.
+
+### Mental Model
+
+<div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start my-8">
+  <div>
+    <h3 className="text-center mb-2 text-sm font-semibold text-gray-400">Simulation Cycle</h3>
+    ```mermaid
+    flowchart TD
+        A["Max-Heap (Most Frequent Task)"] -->|Execute Task| B["CPU Interval (time++)"]
+        B -->|If remaining > 0| C["Cooldown Queue [count, time + n]"]
+        C -->|When time reaches readyTime| A
+        
+        style A stroke:#3b82f6,stroke-width:2px
+        style B stroke:#10b981,stroke-width:2px
+        style C stroke:#f59e0b,stroke-width:2px
+    ```
+    *Greedily pick the heaviest task; park remaining instances in the cooldown queue.*
+  </div>
+  
+  <div>
+    <h3 className="text-center mb-2 text-sm font-semibold text-gray-400">Math Frame Structure</h3>
+    ```mermaid
+    flowchart TD
+        subgraph Chunk1 ["Chunk 1"]
+            A1["A"] --- B1["B"] --- I1["idle"]
+        end
+        subgraph Chunk2 ["Chunk 2"]
+            A2["A"] --- B2["B"] --- I2["idle"]
+        end
+        subgraph FinalChunk ["Last Chunk"]
+            A3["A"] --- B3["B"]
+        end
+        
+        Chunk1 --> Chunk2 --> FinalChunk
+    ```
+    *`maxFreq - 1` blocks of size `(n + 1)`, followed by tasks sharing the max frequency.*
+  </div>
+</div>
+
+### Solution (Max-Heap + Queue)
+
+```javascript
+/**
+ * @param {character[]} tasks
+ * @param {number} n
+ * @return {number}
+ */
+var leastInterval = function(tasks, n) {
+    if (n === 0) return tasks.length;
+    
+    // 1. Count frequencies of each uppercase task
+    const counts = new Array(26).fill(0);
+    for (const task of tasks) {
+        counts[task.charCodeAt(0) - 65]++;
+    }
+    
+    // 2. Max-Heap storing remaining task frequencies
+    const maxHeap = new MaxPriorityQueue();
+    for (const count of counts) {
+        if (count > 0) {
+            maxHeap.enqueue(count);
+        }
+    }
+    
+    // 3. Cooldown queue storing [remainingCount, readyTime]
+    const cooldownQueue = [];
+    let time = 0;
+    
+    while (!maxHeap.isEmpty() || cooldownQueue.length > 0) {
+        time++;
+        
+        // Execute the most frequent available task
+        if (!maxHeap.isEmpty()) {
+            const count = maxHeap.dequeue();
+            if (count - 1 > 0) {
+                cooldownQueue.push([count - 1, time + n]);
+            }
+        }
+        
+        // Re-enqueue task if its cooldown interval has elapsed
+        if (cooldownQueue.length > 0 && cooldownQueue[0][1] === time) {
+            maxHeap.enqueue(cooldownQueue.shift()[0]);
+        }
+    }
+    
+    return time;
+};
+```
+
+---
+
+## Approach 2: Greedy Math Formula ($O(N)$ Time, $O(1)$ Space)
+
+We can calculate the answer directly without simulating interval-by-interval:
+
+1. Identify `maxFreq`, the highest frequency of any task.
+2. Identify `maxCount`, how many distinct tasks share this `maxFreq`.
+3. The most frequent task dictates the framework of the schedule:
+   - There are `maxFreq - 1` full frames.
+   - Each frame requires `n + 1` intervals (1 for the task, $n$ for cooling).
+   - The final partial frame has `maxCount` tasks.
+   $$\text{Required Slots} = (\text{maxFreq} - 1) \times (n + 1) + \text{maxCount}$$
+4. If there are enough other distinct tasks to fill all empty slots, no idle time is required at all. In that case, the answer is simply `tasks.length`.
+5. Therefore:
+   $$\text{Result} = \max(\text{tasks.length}, (\text{maxFreq} - 1) \times (n + 1) + \text{maxCount})$$
+
+### Solution (Math)
+
+```javascript
+/**
+ * @param {character[]} tasks
+ * @param {number} n
+ * @return {number}
+ */
+var leastIntervalMath = function(tasks, n) {
+    const counts = new Array(26).fill(0);
+    let maxFreq = 0;
+    
+    for (const task of tasks) {
+        const idx = task.charCodeAt(0) - 65;
+        counts[idx]++;
+        maxFreq = Math.max(maxFreq, counts[idx]);
+    }
+    
+    // Count how many tasks share the maximum frequency
+    let maxCount = 0;
+    for (const count of counts) {
+        if (count === maxFreq) {
+            maxCount++;
+        }
+    }
+    
+    const minSlots = (maxFreq - 1) * (n + 1) + maxCount;
+    return Math.max(tasks.length, minSlots);
+};
+```
+
+---
+
+## Complexity Analysis
+
+- **Max-Heap Simulation:**
+  - **Time Complexity:** $O(M \log K)$ where $M$ is the total time intervals and $K \le 26$ is the number of distinct characters. Since $K \le 26$, heap operations run in $O(\log 26) = O(1)$ time. Overall Time: $O(M)$.
+  - **Space Complexity:** $O(K) = O(1)$ since at most 26 uppercase letters are tracked.
+- **Math Formula:**
+  - **Time Complexity:** $O(N)$ where $N$ is `tasks.length` to tally character frequencies.
+  - **Space Complexity:** $O(1)$ auxiliary memory using a fixed-size 26-element array.

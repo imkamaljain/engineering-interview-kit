@@ -1,0 +1,228 @@
+---
+title: "Word Search II"
+description: "LeetCode #212"
+category: "NeetCode 150"
+difficulty: "hard"
+subcategory: "Tries"
+order: 3
+---
+
+## Problem Statement
+
+Given an `m x n` board of characters and a list of strings `words`, return all words on the board.
+
+Each word must be constructed from letters of sequentially adjacent cells, where adjacent cells are horizontally or vertically neighboring. The same letter cell may not be used more than once in a word.
+
+**Example 1:**
+```text
+Input: board = [
+  ["o","a","a","n"],
+  ["e","t","a","e"],
+  ["i","h","k","r"],
+  ["i","f","l","v"]
+], words = ["oath","pea","eat","rain"]
+
+Output: ["eat","oath"]
+```
+
+**Example 2:**
+```text
+Input: board = [
+  ["a","b"],
+  ["c","d"]
+], words = ["abcb"]
+
+Output: []
+```
+
+**Constraints:**
+- `m == board.length`
+- `n == board[i].length`
+- `1 <= m, n <= 12`
+- `board[i][j]` is a lowercase English letter.
+- `1 <= words.length <= 3 * 10^4`
+- `1 <= words[i].length <= 10`
+- `words[i]` consists of lowercase English letters.
+- All strings of `words` are unique.
+
+
+## Why Naive Backtracking Fails
+
+In **Word Search I** (LeetCode #79), we ran a DFS search for a single word in $O(M \times N \times 4^L)$ time.
+
+If we repeat that exact same approach for all $W$ words in `words` (where $W \le 30,000$), the time complexity explodes to:
+$$O(W \times M \times N \times 4^L)$$
+
+With $30,000$ words, this will immediately trigger a **Time Limit Exceeded (TLE)**.
+
+Instead of searching the board $W$ separate times for each individual word, we **invert the problem**:
+1. Insert all $W$ words into a single **Trie**.
+2. Traverse the board **once**, simultaneously matching prefixes for all $30,000$ words!
+
+
+## Core Architecture & Key Optimizations
+
+### 1. Store Full `word` at Terminal Nodes
+Instead of a simple boolean `isEndOfWord = true`, store the complete string `node.word = word` directly at the terminal node. 
+- When DFS lands on a terminal node, we can push `node.word` straight to our results list without having to reconstruct or concatenate strings during traversal.
+- To prevent duplicate entries when the same word can be formed along multiple paths on the board, set `node.word = null` immediately after finding it.
+
+### 2. Immediate Prefix Pruning
+At any cell `(r, c)`, if the character `board[r][c]` is not present in `node.children`, we stop exploring immediately! This prunes massive subtrees of impossible paths.
+
+### 3. Leaf Node Pruning (High-Performance Trick)
+Once all words beneath a branch have been discovered, that node becomes useless. If a child node has no remaining children and no pending word, we delete it from `node.children` (`node.children.delete(char)`). This trims the Trie dynamically and prevents future board explorations from re-visiting dead ends.
+
+
+## Mental Model
+
+<div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start my-8">
+  <div>
+    <h3 className="text-center mb-2 text-sm font-semibold text-gray-400">1. Build Trie from Words</h3>
+    ```mermaid
+    flowchart TD
+        Root["(root)"] --> O["o"]
+        Root --> E["e"]
+        
+        O --> A1["a"]
+        A1 --> T1["t"]
+        T1 --> H1["h\n(word = 'oath')"]
+        
+        E --> A2["a"]
+        A2 --> T2["t\n(word = 'eat')"]
+        
+        style H1 stroke:#10b981,stroke-width:2px
+        style T2 stroke:#10b981,stroke-width:2px
+    ```
+    *All search targets share common prefix trees.*
+  </div>
+  
+  <div>
+    <h3 className="text-center mb-2 text-sm font-semibold text-gray-400">2. Single Grid Traversal with Pruning</h3>
+    ```mermaid
+    flowchart TD
+        Cell["Step on board cell (r, c)"] --> Check{"char in\nnode.children?"}
+        Check -- "No" --> Prune["⛔ PRUNE!\nAbort exploration"]
+        Check -- "Yes" --> Match["Advance to nextNode\nExplore 4 neighbors"]
+        Match --> Found{"nextNode.word\nexists?"}
+        Found -- "Yes" --> Collect["Collect word & set\nword = null"]
+        
+        style Prune stroke:#ef4444,stroke-width:2px
+        style Collect stroke:#10b981,stroke-width:2px
+    ```
+    *The Trie acts as an instant bouncer: invalid prefixes are rejected on step 1.*
+  </div>
+</div>
+
+
+## Solution
+
+```javascript
+class TrieNode {
+    constructor() {
+        // Maps character -> child TrieNode
+        this.children = new Map();
+        // Stores complete word string at terminal node
+        this.word = null;
+    }
+}
+
+/**
+ * Builds a Trie from an array of words.
+ * @param {string[]} words
+ * @return {TrieNode}
+ */
+function buildTrie(words) {
+    const root = new TrieNode();
+    
+    for (const word of words) {
+        let node = root;
+        for (const char of word) {
+            if (!node.children.has(char)) {
+                node.children.set(char, new TrieNode());
+            }
+            node = node.children.get(char);
+        }
+        node.word = word; // Terminal node stores the full word string
+    }
+    
+    return root;
+}
+
+/**
+ * @param {character[][]} board
+ * @param {string[]} words
+ * @return {string[]}
+ */
+var findWords = function(board, words) {
+    const root = buildTrie(words);
+    const rows = board.length;
+    const cols = board[0].length;
+    const result = [];
+
+    /**
+     * Backtracking DFS traversal over the board.
+     * @param {number} r
+     * @param {number} c
+     * @param {TrieNode} parentNode
+     */
+    const dfs = (r, c, parentNode) => {
+        const char = board[r][c];
+        const currentNode = parentNode.children.get(char);
+
+        // 1. Prefix Pruning: if character is not in current Trie branch, stop
+        if (!currentNode) return;
+
+        // 2. Found a word
+        if (currentNode.word !== null) {
+            result.push(currentNode.word);
+            currentNode.word = null; // Avoid duplicate collection
+        }
+
+        // 3. Temporarily mark current cell as visited
+        board[r][c] = '#';
+
+        // 4. Explore all 4 adjacent directions
+        const directions = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+        for (const [dr, dc] of directions) {
+            const nr = r + dr;
+            const nc = c + dc;
+            if (nr >= 0 && nr < rows && nc >= 0 && nc < cols && board[nr][nc] !== '#') {
+                dfs(nr, nc, currentNode);
+            }
+        }
+
+        // 5. Backtrack: restore original cell character
+        board[r][c] = char;
+
+        // 6. Optimization: Leaf Pruning
+        // If this child branch has no remaining children and no pending word, trim it
+        if (currentNode.children.size === 0 && currentNode.word === null) {
+            parentNode.children.delete(char);
+        }
+    };
+
+    // Kick off DFS from every cell on the board
+    for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+            if (root.children.has(board[r][c])) {
+                dfs(r, c, root);
+            }
+        }
+    }
+
+    return result;
+};
+```
+
+
+## Complexity Analysis
+
+- **Time Complexity:**
+  - **Trie Construction:** $O(\sum L_i)$ where $\sum L_i$ is the total number of characters across all words in `words`.
+  - **Board Search:** $O(M \times N \times 3^{L-1})$ in the worst case, where $M \times N$ is the board size, $L$ is the maximum word length ($L \le 10$), and at each step after the initial cell, we have at most 3 directions to explore (since the cell we came from is marked `#`).
+  - In practice, Trie prefix pruning and leaf deletion terminate dead ends after only 1 or 2 steps, making this dramatically faster than the theoretical upper bound.
+- **Space Complexity:**
+  - **Trie Storage:** $O(\sum L_i)$ to store all words in the Trie.
+  - **Recursion Call Stack:** $O(L)$ where $L$ is the maximum word length ($L \le 10$).
+  - **In-place Visited Tracking:** $O(1)$ auxiliary space because we temporarily mutate `board[r][c]` to `'#'`.

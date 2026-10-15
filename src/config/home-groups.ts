@@ -3,6 +3,11 @@ export const TECHNOLOGY_GROUPS = [
 		groupName: "Languages",
 		items: [
 			{
+				title: "Go",
+				slug: "go",
+				description: "Learn Go internals, concurrency patterns like goroutines and channels, and practical backend engineering concepts."
+			},
+			{
 				title: "JavaScript",
 				slug: "javascript",
 				description: "Master JavaScript fundamentals, from the event loop and closures to prototypal inheritance and modern ES6+ features."
@@ -11,11 +16,6 @@ export const TECHNOLOGY_GROUPS = [
 				title: "TypeScript",
 				slug: "typescript",
 				description: "Deep dive into TypeScript's type system, covering generics, utility types, type guards, and advanced configurations."
-			},
-			{
-				title: "Go",
-				slug: "go",
-				description: "Learn Go internals, concurrency patterns like goroutines and channels, and practical backend engineering concepts."
 			},
 			{
 				title: "Java",

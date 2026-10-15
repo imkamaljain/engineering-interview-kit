@@ -2,21 +2,21 @@
 export const SUBCATEGORY_ORDER: Record<string, string[]> = {
   "dsa": [
     "Complexity",
+    "Math",
+    "Bit Manipulation",
     "Arrays",
     "Strings",
     "Hash Table",
+    "Sorting",
+    "Binary Search",
+    "Recursion",
     "Linked List",
     "Stack & Queue",
-    "Recursion",
     "Trees",
     "Heap",
     "Graphs",
-    "Binary Search",
-    "Sorting",
     "Greedy",
     "Dynamic Programming",
-    "Bit Manipulation",
-    "Math",
     "Interview Problems"
   ],
   "go": [
@@ -197,5 +197,7 @@ export const SUBCATEGORY_ORDER: Record<string, string[]> = {
     "Backtracking",
     "Trees",
     "Heap",
+    "Tries",
+    "Graphs",
   ]
 };

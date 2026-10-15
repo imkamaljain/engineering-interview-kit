@@ -1,0 +1,199 @@
+---
+title: "Implement Trie (Prefix Tree)"
+description: "LeetCode #208"
+category: "NeetCode 150"
+difficulty: "medium"
+subcategory: "Tries"
+order: 1
+---
+
+## Problem Statement
+
+A **trie** (pronounced as "try") or **prefix tree** is a tree data structure used to efficiently store and retrieve keys in a dataset of strings. There are various applications of this data structure, such as autocomplete and spellchecker.
+
+Implement the `Trie` class:
+- `Trie()` Initializes the trie object.
+- `void insert(String word)` Inserts the string `word` into the trie.
+- `boolean search(String word)` Returns `true` if the string `word` is in the trie (i.e., was inserted before), and `false` otherwise.
+- `boolean startsWith(String prefix)` Returns `true` if there is a previously inserted string `word` that has the prefix `prefix`, and `false` otherwise.
+
+**Example 1:**
+```text
+Input:
+["Trie", "insert", "search", "search", "startsWith", "insert", "search"]
+[[], ["apple"], ["apple"], ["app"], ["app"], ["app"], ["app"]]
+
+Output:
+[null, null, true, false, true, null, true]
+
+Explanation:
+Trie trie = new Trie();
+trie.insert("apple");
+trie.search("apple");   // return True
+trie.search("app");     // return False
+trie.startsWith("app"); // return True
+trie.insert("app");
+trie.search("app");     // return True
+```
+
+**Constraints:**
+- `1 <= word.length, prefix.length <= 2000`
+- `word` and `prefix` consist only of lowercase English letters.
+- At most $3 \times 10^4$ calls in total will be made to `insert`, `search`, and `startsWith`.
+
+
+## Anatomy of a Trie Node
+
+A Trie is an $N$-ary tree where edges (or child links) represent individual characters, and each path from the root down spells out prefixes or full words.
+
+Each **`TrieNode`** requires two core properties:
+1. **`children`**: A lookup mapping character $\to$ child `TrieNode`. This can be a `Map` (`new Map()`) or a fixed-size array of 26 elements (`new Array(26)`).
+2. **`isEndOfWord`**: A boolean flag indicating whether a complete word terminates at this node.
+
+> **Key Distinction:** `search(word)` and `startsWith(prefix)` traverse the tree identically. The only difference is that `search` requires `current.isEndOfWord === true` at the final node, whereas `startsWith` only requires reaching the end of the prefix without hitting a dead end.
+
+
+## Mental Model
+
+Notice how words with identical prefixes share common ancestral nodes, drastically reducing redundant character storage:
+
+<div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start my-8">
+  <div>
+    <h3 className="text-center mb-2 text-sm font-semibold text-gray-400">After inserting "apple"</h3>
+    ```mermaid
+    flowchart TD
+        Root["(root)"] --> A["a"]
+        A --> P1["p"]
+        P1 --> P2["p"]
+        P2 --> L["l"]
+        L --> E["e\n(isEndOfWord=true)"]
+        
+        style E stroke:#10b981,stroke-width:3px
+    ```
+    *Only node `e` has `isEndOfWord=true`. Searching for `"app"` returns `false` because node `p` is not marked as the end of a word.*
+  </div>
+  
+  <div>
+    <h3 className="text-center mb-2 text-sm font-semibold text-gray-400">After inserting "app" and "apt"</h3>
+    ```mermaid
+    flowchart TD
+        Root2["(root)"] --> A2["a"]
+        A2 --> P21["p"]
+        P21 --> P22["p\n(isEndOfWord=true)"]
+        P21 --> T["t\n(isEndOfWord=true)"]
+        P22 --> L2["l"]
+        L2 --> E2["e\n(isEndOfWord=true)"]
+        
+        style P22 stroke:#3b82f6,stroke-width:3px
+        style T stroke:#10b981,stroke-width:3px
+        style E2 stroke:#10b981,stroke-width:3px
+    ```
+    *`"app"` shares prefix path `a -> p -> p`. The second `p` now has `isEndOfWord=true`. Branch `"apt"` forks off from the first `p`.*
+  </div>
+</div>
+
+
+## Solution
+
+A clean interview pattern is extracting a shared helper method `_traverse(prefix)` to keep `search` and `startsWith` concise and DRY.
+
+```javascript
+class TrieNode {
+    constructor() {
+        // Maps character -> TrieNode
+        this.children = new Map();
+        // True if a complete inserted word ends at this node
+        this.isEndOfWord = false;
+    }
+}
+
+class Trie {
+    constructor() {
+        this.root = new TrieNode();
+    }
+
+    /** 
+     * Inserts a word into the trie.
+     * @param {string} word
+     * @return {void}
+     */
+    insert(word) {
+        let current = this.root;
+        
+        for (const char of word) {
+            if (!current.children.has(char)) {
+                current.children.set(char, new TrieNode());
+            }
+            current = current.children.get(char);
+        }
+        
+        current.isEndOfWord = true;
+    }
+
+    /**
+     * Helper to navigate the Trie following a sequence of characters.
+     * Returns the ending TrieNode, or null if the path does not exist.
+     * @param {string} str
+     * @return {TrieNode|null}
+     */
+    _traverse(str) {
+        let current = this.root;
+        
+        for (const char of str) {
+            if (!current.children.has(char)) {
+                return null;
+            }
+            current = current.children.get(char);
+        }
+        
+        return current;
+    }
+
+    /** 
+     * Returns true if the exact word is in the trie.
+     * @param {string} word
+     * @return {boolean}
+     */
+    search(word) {
+        const node = this._traverse(word);
+        return node !== null && node.isEndOfWord;
+    }
+
+    /** 
+     * Returns true if there is any word in the trie that starts with prefix.
+     * @param {string} prefix
+     * @return {boolean}
+     */
+    startsWith(prefix) {
+        return this._traverse(prefix) !== null;
+    }
+}
+```
+
+
+## Map vs. Array for Children
+
+| Metric | `Map` (`new Map()`) | Fixed Array (`new Array(26)`) |
+| :--- | :--- | :--- |
+| **Lookup Time** | $O(1)$ average | $O(1)$ constant time |
+| **Space Overhead** | Allocates nodes on demand (sparse friendly) | 26 pointers allocated per node upfront |
+| **Character Set** | Supports ASCII, Unicode, UTF-8 effortlessly | Limited to specific alphabet (e.g. `a-z`) |
+| **Interview Recommendation** | **Preferred in JavaScript** for clean semantics | Great for low-level systems (C++/Java) |
+
+
+## Why Use a Trie Over a Hash Table?
+
+- **Exact Match:** A Hash Table checks exact matches in $O(L)$ time (hashing the string). A Trie also checks in $O(L)$ time.
+- **Prefix Search:** In a Hash Table with $N$ keys, finding if any word starts with a prefix takes $O(N \times L)$ because every key must be scanned. In a Trie, `startsWith` takes **$O(P)$** where $P$ is the prefix length, **completely independent of $N$**.
+- **Alphabetical Order:** In-order traversal of a Trie naturally yields words in lexicographical order.
+
+
+## Complexity Analysis
+
+- **Time Complexity:**
+  - **`insert(word)`:** $O(L)$ where $L$ is the length of the word. We perform $L$ node transitions.
+  - **`search(word)`:** $O(L)$ where $L$ is the length of the word.
+  - **`startsWith(prefix)`:** $O(P)$ where $P$ is the length of the prefix.
+- **Space Complexity:**
+  - $O(N \times L)$ in the worst case (when no words share any common prefixes), where $N$ is the total number of words inserted and $L$ is the average word length.
+  - In practice, significant memory is saved as common prefixes are shared across words.

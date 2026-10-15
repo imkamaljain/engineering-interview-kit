@@ -1,0 +1,204 @@
+---
+title: "Design Add and Search Words Data Structure"
+description: "LeetCode #211"
+category: "NeetCode 150"
+difficulty: "medium"
+subcategory: "Tries"
+order: 2
+---
+
+## Problem Statement
+
+Design a data structure that supports adding new words and finding if a string matches any previously added string.
+
+Implement the `WordDictionary` class:
+- `WordDictionary()` Initializes the object.
+- `void addWord(word)` Adds `word` to the data structure, it can be matched later.
+- `bool search(word)` Returns `true` if there is any string in the data structure that matches `word` or `false` otherwise. `word` may contain dots `.` where dots can be matched with any letter.
+
+**Example:**
+```text
+Input:
+["WordDictionary","addWord","addWord","addWord","search","search","search","search"]
+[[],["bad"],["dad"],["mad"],["pad"],["bad"],[".ad"],["b.."]]
+
+Output:
+[null,null,null,null,false,true,true,true]
+
+Explanation:
+WordDictionary wordDictionary = new WordDictionary();
+wordDictionary.addWord("bad");
+wordDictionary.addWord("dad");
+wordDictionary.addWord("mad");
+wordDictionary.search("pad"); // return False
+wordDictionary.search("bad"); // return True
+wordDictionary.search(".ad"); // return True ("bad", "dad", "mad" all match)
+wordDictionary.search("b.."); // return True ("bad" matches)
+```
+
+**Constraints:**
+- `1 <= word.length <= 25`
+- `word` in `addWord` consists of lowercase English letters.
+- `word` in `search` consists of `.` or lowercase English letters.
+- There will be at most 2 dots in `word` for `search` queries.
+- At most $10^4$ calls in total will be made to `addWord` and `search`.
+
+
+## Approach: Trie + DFS (Backtracking)
+
+### Why a Standard Trie Isn't Quite Enough
+In a standard Trie, each character leads to at most one predictable deterministic transition: `node.children.get(char)`.
+
+However, the wildcard dot `.` can match **any** character. When we encounter a `.`, we can no longer make a single deterministic jump. Instead, we must explore **all child branches** currently branching from the active node.
+
+This naturally calls for **Depth-First Search (DFS) / Backtracking**:
+1. **`addWord(word)`**: Standard Trie insertion using `Map`.
+2. **`search(word)`**: A recursive DFS helper `dfs(index, node)`:
+   - **Base Case:** When `index === word.length`, check if `node.isEndOfWord` is `true`.
+   - **If `char === '.'` (Wildcard):**
+     - Iterate through every child node in `node.children.values()`.
+     - Recursively call `dfs(index + 1, childNode)`.
+     - If any child branch returns `true`, immediately return `true` (early termination).
+     - If all child branches return `false`, return `false`.
+   - **If `char !== '.'` (Regular Character):**
+     - Check if `node.children.has(char)`.
+     - If not, return `false`.
+     - Otherwise, continue down that single branch: `dfs(index + 1, node.children.get(char))`.
+
+
+## Mental Model
+
+Suppose the dictionary contains `"bad"`, `"dad"`, and `"mad"`:
+
+<div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start my-8">
+  <div>
+    <h3 className="text-center mb-2 text-sm font-semibold text-gray-400">Trie Representation</h3>
+    ```mermaid
+    flowchart TD
+        Root["(root)"] --> B["b"]
+        Root --> D["d"]
+        Root --> M["m"]
+        
+        B --> A1["a"]
+        D --> A2["a"]
+        M --> A3["a"]
+        
+        A1 --> D1["d\n(isEndOfWord=true)"]
+        A2 --> D2["d\n(isEndOfWord=true)"]
+        A3 --> D3["d\n(isEndOfWord=true)"]
+        
+        style D1 stroke:#10b981,stroke-width:2px
+        style D2 stroke:#10b981,stroke-width:2px
+        style D3 stroke:#10b981,stroke-width:2px
+    ```
+    *All three words share the suffix `ad`.*
+  </div>
+  
+  <div>
+    <h3 className="text-center mb-2 text-sm font-semibold text-gray-400">Searching ".ad" via DFS</h3>
+    ```mermaid
+    flowchart TD
+        Dot["Wildcard '.' matches\nall root children"] --> BranchB["Branch 'b' -> 'a' -> 'd' (Match!)"]
+        Dot --> BranchD["Branch 'd' -> 'a' -> 'd' (Match!)"]
+        Dot --> BranchM["Branch 'm' -> 'a' -> 'd' (Match!)"]
+        
+        style BranchB stroke:#10b981,stroke-width:2px
+        style BranchD stroke:#3b82f6,stroke-width:2px
+        style BranchM stroke:#3b82f6,stroke-width:2px
+    ```
+    *DFS branches out at `.` and returns `true` as soon as the first valid word is found.*
+  </div>
+</div>
+
+
+## Solution
+
+```javascript
+class TrieNode {
+    constructor() {
+        // Maps character -> TrieNode
+        this.children = new Map();
+        // True if a complete word terminates at this node
+        this.isEndOfWord = false;
+    }
+}
+
+class WordDictionary {
+    constructor() {
+        this.root = new TrieNode();
+    }
+
+    /** 
+     * Adds a word into the data structure.
+     * @param {string} word
+     * @return {void}
+     */
+    addWord(word) {
+        let current = this.root;
+        
+        for (const char of word) {
+            if (!current.children.has(char)) {
+                current.children.set(char, new TrieNode());
+            }
+            current = current.children.get(char);
+        }
+        
+        current.isEndOfWord = true;
+    }
+
+    /** 
+     * Returns true if the word matches any previously added word.
+     * '.' can match any character.
+     * @param {string} word
+     * @return {boolean}
+     */
+    search(word) {
+        /**
+         * Helper DFS function to traverse the Trie with wildcard support.
+         * @param {number} index
+         * @param {TrieNode} node
+         * @return {boolean}
+         */
+        const dfs = (index, node) => {
+            // Base case: we processed every character of the target word
+            if (index === word.length) {
+                return node.isEndOfWord;
+            }
+
+            const char = word[index];
+
+            // Case 1: Wildcard character '.'
+            if (char === '.') {
+                for (const childNode of node.children.values()) {
+                    if (dfs(index + 1, childNode)) {
+                        return true; // Found a valid matching word
+                    }
+                }
+                return false; // No child path formed a valid word
+            }
+
+            // Case 2: Exact character match
+            if (!node.children.has(char)) {
+                return false;
+            }
+
+            return dfs(index + 1, node.children.get(char));
+        };
+
+        return dfs(0, this.root);
+    }
+}
+```
+
+
+## Complexity Analysis
+
+- **Time Complexity:**
+  - **`addWord(word)`:** $O(L)$ where $L$ is the length of the word (at most 25).
+  - **`search(word)`:**
+    - **No dots:** $O(L)$ deterministic lookup.
+    - **With dots:** In the worst case where the search string contains wildcards (e.g., `...`), each dot can branch into up to 26 children. With $M$ dots, the search complexity is $O(26^M \times L)$.
+    - The problem constraints guarantee **at most 2 dots**, so $26^2 = 676$ branches at most—extremely fast and well within standard execution time limits!
+- **Space Complexity:**
+  - **`addWord` Storage:** $O(N \times L)$ total across all words stored in the Trie.
+  - **`search` Call Stack:** $O(L)$ recursion depth bounded by the maximum word length (at most 25 frames on the call stack).

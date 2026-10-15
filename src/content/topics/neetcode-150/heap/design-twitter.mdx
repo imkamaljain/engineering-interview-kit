@@ -1,0 +1,218 @@
+---
+title: "Design Twitter"
+description: "LeetCode #355"
+category: "NeetCode 150"
+difficulty: "medium"
+subcategory: "Heap"
+order: 6
+---
+
+## Problem Statement
+
+Design a simplified version of Twitter where users can post tweets, follow/unfollow other users, and view the **10 most recent tweets** in their news feed.
+
+Implement the `Twitter` class:
+- `Twitter()` Initializes your Twitter object.
+- `void postTweet(int userId, int tweetId)` Composes a new tweet with ID `tweetId` by user `userId`. Each call is guaranteed to have a unique `tweetId`.
+- `List<Integer> getNewsFeed(int userId)` Retrieves the 10 most recent tweet IDs in the user's news feed. Each item must be posted by users whom the user followed or by the user themself. Tweets must be ordered from most recent to least recent.
+- `void follow(int followerId, int followeeId)` The user with ID `followerId` starts following the user with ID `followeeId`.
+- `void unfollow(int followerId, int followeeId)` The user with ID `followerId` unfollows the user with ID `followeeId`.
+
+**Example:**
+```text
+Input:
+["Twitter", "postTweet", "getNewsFeed", "follow", "postTweet", "getNewsFeed", "unfollow", "getNewsFeed"]
+[[], [1, 5], [1], [1, 2], [2, 6], [1], [1, 2], [1]]
+
+Output:
+[null, null, [5], null, null, [6, 5], null, [5]]
+
+Explanation:
+Twitter twitter = new Twitter();
+twitter.postTweet(1, 5); // User 1 posts tweet 5.
+twitter.getNewsFeed(1);  // User 1's feed -> [5]
+twitter.follow(1, 2);    // User 1 follows user 2.
+twitter.postTweet(2, 6); // User 2 posts tweet 6.
+twitter.getNewsFeed(1);  // User 1's feed -> [6, 5] (tweet 6 was posted after tweet 5)
+twitter.unfollow(1, 2);  // User 1 unfollows user 2.
+twitter.getNewsFeed(1);  // User 1's feed -> [5] (user 1 no longer follows user 2)
+```
+
+**Constraints:**
+- `1 <= userId, followerId, followeeId <= 500`
+- `0 <= tweetId <= 10^4`
+- All tweets have unique IDs.
+- At most `3 * 10^4` calls will be made to `postTweet`, `getNewsFeed`, `follow`, and `unfollow`.
+- A user cannot follow themselves.
+
+---
+
+## Approach: Merge K Sorted Lists via Max-Heap
+
+### Why is this in the Heap category?
+Each user produces an append-only list of tweets. Because tweets arrive in chronological order, every user's personal timeline is already a **sorted list** (by timestamp).
+
+When generating `getNewsFeed(userId)`:
+1. Suppose the user follows $K$ accounts (including themselves).
+2. We have $K$ individually sorted timelines.
+3. We need the 10 most recent tweets across these $K$ timelines.
+
+This is the exact same algorithmic problem as **Merge K Sorted Lists**, but we only need the top 10 elements!
+
+### The Algorithm:
+1. **State:**
+   - A global `time` integer counter that increments on every `postTweet`.
+   - `tweets`: `Map<userId, Array<{ tweetId, time }>>` tracking each user's tweet history.
+   - `follows`: `Map<userId, Set<followeeId>>` tracking follow relationships.
+2. **`postTweet(userId, tweetId)`:**
+   - Append `{ tweetId, time: time++ }` to the user's tweet array.
+3. **`getNewsFeed(userId)`:**
+   - Identify all followees, always including the user themselves (`followees.add(userId)`).
+   - Use a **Max-Heap** ordered by timestamp.
+   - For each followee who has tweets, push their most recent tweet (`index = tweets.length - 1`).
+   - In a loop (up to 10 iterations):
+     - Dequeue the tweet with the highest timestamp from the heap and add its `tweetId` to `result`.
+     - If that user has an older tweet (`index > 0`), push their next tweet (`index - 1`) into the heap.
+   - Return `result`.
+4. **`follow` / `unfollow`:**
+   - Add or remove the `followeeId` from `follows.get(followerId)`.
+
+---
+
+## Mental Model
+
+<div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start my-8">
+  <div>
+    <h3 className="text-center mb-2 text-sm font-semibold text-gray-400">Data Architecture</h3>
+    ```mermaid
+    flowchart TD
+        User["User 1"] --> Follows["Follows: {1, 2, 3}"]
+        User --> Timelines["Followee Timelines"]
+        Timelines --> L1["User 1: [T1, T4]"]
+        Timelines --> L2["User 2: [T2, T5, T6]"]
+        Timelines --> L3["User 3: [T3]"]
+        
+        style User stroke:#3b82f6,stroke-width:2px
+    ```
+    *Each user's timeline is naturally sorted by timestamp.*
+  </div>
+  
+  <div>
+    <h3 className="text-center mb-2 text-sm font-semibold text-gray-400">K-Way Max-Heap Merge</h3>
+    ```mermaid
+    flowchart TD
+        T6["User 2: T6 (time=6)"] --> Heap["Max-Heap (by time)"]
+        T4["User 1: T4 (time=4)"] --> Heap
+        T3["User 3: T3 (time=3)"] --> Heap
+        Heap -->|Dequeue Top| Result["Feed: [T6, ...]"]
+        Heap -.->|Enqueue Older T5| Heap
+        
+        style Heap stroke:#10b981,stroke-width:2px
+        style Result stroke:#f59e0b,stroke-width:2px
+    ```
+    *Pop the newest tweet, then advance that followee's pointer to their previous tweet.*
+  </div>
+</div>
+
+---
+
+## Solution
+
+```javascript
+class Twitter {
+    constructor() {
+        this.time = 0;
+        this.tweets = new Map();  // userId -> Array<{ tweetId: number, time: number }>
+        this.follows = new Map(); // userId -> Set<number>
+    }
+
+    /** 
+     * @param {number} userId 
+     * @param {number} tweetId
+     * @return {void}
+     */
+    postTweet(userId, tweetId) {
+        if (!this.tweets.has(userId)) {
+            this.tweets.set(userId, []);
+        }
+        this.tweets.get(userId).push({ tweetId, time: this.time++ });
+    }
+
+    /** 
+     * @param {number} userId
+     * @return {number[]}
+     */
+    getNewsFeed(userId) {
+        // Max-Heap prioritizes tweets with the latest timestamp
+        const maxHeap = new MaxPriorityQueue((entry) => entry.time);
+        
+        // 1. Gather all followees plus the user themselves
+        const followees = new Set(this.follows.get(userId) || []);
+        followees.add(userId);
+        
+        // 2. Seed the heap with the most recent tweet of each followee
+        for (const fId of followees) {
+            const userTweetList = this.tweets.get(fId);
+            if (userTweetList && userTweetList.length > 0) {
+                const lastIdx = userTweetList.length - 1;
+                const { tweetId, time } = userTweetList[lastIdx];
+                maxHeap.enqueue({ time, tweetId, userId: fId, index: lastIdx });
+            }
+        }
+        
+        // 3. Extract up to 10 most recent tweets
+        const result = [];
+        while (!maxHeap.isEmpty() && result.length < 10) {
+            const { tweetId, userId: fId, index } = maxHeap.dequeue();
+            result.push(tweetId);
+            
+            // If this user has an older tweet, add it to the heap
+            if (index > 0) {
+                const nextIdx = index - 1;
+                const { tweetId: nextTweetId, time } = this.tweets.get(fId)[nextIdx];
+                maxHeap.enqueue({ time, tweetId: nextTweetId, userId: fId, index: nextIdx });
+            }
+        }
+        
+        return result;
+    }
+
+    /** 
+     * @param {number} followerId 
+     * @param {number} followeeId
+     * @return {void}
+     */
+    follow(followerId, followeeId) {
+        if (followerId === followeeId) return;
+        if (!this.follows.has(followerId)) {
+            this.follows.set(followerId, new Set());
+        }
+        this.follows.get(followerId).add(followeeId);
+    }
+
+    /** 
+     * @param {number} followerId 
+     * @param {number} followeeId
+     * @return {void}
+     */
+    unfollow(followerId, followeeId) {
+        if (this.follows.has(followerId)) {
+            this.follows.get(followerId).delete(followeeId);
+        }
+    }
+}
+```
+
+---
+
+## Complexity Analysis
+
+- **`postTweet`:**
+  - **Time Complexity:** $O(1)$ — Appending to an array and incrementing an integer.
+  - **Space Complexity:** $O(1)$ per tweet.
+- **`follow` / `unfollow`:**
+  - **Time Complexity:** $O(1)$ — Hash set addition and deletion.
+  - **Space Complexity:** $O(1)$ per relationship.
+- **`getNewsFeed`:**
+  - **Time Complexity:** $O(K + 10 \log K)$ where $K$ is the number of followees. Initializing the heap with $K$ latest tweets takes $O(K)$ (or $O(K \log K)$). Extracting 10 tweets takes at most $10 \times O(\log K)$. Since 10 is a small constant, this is effectively $O(K)$, vastly superior to sorting all combined tweets $O(T \log T)$.
+  - **Space Complexity:** $O(K)$ — The heap holds at most one tweet per followee ($K$ items total).

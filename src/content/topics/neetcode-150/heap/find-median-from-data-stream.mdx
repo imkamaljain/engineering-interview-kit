@@ -1,0 +1,184 @@
+---
+title: "Find Median from Data Stream"
+description: "LeetCode #295"
+category: "NeetCode 150"
+difficulty: "hard"
+subcategory: "Heap"
+order: 7
+---
+
+## Problem Statement
+
+The **median** is the middle value in an ordered integer list. If the size of the list is even, there is no middle value, and the median is the mean of the two middle values.
+- For example, for `arr = [2, 3, 4]`, the median is `3`.
+- For example, for `arr = [2, 3]`, the median is `(2 + 3) / 2 = 2.5`.
+
+Implement the `MedianFinder` class:
+- `MedianFinder()` Initializes the `MedianFinder` object.
+- `void addNum(int num)` Adds the integer `num` from the data stream to the data structure.
+- `double findMedian()` Returns the median of all elements so far. Answers within $10^{-5}$ of the actual answer are accepted.
+
+**Example 1:**
+```text
+Input:
+["MedianFinder", "addNum", "addNum", "findMedian", "addNum", "findMedian"]
+[[], [1], [2], [], [3], []]
+
+Output:
+[null, null, null, 1.5, null, 2.0]
+
+Explanation:
+MedianFinder medianFinder = new MedianFinder();
+medianFinder.addNum(1);    // arr = [1]
+medianFinder.addNum(2);    // arr = [1, 2]
+medianFinder.findMedian(); // return 1.5 (i.e., (1 + 2) / 2)
+medianFinder.addNum(3);    // arr[1, 2, 3]
+medianFinder.findMedian(); // return 2.0
+```
+
+**Constraints:**
+- `-10^5 <= num <= 10^5`
+- There will be at least one element in the data structure before calling `findMedian`.
+- At most `5 * 10^4` calls will be made to `addNum` and `findMedian`.
+
+---
+
+## Approach: Two Heaps (Max-Heap + Min-Heap)
+
+### The Dilemma
+- If we store numbers in an unsorted array, `addNum` is $O(1)$, but `findMedian` requires $O(N \log N)$ sorting every time.
+- If we maintain a sorted array using insertion sort / binary search, `findMedian` is $O(1)$, but shifting elements during `addNum` takes $O(N)$ time.
+- We need an architecture that supports fast insertions ($O(\log N)$) and instantaneous lookups ($O(1)$).
+
+### The Two-Heap Solution
+We split the incoming data stream down the middle into two halves:
+1. **`small` (Max-Heap):** Stores the **smaller half** of numbers. Because it is a Max-Heap, the *largest* number of this smaller half sits at the root (`small.front()`).
+2. **`large` (Min-Heap):** Stores the **larger half** of numbers. Because it is a Min-Heap, the *smallest* number of this larger half sits at the root (`large.front()`).
+
+The two roots are precisely the two middle values of the entire stream!
+
+### Invariants to Maintain:
+1. **Order Invariant:** Every element in `small` must be $\le$ every element in `large` (`small.front() <= large.front()`).
+2. **Size Invariant:** The heaps must be balanced:
+   $$\text{size(small)} = \text{size(large)} \quad \text{or} \quad \text{size(small)} = \text{size(large)} + 1$$
+
+---
+
+## Mental Model
+
+<div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start my-8">
+  <div>
+    <h3 className="text-center mb-2 text-sm font-semibold text-gray-400">Odd Count: [1, 2, 3, 4, 5]</h3>
+    ```mermaid
+    flowchart TD
+        subgraph Left ["Max-Heap (Smaller Half)"]
+            S3(("3\n(Root)")) --- S2((2))
+            S3 --- S1((1))
+        end
+        subgraph Right ["Min-Heap (Larger Half)"]
+            L4(("4\n(Root)")) --- L5((5))
+        end
+        
+        style S3 stroke:#3b82f6,stroke-width:3px
+        style L4 stroke:#10b981,stroke-width:3px
+    ```
+    *Odd elements: Median is the root of the Max-Heap: `3`.*
+  </div>
+  
+  <div>
+    <h3 className="text-center mb-2 text-sm font-semibold text-gray-400">Even Count: [1, 2, 3, 4, 5, 6]</h3>
+    ```mermaid
+    flowchart TD
+        subgraph Left2 ["Max-Heap (Smaller Half)"]
+            S3b(("3\n(Root)")) --- S2b((2))
+            S3b --- S1b((1))
+        end
+        subgraph Right2 ["Min-Heap (Larger Half)"]
+            L4b(("4\n(Root)")) --- L5b((5))
+            L4b --- L6b((6))
+        end
+        
+        style S3b stroke:#3b82f6,stroke-width:3px
+        style L4b stroke:#10b981,stroke-width:3px
+    ```
+    *Even elements: Median is the mean of both roots: `(3 + 4) / 2 = 3.5`.*
+  </div>
+</div>
+
+---
+
+## Solution
+
+```javascript
+class MedianFinder {
+    constructor() {
+        // Max-Heap stores the smaller half (largest on top)
+        this.small = new MaxPriorityQueue();
+        
+        // Min-Heap stores the larger half (smallest on top)
+        this.large = new MinPriorityQueue();
+    }
+
+    /** 
+     * @param {number} num
+     * @return {void}
+     */
+    addNum(num) {
+        // 1. Add number to small (Max-Heap)
+        this.small.enqueue(num);
+
+        // 2. Maintain Order Invariant: max(small) <= min(large)
+        if (this.large.size() > 0 && this.small.front() > this.large.front()) {
+            this.large.enqueue(this.small.dequeue());
+        }
+
+        // 3. Maintain Size Invariant: small can have at most 1 more element than large
+        if (this.small.size() > this.large.size() + 1) {
+            this.large.enqueue(this.small.dequeue());
+        } else if (this.large.size() > this.small.size()) {
+            this.small.enqueue(this.large.dequeue());
+        }
+    }
+
+    /**
+     * @return {number}
+     */
+    findMedian() {
+        // If odd number of elements, small holds the extra median element
+        if (this.small.size() > this.large.size()) {
+            return this.small.front();
+        }
+        
+        // If even number of elements, take the average of both roots
+        return (this.small.front() + this.large.front()) / 2.0;
+    }
+}
+```
+
+---
+
+## Interview Follow-ups
+
+### 1. What if all numbers are in the range `[0, 100]`?
+- Instead of Heaps, use a **Bucket Counting Array** of size 101: `const count = new Array(101).fill(0)`.
+- `addNum(num)` simply increments `count[num]` in **$O(1)$**.
+- `findMedian()` scans the 101 buckets to find the $N/2$ element(s) in **$O(1)$** time since 101 is a fixed constant.
+- Total memory: **$O(1)$** fixed space.
+
+### 2. What if 99% of all numbers are in `[0, 100]`?
+- Keep the bucket counting array for `[0, 100]` along with two counters:
+  - `lessThanZeroCount` for values $< 0$
+  - `greaterThanHundredCount` for values $> 100$
+- If the median falls inside `[0, 100]` (which happens 99% of the time), compute it using the buckets in $O(1)$ time.
+- If it falls in the extreme tails, query a secondary fallback heap or balanced BST.
+
+---
+
+## Complexity Analysis
+
+- **`addNum(num)`:**
+  - **Time Complexity:** $O(\log N)$ — Adding to or removing from either heap takes logarithmic time.
+- **`findMedian()`:**
+  - **Time Complexity:** $O(1)$ — Peeking the top of the heaps (`.front()`) is instantaneous.
+- **Space Complexity:**
+  - **Space Complexity:** $O(N)$ — Storing all $N$ numbers distributed across the two heaps.
