@@ -1,0 +1,197 @@
+---
+title: "Meeting Rooms II"
+description: "LeetCode #253 · Meeting Schedule II"
+category: "NeetCode 150"
+difficulty: "medium"
+subcategory: "Intervals"
+order: 5
+---
+
+## Problem Statement
+
+Given an array of meeting time intervals consisting of start and end times `[[start_1, end_1], [start_2, end_2], ...]`, return the **minimum number of conference rooms** required to host all meetings.
+
+*(Note: On NeetCode, this problem is known as **Meeting Schedule II**).*
+
+> **Back-to-Back Rule:** If one meeting finishes at time $t$ and another begins at the exact same time $t$ (e.g., `[2, 4]` and `[4, 7]`), the same room can be reused immediately. They do **not** require separate rooms.
+
+**Example 1:**
+```text
+Input: intervals = [[0,30],[5,10],[15,20]]
+Output: 2
+Explanation:
+Room 1: [0, 30]
+Room 2: [5, 10], [15, 20]
+```
+
+**Example 2:**
+```text
+Input: intervals = [[7,10],[2,4]]
+Output: 1
+Explanation: Since [2, 4] ends before [7, 10] begins, 1 room suffices.
+```
+
+**Constraints:**
+- `1 <= intervals.length <= 10^4`
+- `0 <= start_i < end_i <= 10^6`
+
+
+## Approach 1: Two Pointers (Chronological Sweep)
+
+Instead of viewing a meeting as an indivisible block `[start, end]`, think of it as two discrete events on a timeline:
+1. A **Start Event**: A room is occupied (`activeRooms++`).
+2. An **End Event**: A room is vacated (`activeRooms--`).
+
+The problem asks: **What is the peak concurrent room demand at any single moment?**
+
+### The Algorithm:
+1. Extract all start times into an array and sort it: `starts.sort((a, b) => a - b)`.
+2. Extract all end times into an array and sort it: `ends.sort((a, b) => a - b)`.
+3. Use two pointers `s` and `e`:
+   - If `starts[s] < ends[e]`: A meeting starts before the earliest ongoing meeting has concluded. We need an additional room:
+     `activeRooms++`, `s++`, and update `maxRooms = Math.max(maxRooms, activeRooms)`.
+   - Else (`starts[s] >= ends[e]`): A meeting has concluded, freeing up a room:
+     `activeRooms--`, `e++`.
+4. Return `maxRooms`.
+
+
+## Approach 2: Min-Heap (Room Reuse)
+
+If the interviewer asks: *"How would you assign actual room numbers to meetings?"*, the **Min-Heap** approach is the natural fit:
+
+1. Sort meetings by **start time** ascending: `intervals.sort((a, b) => a[0] - b[0])`.
+2. Maintain a **Min-Heap** storing the **end times** of all meetings currently occupying a room.
+3. For each meeting `[start, end]`:
+   - Check the root of the Min-Heap (`minHeap.front()`): this is the meeting that finishes the earliest.
+   - If `minHeap.front() <= start`: that room is now free! Pop it (`minHeap.dequeue()`).
+   - Push the current meeting's end time into the heap: `minHeap.enqueue(end)`.
+4. The final size of the heap is the minimum number of rooms required.
+
+
+## Mental Model
+
+Tracing `intervals = [[0,30],[5,10],[15,20]]`:
+
+<div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start my-8">
+  <div>
+    <h3 className="text-center mb-2 text-sm font-semibold text-gray-400">1. Two Pointer Timeline Sweep</h3>
+    ```mermaid
+    flowchart TD
+        T0["Time 0: Start [0,30] -> Rooms = 1"] --> T5["Time 5: Start [5,10] -> Rooms = 2 (Peak!)"]
+        T5 --> T10["Time 10: End [5,10] -> Rooms = 1"]
+        T10 --> T15["Time 15: Start [15,20] -> Rooms = 2"]
+        T15 --> T20["Time 20: End [15,20] -> Rooms = 1"]
+        T20 --> T30["Time 30: End [0,30] -> Rooms = 0"]
+        
+        style T5 fill:#1e293b,stroke:#ef4444,stroke-width:2px
+        style T15 fill:#1e293b,stroke:#f59e0b,stroke-width:2px
+    ```
+    *Peak concurrent occupancy across all time steps is 2.*
+  </div>
+  
+  <div>
+    <h3 className="text-center mb-2 text-sm font-semibold text-gray-400">2. Min-Heap Room Recycling</h3>
+    ```mermaid
+    flowchart TD
+        R1["Room 1: occupied until 30"]
+        R2["Room 2: occupied until 10"]
+        NewMeeting["Meeting [15, 20] arrives"]
+        
+        R2 -->|10 <= 15: Vacated!| Reused["Room 2 recycled for [15, 20]"]
+        NewMeeting --> Reused
+        
+        style R1 fill:#1e293b,stroke:#3b82f6,stroke-width:2px
+        style R2 fill:#1e293b,stroke:#f59e0b,stroke-width:2px
+        style Reused fill:#1e293b,stroke:#10b981,stroke-width:2px
+    ```
+    *Min-Heap identifies the earliest freed room to recycle.*
+  </div>
+</div>
+
+
+## Solution: Two Pointers (Recommended)
+
+```javascript
+/**
+ * @param {number[][]} intervals
+ * @return {number}
+ */
+var minMeetingRooms = function(intervals) {
+    if (!intervals || intervals.length === 0) return 0;
+
+    const n = intervals.length;
+    const starts = [];
+    const ends = [];
+
+    // Separate starts and ends into independent arrays
+    for (let i = 0; i < n; i++) {
+        starts.push(intervals[i][0]);
+        ends.push(intervals[i][1]);
+    }
+
+    // Sort both arrays independently
+    starts.sort((a, b) => a - b);
+    ends.sort((a, b) => a - b);
+
+    let s = 0;
+    let e = 0;
+    let activeRooms = 0;
+    let maxRooms = 0;
+
+    while (s < n) {
+        // A new meeting starts before the earliest ongoing meeting concludes
+        if (starts[s] < ends[e]) {
+            activeRooms++;
+            maxRooms = Math.max(maxRooms, activeRooms);
+            s++;
+        } else {
+            // A meeting concludes, freeing up a room
+            activeRooms--;
+            e++;
+        }
+    }
+
+    return maxRooms;
+};
+```
+
+
+## Solution: Min-Heap Alternative
+
+```javascript
+/**
+ * @param {number[][]} intervals
+ * @return {number}
+ */
+var minMeetingRoomsHeap = function(intervals) {
+    if (!intervals || intervals.length === 0) return 0;
+
+    // 1. Sort meetings by start time ascending
+    intervals.sort((a, b) => a[0] - b[0]);
+
+    // 2. Min-Heap storing end times of active meetings
+    const minHeap = new MinPriorityQueue();
+
+    for (const [start, end] of intervals) {
+        // If the earliest ending meeting is already over, reuse its room
+        if (minHeap.size() > 0 && minHeap.front() <= start) {
+            minHeap.dequeue();
+        }
+
+        // Allocate room by adding current meeting's end time
+        minHeap.enqueue(end);
+    }
+
+    return minHeap.size();
+};
+```
+
+
+## Complexity Analysis
+
+- **Two Pointers Approach:**
+  - **Time Complexity:** $O(N \log N)$ to sort `starts` and `ends`. The two-pointer traversal takes $O(N)$. Total: $O(N \log N)$.
+  - **Space Complexity:** $O(N)$ to store the separated `starts` and `ends` arrays.
+- **Min-Heap Approach:**
+  - **Time Complexity:** $O(N \log N)$ to sort intervals + $O(N \log N)$ for heap operations. Total: $O(N \log N)$.
+  - **Space Complexity:** $O(N)$ to store up to $N$ end times in the heap.

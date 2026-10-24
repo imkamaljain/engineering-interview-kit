@@ -1,0 +1,166 @@
+---
+title: "Hand of Straights"
+description: "LeetCode #846"
+category: "NeetCode 150"
+difficulty: "medium"
+subcategory: "Greedy"
+order: 5
+---
+
+## Problem Statement
+
+Alice has some number of cards and she wants to rearrange the cards into groups so that each group is of size `groupSize`, and consists of `groupSize` consecutive cards.
+
+Given an integer array `hand` where `hand[i]` is the value written on the `i`-th card and an integer `groupSize`, return `true` if she can rearrange the cards, or `false` otherwise.
+
+**Example 1:**
+```text
+Input: hand = [1,2,3,6,2,3,4,7,8], groupSize = 3
+Output: true
+Explanation: Alice's hand can be rearranged as [1,2,3], [2,3,4], [6,7,8].
+```
+
+**Example 2:**
+```text
+Input: hand = [1,2,3,4,5], groupSize = 4
+Output: false
+Explanation: Alice's hand cannot be rearranged into groups of 4.
+```
+
+**Constraints:**
+- `1 <= hand.length <= 10^4`
+- `0 <= hand[i] <= 10^9`
+- `1 <= groupSize <= hand.length`
+
+## The Greedy Insight: Anchoring by the Minimum Card
+
+### Step 1: Base Feasibility Check
+Before performing any grouping:
+1. If `hand.length % groupSize !== 0`, the cards cannot be partitioned into equal groups of size `groupSize`. Return `false` immediately.
+2. If `groupSize === 1`, every card forms its own trivial group of size 1. Return `true` immediately.
+
+### Step 2: The Greedy Choice Property
+Consider the **smallest card value $x$** currently available in the hand:
+- Could $x$ ever be the second, third, or final card in any valid group?
+- **No!** If $x$ were not the first card, that group would require card $x - 1$.
+- But $x$ is the absolute minimum card remaining in the hand; no card with value $x - 1$ exists!
+- Therefore, $x$ **must strictly be the start (anchor)** of a consecutive group:
+  $$[x, x + 1, x + 2, \dots, x + \text{groupSize} - 1]$$
+
+> **Greedy Strategy:** Count the frequency of every card. Always take the current smallest available card $x$, and greedily verify and decrement the next `groupSize - 1` consecutive numbers ($x + 1 \dots x + \text{groupSize} - 1$). If any required consecutive card is missing or has a count of 0, partitioning is impossible.
+
+
+## Mental Model
+
+<div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start my-8">
+  <div>
+    <h3 className="text-center mb-2 text-sm font-semibold text-gray-400">1. Greedy Minimum Anchor Rule</h3>
+    ```mermaid
+    flowchart TD
+        Min["Smallest Available Card: x"]
+        NoSmaller["No (x - 1) exists in hand"]
+        
+        Min --> NoSmaller
+        NoSmaller --> Force["x MUST anchor the group:<br/>[x, x+1, ..., x+groupSize-1]"]
+        
+        style Min fill:#1e293b,stroke:#f59e0b,stroke-width:2px
+        style NoSmaller fill:#1e293b,stroke:#ef4444,stroke-width:1px
+        style Force fill:#1e293b,stroke:#10b981,stroke-width:2px
+    ```
+    *The minimum card removes all branching decisions.*
+  </div>
+
+  <div>
+    <h3 className="text-center mb-2 text-sm font-semibold text-gray-400">2. Group Formation Trace (Example 1)</h3>
+    ```mermaid
+    flowchart TD
+        Start["hand = [1, 2, 2, 3, 3, 4, 6, 7, 8]<br/>groupSize = 3"]
+        G1["Group 1: [1, 2, 3]<br/>Remaining: [2, 3, 4, 6, 7, 8]"]
+        G2["Group 2: [2, 3, 4]<br/>Remaining: [6, 7, 8]"]
+        G3["Group 3: [6, 7, 8]<br/>Remaining: [] (Success!)"]
+
+        Start --> G1 --> G2 --> G3
+
+        style Start fill:#1e293b,stroke:#64748b,stroke-width:1px
+        style G1 fill:#1e293b,stroke:#3b82f6,stroke-width:2px
+        style G2 fill:#1e293b,stroke:#3b82f6,stroke-width:2px
+        style G3 fill:#1e293b,stroke:#10b981,stroke-width:2px
+    ```
+    *Each group is extracted consecutively until empty.*
+  </div>
+</div>
+
+
+## Optimal Solution ($O(N \log N)$ Time, $O(N)$ Space)
+
+```javascript
+/**
+ * @param {number[]} hand
+ * @param {number} groupSize
+ * @return {boolean}
+ */
+var isNStraightHand = function(hand, groupSize) {
+    // Trivial impossibility check
+    if (hand.length % groupSize !== 0) {
+        return false;
+    }
+    
+    if (groupSize === 1) {
+        return true;
+    }
+    
+    // 1. Build frequency map of all cards
+    const count = new Map();
+    for (const card of hand) {
+        count.set(card, (count.get(card) || 0) + 1);
+    }
+    
+    // 2. Sort the unique cards in ascending order
+    const uniqueCards = Array.from(count.keys()).sort((a, b) => a - b);
+    
+    // 3. Greedily form groups starting from the smallest available card
+    for (const card of uniqueCards) {
+        const available = count.get(card);
+        
+        // If this card has already been completely consumed by earlier groups
+        if (available === 0) {
+            continue;
+        }
+        
+        // This card must anchor 'available' groups of size groupSize
+        for (let i = 0; i < groupSize; i++) {
+            const nextCard = card + i;
+            const currentCount = count.get(nextCard) || 0;
+            
+            // If the next consecutive card does not have enough copies
+            if (currentCount < available) {
+                return false;
+            }
+            
+            count.set(nextCard, currentCount - available);
+        }
+    }
+    
+    return true;
+};
+```
+
+> **Batch Decrement Optimization:**  
+> Instead of decrementing by `1` each time, if `count.get(card) === k`, we know card `card` must anchor $k$ groups. We can directly subtract $k$ from each of `card + 1 ... card + groupSize - 1` in a single batch, keeping the inner loop fast.
+
+
+## Complexity Analysis
+
+| Metric | Complexity | Notes |
+| :--- | :--- | :--- |
+| **Time Complexity** | $O(N \log U)$ | Building map is $O(N)$. Sorting $U$ unique cards takes $O(U \log U)$ where $U \le N$. The group verification loop takes $O(U \times \text{groupSize}) = O(N)$. Overall time: $O(N \log N)$. |
+| **Space Complexity** | $O(N)$ | The hash map `count` and the `uniqueCards` array each store up to $N$ entries. |
+
+
+## Edge Cases
+
+- **Length Not Divisible (`hand.length % groupSize !== 0`):** Caught in $O(1)$ by the initial parity check.
+- **Group Size 1 (`groupSize === 1`):** Every card forms a valid group; returns `true` immediately.
+- **Missing Consecutive Element (`hand = [1, 2, 4], groupSize = 3`):** Card `3` is missing; `count.get(3)` is 0, returning `false`.
+- **Large Card Values (`hand[i] <= 10^9`):** Handled cleanly because the hash map keys support arbitrary integer sizes without requiring a giant dense array.
+- **Duplicate Straights (`hand = [1, 1, 2, 2, 3, 3], groupSize = 3`):** Batch decrement successfully consumes 2 copies of `[1, 2, 3]`.

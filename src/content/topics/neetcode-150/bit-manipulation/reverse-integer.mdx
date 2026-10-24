@@ -1,0 +1,176 @@
+---
+title: "Reverse Integer"
+description: "LeetCode #7"
+category: "NeetCode 150"
+difficulty: "medium"
+subcategory: "Bit Manipulation"
+order: 7
+---
+
+## Problem Statement
+
+Given a signed 32-bit integer `x`, return `x` with its digits reversed. If reversing `x` causes the value to go outside the signed 32-bit integer range $[-2^{31}, 2^{31} - 1]$, then return `0`.
+
+**Assume the environment does not allow you to store 64-bit integers (signed or unsigned).**
+
+**Example 1:**
+```text
+Input: x = 123
+Output: 321
+```
+
+**Example 2:**
+```text
+Input: x = -123
+Output: -321
+```
+
+**Example 3:**
+```text
+Input: x = 120
+Output: 21
+```
+
+**Constraints:**
+- $-2^{31} \le x \le 2^{31} - 1$ (i.e. $[-2147483648, 2147483647]$)
+
+
+## The Core Challenge: 32-Bit Integer Overflow
+
+Reversing an integer's digits is straightforward using modulo and division:
+```text
+pop = x % 10
+rev = rev * 10 + pop
+x   = Math.trunc(x / 10)
+```
+
+The real difficulty lies in the constraint: **Assume the environment cannot store 64-bit integers**.
+- Maximum 32-bit signed integer: $2^{31} - 1 = \mathbf{2,147,483,647}$
+- Minimum 32-bit signed integer: $-2^{31} = \mathbf{-2,147,483,648}$
+
+If we compute `rev = rev * 10 + pop` *after* it has already exceeded the 32-bit limit, in a true 32-bit environment the calculation would overflow and crash or produce undefined behavior.
+
+### Pre-Overflow Detection
+Before executing `rev * 10 + pop`, we must check whether `rev` will overflow:
+1. **Positive Overflow:**
+   - If `rev > Math.trunc(MAX / 10)` (i.e. `rev > 214748364`), multiplying by 10 will definitely overflow.
+   - If `rev === 214748364` and `pop > 7` (the last digit of `2147483647`), adding `pop` will overflow.
+2. **Negative Overflow:**
+   - If `rev < Math.trunc(MIN / 10)` (i.e. `rev < -214748364`), multiplying by 10 will definitely underflow.
+   - If `rev === -214748364` and `pop < -8` (the last digit of `-2147483648`), adding `pop` will underflow.
+
+
+## Mental Model
+
+<div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start my-8">
+  <div>
+    <h3 className="text-center mb-2 text-sm font-semibold text-gray-400">1. Digit Peeling & Appending</h3>
+    ```mermaid
+    flowchart LR
+        subgraph Source ["Peel from x"]
+            X["123 -> pop = 3, x = 12"]
+        end
+        subgraph Target ["Append to rev"]
+            R["rev = rev * 10 + 3 = 3"]
+        end
+        X --> R
+        
+        style Source fill:#1e293b,stroke:#3b82f6,stroke-width:2px
+        style Target fill:#1e293b,stroke:#10b981,stroke-width:2px
+    ```
+    *Repeatedly pops the last digit using `% 10` and shifts `rev` left by $\times 10$.*
+  </div>
+  
+  <div>
+    <h3 className="text-center mb-2 text-sm font-semibold text-gray-400">2. Boundary Guard</h3>
+    ```mermaid
+    flowchart TD
+        Check{"rev > 214748364 or\nrev === 214748364 && pop > 7?"}
+        Check -- "Yes" --> Overflow["Overflow detected!\nReturn 0"]
+        Check -- "No" --> Proceed["Safe to multiply by 10\nand add pop"]
+        
+        style Overflow fill:#1e293b,stroke:#ef4444,stroke-width:2px
+        style Proceed fill:#1e293b,stroke:#10b981,stroke-width:2px
+    ```
+    *Checks thresholds before performing the multiplication.*
+  </div>
+</div>
+
+
+## Solution
+
+### Strict 32-Bit Pre-Check (Language-Agnostic / Optimal)
+
+```javascript
+/**
+ * @param {number} x
+ * @return {number}
+ */
+var reverse = function(x) {
+    const MAX = 2147483647;  // 2^31 - 1
+    const MIN = -2147483648; // -2^31
+    const MAX_LIMIT = Math.trunc(MAX / 10);
+    const MIN_LIMIT = Math.trunc(MIN / 10);
+    
+    let rev = 0;
+    
+    while (x !== 0) {
+        // Extract the last digit (Math.trunc handles negative numbers correctly)
+        const pop = x % 10;
+        x = Math.trunc(x / 10);
+        
+        // Positive overflow check
+        if (rev > MAX_LIMIT || (rev === MAX_LIMIT && pop > 7)) {
+            return 0;
+        }
+        
+        // Negative underflow check
+        if (rev < MIN_LIMIT || (rev === MIN_LIMIT && pop < -8)) {
+            return 0;
+        }
+        
+        rev = rev * 10 + pop;
+    }
+    
+    return rev;
+};
+```
+
+### Pragmatic JavaScript Approach
+
+In JavaScript, numbers are stored as IEEE-754 64-bit double precision floats (safe up to $2^{53} - 1$). You can perform standard digit reversal and validate against the 32-bit signed bounds at the end:
+
+```javascript
+/**
+ * @param {number} x
+ * @return {number}
+ */
+var reverseJS = function(x) {
+    const sign = x < 0 ? -1 : 1;
+    let num = Math.abs(x);
+    let rev = 0;
+    
+    while (num > 0) {
+        rev = rev * 10 + (num % 10);
+        num = Math.floor(num / 10);
+    }
+    
+    rev *= sign;
+    
+    // Check 32-bit signed boundaries [-2^31, 2^31 - 1]
+    if (rev < -2147483648 || rev > 2147483647) {
+        return 0;
+    }
+    
+    return rev;
+};
+```
+
+
+## Complexity Analysis
+
+- **Time Complexity:** $O(\log_{10} |X|)$
+  - A 32-bit integer has at most 10 decimal digits ($2 \times 10^9$).
+  - The `while` loop runs at most 10 times, executing in constant $O(1)$ time.
+- **Space Complexity:** $O(1)$
+  - Only uses constant extra space for variables `rev` and `pop`.

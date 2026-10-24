@@ -1,0 +1,159 @@
+---
+title: "Partition Labels"
+description: "LeetCode #763"
+category: "NeetCode 150"
+difficulty: "medium"
+subcategory: "Greedy"
+order: 7
+---
+
+## Problem Statement
+
+You are given a string `s`. We want to partition the string into as many parts as possible so that each letter appears in at most one part.
+
+Note that the partition is done so that after concatenating all the parts in order, the resultant string should be `s`.
+
+Return a list of integers representing the size of these parts.
+
+**Example 1:**
+```text
+Input: s = "ababcbacadefegdehijhklij"
+Output: [9,7,8]
+Explanation:
+The partition is "ababcbaca", "defegde", "hijhklij".
+This is a partition so that each letter appears in at most one part.
+A partition like "ababcbacadefegde", "hijhklij" is incorrect, because it splits s into fewer parts.
+```
+
+**Example 2:**
+```text
+Input: s = "eccbbbbdec"
+Output: [10]
+```
+
+**Constraints:**
+- `1 <= s.length <= 500`
+- `s` consists of lowercase English letters.
+
+
+## The Greedy Insight: Expanding Horizon to the Last Occurrence
+
+### The Invariant
+If a character `c` appears inside a partition, **all occurrences** of `c` must reside within that same partition.
+- Therefore, the moment we include a character `c` in our current partition, the partition's right boundary must extend at least to the **last index** where `c` appears in `s`.
+- As we scan characters inside the partition, other characters might have their last occurrences even further to the right, pushing our required right boundary further out.
+
+### The Algorithm ($O(N)$ Time, $O(1)$ Space)
+1. **Pass 1 (Precompute Last Occurrences):**  
+   Scan `s` once and store the last index of each letter in a lookup table (an array of size 26 or a hash map).
+2. **Pass 2 (Greedy Partition Window):**  
+   Maintain two pointers:
+   - `start`: The start index of the current partition.
+   - `end`: The furthest last-occurrence index required by any character seen in the current partition so far.
+   
+   As we iterate through `s` with index `i`:
+   - Extend the horizon: `end = Math.max(end, last[s[i]])`.
+   - When `i === end`, it means every character seen in the current partition has **no future occurrences** past this point!
+   - We greedily cut the partition here, record its length `end - start + 1`, and set `start = i + 1` for the next part.
+
+
+## Mental Model
+
+<div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start my-8">
+  <div>
+    <h3 className="text-center mb-2 text-sm font-semibold text-gray-400">1. Boundary Extension Rule</h3>
+    ```mermaid
+    flowchart TD
+        Char["Read character: s[i]"] --> Query["Lookup last[s[i]]"]
+        Query --> Update["end = max(end, last[s[i]])"]
+        Update --> Check{"i === end ?"}
+        
+        Check -->|"Yes: All letters contained"| Cut["Cut Partition!<br/>Length = end - start + 1<br/>start = i + 1"]
+        Check -->|"No: Letters spill forward"| Continue["Continue expanding window"]
+
+        style Cut fill:#1e293b,stroke:#10b981,stroke-width:2px
+        style Continue fill:#1e293b,stroke:#3b82f6,stroke-width:2px
+        style Check fill:#1e293b,stroke:#f59e0b,stroke-width:2px
+    ```
+    *A cut is made the exact moment i reaches the maximum required boundary.*
+  </div>
+
+  <div>
+    <h3 className="text-center mb-2 text-sm font-semibold text-gray-400">2. Partition Cuts on Example 1</h3>
+    ```mermaid
+    flowchart LR
+        subgraph P1 ["Partition 1 (len: 9)"]
+            S1["ababcbaca<br/>Indices 0..8<br/>last['a'] = 8"]
+        end
+
+        subgraph P2 ["Partition 2 (len: 7)"]
+            S2["defegde<br/>Indices 9..15<br/>last['e'] = 15"]
+        end
+
+        subgraph P3 ["Partition 3 (len: 8)"]
+            S3["hijhklij<br/>Indices 16..23<br/>last['j'] = 23"]
+        end
+
+        P1 --> P2 --> P3
+
+        style P1 fill:#1e293b,stroke:#3b82f6,stroke-width:2px
+        style P2 fill:#1e293b,stroke:#f59e0b,stroke-width:2px
+        style P3 fill:#1e293b,stroke:#10b981,stroke-width:2px
+    ```
+    *Three independent partitions formed with maximal granularity.*
+  </div>
+</div>
+
+
+## Optimal Solution ($O(N)$ Time, $O(1)$ Space)
+
+```javascript
+/**
+ * @param {string} s
+ * @return {number[]}
+ */
+var partitionLabels = function(s) {
+    // 1. Record the last occurrence of each character
+    const lastIndex = new Map();
+    for (let i = 0; i < s.length; i++) {
+        lastIndex.set(s[i], i);
+    }
+    
+    const result = [];
+    let start = 0;
+    let end = 0;
+    
+    // 2. Greedily expand and cut partitions
+    for (let i = 0; i < s.length; i++) {
+        // Expand the boundary to encompass the current character's last appearance
+        end = Math.max(end, lastIndex.get(s[i]));
+        
+        // When our scan reaches the maximum boundary, all characters are fully contained
+        if (i === end) {
+            result.push(end - start + 1);
+            start = i + 1; // Start a new partition window
+        }
+    }
+    
+    return result;
+};
+```
+
+> **Array Optimization (Fixed Size 26):**  
+> Because `s` contains only lowercase English letters (`'a'` through `'z'`), an array of size 26 (`new Int32Array(26)`) indexed via `s.charCodeAt(i) - 97` can replace the `Map` for even faster execution and zero heap allocations.
+
+
+## Complexity Analysis
+
+| Metric | Complexity | Notes |
+| :--- | :--- | :--- |
+| **Time Complexity** | $O(N)$ | Two linear passes over the string of length $N$: pass 1 to find last occurrences, pass 2 to form partition cuts. |
+| **Space Complexity** | $O(1)$ | Memory is bounded by the alphabet size $\Sigma = 26$ lowercase English characters, requiring $O(1)$ extra space. |
+
+
+## Edge Cases
+
+- **All Distinct Characters (`s = "abcdef"`):** Every character is its own last occurrence; returns `[1, 1, 1, 1, 1, 1]`.
+- **All Identical Characters (`s = "aaaaa"`):** `last['a'] = 4`; never cuts until the end, returns `[5]`.
+- **Interlocking Characters (`s = "eccbbbbdec"`):** `'e'` and `'c'` envelop the entire string, forcing a single partition of size `[10]`.
+- **Single Character (`s = "a"`):** Returns `[1]`.

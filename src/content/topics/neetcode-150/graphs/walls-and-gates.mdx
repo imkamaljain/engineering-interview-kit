@@ -1,0 +1,168 @@
+---
+title: "Walls and Gates"
+description: "LeetCode #286 · Islands and Treasure"
+category: "NeetCode 150"
+difficulty: "medium"
+subcategory: "Graphs"
+order: 4
+---
+
+## Problem Statement
+
+You are given an `m x n` 2D grid initialized with these three possible values:
+- `-1`: A water cell or wall (cannot be traversed).
+- `0`: A treasure chest or gate.
+- `INF` / `2147483647` (`2^31 - 1`): An empty land cell or room.
+
+Fill each empty room with the distance to its **nearest gate**. If it is impossible to reach a gate, it should remain `INF` (`2147483647`).
+
+You must modify the grid in-place.
+
+*(Note: On NeetCode, this problem is known as **Islands and Treasure**).*
+
+**Example 1:**
+```text
+Input: grid = [
+  [2147483647,-1,0,2147483647],
+  [2147483647,2147483647,2147483647,-1],
+  [2147483647,-1,2147483647,-1],
+  [0,-1,2147483647,2147483647]
+]
+
+Output: [
+  [3,-1,0,1],
+  [2,2,1,-1],
+  [1,-1,2,-1],
+  [0,-1,3,4]
+]
+```
+
+**Example 2:**
+```text
+Input: grid = [
+  [0,-1],
+  [2147483647,2147483647]
+]
+
+Output: [
+  [0,-1],
+  [1,2]
+]
+```
+
+**Constraints:**
+- `m == grid.length`
+- `n == grid[i].length`
+- `1 <= m, n <= 100`
+- `grid[i][j]` is `-1`, `0`, or `2147483647`.
+
+
+## The Naive Trap vs. Multi-Source BFS
+
+### The Naive Trap: BFS from Every Empty Room
+A common initial thought is to run a standard BFS from every single empty room (`INF`) until we find the closest gate (`0`).
+- If there are $O(M \times N)$ empty rooms, and each search explores up to $O(M \times N)$ cells, the overall runtime becomes **$O((M \times N)^2)$**.
+- For a $100 \times 100$ grid ($10,000$ cells), this requires up to $10^8$ operations, leading to **Time Limit Exceeded (TLE)**.
+
+### The Insight: Invert the Search (Multi-Source BFS)
+Instead of searching from thousands of rooms toward gates, we **search from all gates outward simultaneously**:
+1. Scan the grid and add **all gates (`0`)** into a BFS queue.
+2. Because BFS explores level by level (distance 1, distance 2, distance 3...), the **first time** any gate's wavefront reaches an empty room, that distance is mathematically guaranteed to be the **absolute shortest distance to ANY gate**!
+3. When stepping from cell `(r, c)` to neighbor `(nr, nc)`, if `grid[nr][nc] === INF`, set:
+   $$\text{grid}[nr][nc] = \text{grid}[r][c] + 1$$
+   and push `(nr, nc)` into the queue.
+4. Every cell is visited at most once, reducing the runtime to an optimal **$O(M \times N)$**!
+
+
+## Mental Model
+
+<div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start my-8">
+  <div>
+    <h3 className="text-center mb-2 text-sm font-semibold text-gray-400">1. Multi-Source Seeding (T = 0)</h3>
+    ```mermaid
+    flowchart TD
+        Q["Queue at Start (T = 0)"] --> G1["Gate (0, 2) [dist = 0]"]
+        Q --> G2["Gate (3, 0) [dist = 0]"]
+        
+        style G1 fill:#1e293b,stroke:#10b981,stroke-width:2px
+        style G2 fill:#1e293b,stroke:#10b981,stroke-width:2px
+    ```
+    *All gates start in the queue together as level 0 origins.*
+  </div>
+  
+  <div>
+    <h3 className="text-center mb-2 text-sm font-semibold text-gray-400">2. Expanding Wavefronts (T = 1, 2...)</h3>
+    ```mermaid
+    flowchart TD
+        G["Gate (val = 0)"] -->|Step 1| L1["Neighbor rooms set to 1"]
+        L1 -->|Step 2| L2["Next neighbor rooms set to 2"]
+        L2 -->|Step 3| L3["Next neighbor rooms set to 3"]
+        
+        style G stroke:#10b981,stroke-width:2px
+        style L1 stroke:#3b82f6,stroke-width:2px
+        style L2 stroke:#f59e0b,stroke-width:2px
+        style L3 stroke:#8b5cf6,stroke-width:2px
+    ```
+    *Ripples expand simultaneously. First arrival always sets the shortest distance.*
+  </div>
+</div>
+
+
+## Solution: Multi-Source BFS
+
+```javascript
+/**
+ * @param {number[][]} grid
+ * @return {void} Do not return anything, modify grid in-place instead.
+ */
+var wallsAndGates = function(grid) {
+    if (!grid || grid.length === 0) return;
+    
+    const rows = grid.length;
+    const cols = grid[0].length;
+    const INF = 2147483647;
+    const directions = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+    
+    const queue = [];
+    
+    // 1. Find all gates and add them to the queue simultaneously
+    for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+            if (grid[r][c] === 0) {
+                queue.push([r, c]);
+            }
+        }
+    }
+    
+    // 2. Perform Multi-Source BFS
+    let head = 0;
+    while (head < queue.length) {
+        const [r, c] = queue[head++];
+        
+        for (const [dr, dc] of directions) {
+            const nr = r + dr;
+            const nc = c + dc;
+            
+            // If the neighbor is in bounds and is an untouched empty room
+            if (nr >= 0 && nr < rows && nc >= 0 && nc < cols && grid[nr][nc] === INF) {
+                // Shortest distance is current cell's distance + 1
+                grid[nr][nc] = grid[r][c] + 1;
+                queue.push([nr, nc]);
+            }
+        }
+    }
+};
+```
+
+> **Memory Optimization Note:** We do **not** need a separate `visited` array or Set! Because every untouched empty room is initialized to `INF` (`2147483647`), updating `grid[nr][nc] = grid[r][c] + 1` automatically marks it as visited (it is no longer `INF`). Walls (`-1`) and other gates (`0`) are naturally skipped by the `grid[nr][nc] === INF` guard.
+
+
+## Complexity Analysis
+
+- **Time Complexity:** $O(M \times N)$
+  - Seeding the queue takes $O(M \times N)$ to scan the matrix.
+  - Each cell is pushed into the BFS queue at most once and visited in constant time $O(1)$.
+  - Total time: $O(M \times N)$, which executes in just a few milliseconds for $100 \times 100$ grids.
+- **Space Complexity:** $O(M \times N)$
+  - In the worst case, the BFS queue holds at most $O(M \times N)$ cells (e.g. if all cells are gates).
+  - Uses $O(1)$ extra space beyond the queue since the grid is modified in-place without a separate `visited` matrix.

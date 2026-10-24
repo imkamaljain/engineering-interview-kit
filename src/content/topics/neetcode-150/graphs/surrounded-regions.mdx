@@ -1,0 +1,292 @@
+---
+title: "Surrounded Regions"
+description: "LeetCode #130"
+category: "NeetCode 150"
+difficulty: "medium"
+subcategory: "Graphs"
+order: 7
+---
+
+## Problem Statement
+
+You are given an `m x n` matrix `board` containing `'X'` and `'O'`. Capture all regions that are **4-directionally surrounded** by `'X'`.
+
+A region is captured by flipping all `'O'`s into `'X'`s in that surrounded region.
+
+- **Connect:** A cell is connected to adjacent cells horizontally or vertically.
+- **Region:** To form a region, connect every adjacent `'O'` cell.
+- **Surround:** The region is surrounded with `'X'` cells if you can connect the region with `'X'` cells and none of the region cells are on the edge of the `board`.
+
+An `'O'` cell should **not** be flipped if:
+1. It is on the border of the board, or
+2. It is connected to an `'O'` that is on the border of the board.
+
+You must modify the input matrix `board` **in-place**.
+
+**Example 1:**
+```text
+Input: board = [
+  ["X","X","X","X"],
+  ["X","O","O","X"],
+  ["X","X","O","X"],
+  ["X","O","X","X"]
+]
+
+Output: [
+  ["X","X","X","X"],
+  ["X","X","X","X"],
+  ["X","X","X","X"],
+  ["X","O","X","X"]
+]
+
+Explanation:
+- The 'O' at (3, 1) is on the bottom border, so it cannot be surrounded.
+- The other three 'O's at (1, 1), (1, 2), and (2, 2) are not on the border 
+  and not connected to any border 'O', so they are flipped to 'X'.
+```
+
+**Example 2:**
+```text
+Input: board = [["X"]]
+Output: [["X"]]
+```
+
+**Constraints:**
+- `m == board.length`
+- `n == board[i].length`
+- `1 <= m, n <= 200`
+- `board[i][j]` is `'X'` or `'O'`.
+
+
+## The Inversion: Outside-In Traversal
+
+### The Inside-Out Trap
+If you attempt to inspect each `'O'` from the inside of the board:
+- You must explore all paths to see if the region can reach any border.
+- If even one cell in a connected component touches a border, the entire component is safe.
+- If none touch the border, you have to backtrack and flip all cells in that component to `'X'`.
+- Keeping track of visited states, paths, and delayed flips introduces unnecessary bookkeeping and overhead.
+
+### The Outside-In Insight
+Invert the perspective: **Only cells connected to the border can survive.**
+> Instead of checking whether internal `'O'`s can reach the border, **start from the border and mark every `'O'` that can be reached!**
+
+Any `'O'` that is not reached by this border-originated traversal is strictly enclosed by `'X'`s and must be flipped.
+
+```
++---+---+---+---+        +---+---+---+---+        +---+---+---+---+
+| X | X | X | X |        | X | X | X | X |        | X | X | X | X |
++---+---+---+---+        +---+---+---+---+        +---+---+---+---+
+| X | O | O | X |  --->  | X | O | O | X |  --->  | X | X | X | X |
++---+---+---+---+        +---+---+---+---+        +---+---+---+---+
+| X | X | O | X |        | X | X | O | X |        | X | X | X | X |
++---+---+---+---+        +---+---+---+---+        +---+---+---+---+
+| X | O | X | X |        | X | T | X | X |        | X | O | X | X |
++---+---+---+---+        +---+---+---+---+        +---+---+---+---+
+   1. Initial               2. Border 'O'            3. 'O' -> 'X'
+      Board                    marked 'T'               'T' -> 'O'
+```
+
+
+## Algorithm: 3-Phase In-Place Transformation
+
+1. **Phase 1: Mark Border-Connected Regions (`'O'` $\to$ `'T'`)**
+   - Traverse the 4 outer perimeters (row `0`, row `m - 1`, col `0`, col `n - 1`).
+   - Whenever an `'O'` is found on the perimeter, run DFS/BFS to traverse all connected `'O'` cells and temporarily re-label them as `'T'` (*Temporary / Escaped*).
+
+2. **Phase 2: Capture Surrounded Regions (`'O'` $\to$ `'X'`)**
+   - Any cell that remains `'O'` was unreachable from the border and is therefore surrounded.
+   - Flip `board[r][c] = 'X'`.
+
+3. **Phase 3: Restore Escaped Cells (`'T'` $\to$ `'O'`)**
+   - Any cell marked `'T'` was connected to the border and survived.
+   - Restore `board[r][c] = 'O'`.
+
+*(Phases 2 and 3 are combined into a single scan over the matrix).*
+
+
+## Mental Model
+
+<div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start my-8">
+  <div>
+    <h3 className="text-center mb-2 text-sm font-semibold text-gray-400">1. Border Protection Wave</h3>
+    ```mermaid
+    flowchart TD
+        subgraph Borders ["Perimeter Borders"]
+            B1["Top: (0, c)"]
+            B2["Bottom: (m-1, c)"]
+            B3["Left: (r, 0)"]
+            B4["Right: (r, n-1)"]
+        end
+
+        Borders -->|If cell == 'O'| Search["Traverse DFS / BFS"]
+        Search -->|"Connected 'O's"| Safe["Mark as 'T' (Escaped)"]
+        
+        style Borders fill:#1e293b,stroke:#3b82f6,stroke-width:2px
+        style Search fill:#1e293b,stroke:#f59e0b,stroke-width:2px
+        style Safe fill:#1e293b,stroke:#10b981,stroke-width:2px
+    ```
+    *All border-connected components are safely marked as 'T'.*
+  </div>
+
+  <div>
+    <h3 className="text-center mb-2 text-sm font-semibold text-gray-400">2. Final In-Place Resolution</h3>
+    ```mermaid
+    flowchart TD
+        Scan["Scan Every Cell (r, c)"]
+        
+        Scan -->|cell == 'O'| FlipX["Surrounded: Flip to 'X'"]
+        Scan -->|cell == 'T'| RestoreO["Border Escaped: Restore to 'O'"]
+        Scan -->|cell == 'X'| KeepX["Wall: Leave Unchanged"]
+
+        style Scan fill:#1e293b,stroke:#8b5cf6,stroke-width:2px
+        style FlipX fill:#1e293b,stroke:#ef4444,stroke-width:2px
+        style RestoreO fill:#1e293b,stroke:#10b981,stroke-width:2px
+        style KeepX fill:#1e293b,stroke:#6b7280,stroke-width:2px
+    ```
+    *A single matrix scan finalizes all cell captures and restorations.*
+  </div>
+</div>
+
+
+## Solution: Depth-First Search (DFS)
+
+```javascript
+/**
+ * @param {character[][]} board
+ * @return {void} Do not return anything, modify board in-place instead.
+ */
+var solve = function(board) {
+    if (!board || board.length === 0 || board[0].length === 0) return;
+    
+    const rows = board.length;
+    const cols = board[0].length;
+    
+    // Grids with rows <= 2 or cols <= 2 have all cells on or adjacent to borders
+    if (rows <= 2 || cols <= 2) return;
+    
+    /**
+     * Mark all connected 'O' cells as 'T' (temporary safe).
+     * @param {number} r
+     * @param {number} c
+     */
+    const dfs = (r, c) => {
+        // Out of bounds or not an 'O'
+        if (r < 0 || r >= rows || c < 0 || c >= cols || board[r][c] !== 'O') {
+            return;
+        }
+        
+        // Mark cell as safe/escaped
+        board[r][c] = 'T';
+        
+        // Explore 4 cardinal directions
+        dfs(r + 1, c);
+        dfs(r - 1, c);
+        dfs(r, c + 1);
+        dfs(r, c - 1);
+    };
+    
+    // Step 1: Launch DFS from all border 'O's
+    // Top and Bottom rows
+    for (let c = 0; c < cols; c++) {
+        if (board[0][c] === 'O') dfs(0, c);
+        if (board[rows - 1][c] === 'O') dfs(rows - 1, c);
+    }
+    
+    // Left and Right columns
+    for (let r = 0; r < rows; r++) {
+        if (board[r][0] === 'O') dfs(r, 0);
+        if (board[r][cols - 1] === 'O') dfs(r, cols - 1);
+    }
+    
+    // Step 2 & 3: Flip surrounded 'O' -> 'X', and restore 'T' -> 'O'
+    for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+            if (board[r][c] === 'O') {
+                board[r][c] = 'X'; // Captured
+            } else if (board[r][c] === 'T') {
+                board[r][c] = 'O'; // Restored
+            }
+        }
+    }
+};
+```
+
+
+## Alternative: Breadth-First Search (BFS)
+
+For environments or interviewers concerned about recursion call stack overflow on large inputs ($200 \times 200 = 40,000$ depth), BFS provides an iterative queue-based alternative:
+
+```javascript
+/**
+ * @param {character[][]} board
+ * @return {void}
+ */
+var solveBFS = function(board) {
+    if (!board || board.length <= 2 || board[0].length <= 2) return;
+    
+    const rows = board.length;
+    const cols = board[0].length;
+    const queue = [];
+    let head = 0;
+    
+    // Enqueue all border 'O's
+    const addBorder = (r, c) => {
+        if (board[r][c] === 'O') {
+            board[r][c] = 'T';
+            queue.push([r, c]);
+        }
+    };
+    
+    for (let c = 0; c < cols; c++) {
+        addBorder(0, c);
+        addBorder(rows - 1, c);
+    }
+    for (let r = 1; r < rows - 1; r++) {
+        addBorder(r, 0);
+        addBorder(r, cols - 1);
+    }
+    
+    const dirs = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+    
+    // BFS traversal
+    while (head < queue.length) {
+        const [r, c] = queue[head++];
+        
+        for (const [dr, dc] of dirs) {
+            const nr = r + dr;
+            const nc = c + dc;
+            
+            if (nr >= 0 && nr < rows && nc >= 0 && nc < cols && board[nr][nc] === 'O') {
+                board[nr][nc] = 'T';
+                queue.push([nr, nc]);
+            }
+        }
+    }
+    
+    // Flip and restore
+    for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+            if (board[r][c] === 'O') board[r][c] = 'X';
+            else if (board[r][c] === 'T') board[r][c] = 'O';
+        }
+    }
+};
+```
+
+
+## Complexity Analysis
+
+| Metric | Complexity | Notes |
+| :--- | :--- | :--- |
+| **Time Complexity** | $O(M \times N)$ | Each cell is visited at most twice: once during the border search (DFS/BFS) and once during the final board scan. |
+| **Space Complexity** | $O(M \times N)$ | Worst-case recursion stack (DFS) or queue (BFS) if all cells are `'O'`. |
+| **Auxiliary Memory** | $O(1)$ | Board modification is performed directly in-place without auxiliary visited matrices. |
+
+
+## Edge Cases
+
+- **Grid Dimensions $\le 2$ (`m <= 2` or `n <= 2`):** Every cell is on a border or directly touches a border; no region can ever be completely surrounded. Return immediately.
+- **Board with only `'X'`s:** No operations are performed; the board remains unchanged.
+- **Board with only `'O'`s:** All cells connect to the border; all cells are marked `'T'` and then safely restored to `'O'`.
+- **Snake / Spiral Trapped Regions:** The DFS/BFS naturally traverses any irregular shape, flipping only inner isolated branches.

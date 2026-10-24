@@ -1,0 +1,164 @@
+---
+title: "Gas Station"
+description: "LeetCode #134"
+category: "NeetCode 150"
+difficulty: "medium"
+subcategory: "Greedy"
+order: 4
+---
+
+## Problem Statement
+
+There are `n` gas stations along a circular route, where the amount of gas at the `i`-th station is `gas[i]`.
+
+You have a car with an unlimited gas tank and it costs `cost[i]` of gas to travel from the `i`-th station to its next `(i + 1)`-th station. You begin the journey with an empty tank at one of the gas stations.
+
+Given two integer arrays `gas` and `cost`, return the starting gas station's index if you can travel around the circuit once in the clockwise direction, otherwise return `-1`. If there exists a solution, it is **guaranteed to be unique**.
+
+**Example 1:**
+```text
+Input: gas = [1,2,3,4,5], cost = [3,4,5,1,2]
+Output: 3
+Explanation:
+Start at station 3 (index 3) and fill up with 4 units of gas. Your tank = 0 + 4 = 4
+Travel to station 4. Your tank = 4 - 1 + 5 = 8
+Travel to station 0. Your tank = 8 - 2 + 1 = 7
+Travel to station 1. Your tank = 7 - 3 + 2 = 6
+Travel to station 2. Your tank = 6 - 4 + 3 = 5
+Travel to station 3. The cost is 5. Your gas is just enough to travel back to station 3.
+Therefore, return 3 as the starting index.
+```
+
+**Example 2:**
+```text
+Input: gas = [2,3,4], cost = [3,4,3]
+Output: -1
+Explanation:
+You cannot start at station 0 or 1, as there is not enough gas to travel to the next station.
+Let's start at station 2 and fill up with 4 units of gas. Your tank = 0 + 4 = 4
+Travel to station 0. Your tank = 4 - 3 + 2 = 3
+Travel to station 1. Your tank = 3 - 3 + 3 = 3
+You cannot travel back to station 2, as it requires 4 units of gas but you only have 3.
+Therefore, you cannot complete the circuit from any starting station.
+```
+
+**Constraints:**
+- `n == gas.length == cost.length`
+- `1 <= n <= 10^5`
+- `0 <= gas[i], cost[i] <= 10^4`
+
+
+## The Greedy Intuition
+
+A brute-force solution tries every index $i$ as a starting point and simulates the entire circuit, taking $O(N^2)$ time. 
+
+Two mathematical invariants reduce this to a single $O(N)$ pass:
+
+### Invariant 1: Total Gas vs. Total Cost
+Can a complete circuit be completed at all?
+- If $\sum \text{gas}[i] < \sum \text{cost}[i]$, you do not have enough total fuel to cover the entire loop. No valid start exists return -1.
+- If $\sum \text{gas}[i] \ge \sum \text{cost}[i]$, **a valid solution is mathematically guaranteed to exist**.
+
+### Invariant 2: Greedy Pruning Property
+Suppose we start at station $A$ and run out of gas at station $B$ ($A \le B$):
+- Could any intermediate station $K$ ($A < K \le B$) be the valid starting station?
+- **No!** When we arrived at station $K$ coming from $A$, our gas tank had a surplus of $\ge 0$ units of gas.
+- Even with that extra non-negative fuel bonus from $[A \dots K-1]$, we still ran out of gas at station $B$.
+- If we started at $K$ with an empty tank ($0$ gas), we would run out of fuel even sooner!
+
+> **Greedy Choice:** The moment our running tank drops below `0` at station $B$, **all stations from $A$ through $B$ are completely disqualified**. We immediately prune $[A \dots B]$, reset `currentTank = 0`, and test `B + 1` as the next potential start!
+
+
+## Mental Model
+
+<div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start my-8">
+  <div>
+    <h3 className="text-center mb-2 text-sm font-semibold text-gray-400">1. Range Pruning Theorem</h3>
+    ```mermaid
+    flowchart TD
+        A["Start at Station A (Tank = 0)"] -->|"Surplus >= 0"| K["Station K (Tank >= 0)"]
+        K -->|"Deficit!"| B["Station B (Tank < 0: Empty!)"]
+
+        B -->|"Prunes all [A..B]"| Next["Next Candidate:<br/>Station B + 1"]
+
+        style A fill:#1e293b,stroke:#3b82f6,stroke-width:2px
+        style B fill:#1e293b,stroke:#ef4444,stroke-width:2px
+        style Next fill:#1e293b,stroke:#10b981,stroke-width:2px
+    ```
+    *If A fails at B, no intermediate station K can reach B either.*
+  </div>
+
+  <div>
+    <h3 className="text-center mb-2 text-sm font-semibold text-gray-400">2. Step-by-Step on Example 1</h3>
+    ```mermaid
+    flowchart TD
+        S0["Station 0: 1 - 3 = -2<br/>tank = -2 < 0 -> Reset -> Start = 1"]
+        S1["Station 1: 2 - 4 = -2<br/>tank = -2 < 0 -> Reset -> Start = 2"]
+        S2["Station 2: 3 - 5 = -2<br/>tank = -2 < 0 -> Reset -> Start = 3"]
+        S3["Station 3: 4 - 1 = +3<br/>tank = +3 >= 0"]
+        S4["Station 4: 5 - 2 = +3<br/>tank = +6 >= 0"]
+
+        S0 --> S1 --> S2 --> S3 --> S4
+        
+        style S0 fill:#1e293b,stroke:#ef4444,stroke-width:1px
+        style S1 fill:#1e293b,stroke:#ef4444,stroke-width:1px
+        style S2 fill:#1e293b,stroke:#ef4444,stroke-width:1px
+        style S3 fill:#1e293b,stroke:#10b981,stroke-width:2px
+        style S4 fill:#1e293b,stroke:#10b981,stroke-width:2px
+    ```
+    *Stations 0, 1, 2 fail immediately; station 3 completes the loop.*
+  </div>
+</div>
+
+
+## Optimal Solution ($O(N)$ Time, $O(1)$ Space)
+
+```javascript
+/**
+ * @param {number[]} gas
+ * @param {number[]} cost
+ * @return {number}
+ */
+var canCompleteCircuit = function(gas, cost) {
+    let totalTank = 0;
+    let currentTank = 0;
+    let startStation = 0;
+    
+    for (let i = 0; i < gas.length; i++) {
+        const net = gas[i] - cost[i];
+        totalTank += net;
+        currentTank += net;
+        
+        // If we cannot make it from startStation to i + 1
+        if (currentTank < 0) {
+            // Prune all stations from startStation through i
+            startStation = i + 1;
+            // Reset tank for our new candidate start
+            currentTank = 0;
+        }
+    }
+    
+    // If total gas is less than total cost, completing the circuit is impossible
+    return totalTank >= 0 ? startStation : -1;
+};
+```
+
+> **Why don't we need a second loop to verify the wraparound?**  
+> Because `totalTank = sum(gas) - sum(cost) >= 0`. If `startStation` can successfully reach the end of the array ($n - 1$) with `currentTank >= 0`, and the overall fuel balance is non-negative, the remaining fuel is guaranteed to carry us through the prefix ($0 \dots \text{startStation} - 1$) back to `startStation`!
+
+
+## Complexity Analysis
+
+| Metric | Complexity | Notes |
+| :--- | :--- | :--- |
+| **Time Complexity** | $O(N)$ | Single linear pass through the array of length $N$. |
+| **Space Complexity** | $O(1)$ | Uses only three integer variables (`totalTank`, `currentTank`, `startStation`). |
+| **Brute Force** | $O(N^2)$ | Simulating the circle from every starting index takes $O(N^2)$ time. |
+
+
+## Edge Cases
+
+- **Single Station with Sufficient Gas (`gas = [3], cost = [2]`):** `totalTank = 1 >= 0`, returns `0`.
+- **Single Station with Insufficient Gas (`gas = [2], cost = [3]`):** `totalTank = -1 < 0`, returns `-1`.
+- **Exact Balance (`sum(gas) == sum(cost)`):** `totalTank === 0`, solution exists and is uniquely identified.
+- **Answer at the Last Station:** All prefix candidates reset until `startStation = n - 1`, which then successfully validates.

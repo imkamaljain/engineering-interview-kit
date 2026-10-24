@@ -1,0 +1,216 @@
+---
+title: "Number of Islands"
+description: "LeetCode #200"
+category: "NeetCode 150"
+difficulty: "medium"
+subcategory: "Graphs"
+order: 1
+---
+
+## Problem Statement
+
+Given an `m x n` 2D binary grid `grid` which represents a map of `'1'`s (land) and `'0'`s (water), return the number of islands.
+
+An island is surrounded by water and is formed by connecting adjacent lands horizontally or vertically. You may assume all four edges of the grid are all surrounded by water.
+
+**Example 1:**
+```text
+Input: grid = [
+  ["1","1","1","1","0"],
+  ["1","1","0","1","0"],
+  ["1","1","0","0","0"],
+  ["0","0","0","0","0"]
+]
+Output: 1
+```
+
+**Example 2:**
+```text
+Input: grid = [
+  ["1","1","0","0","0"],
+  ["1","1","0","0","0"],
+  ["0","0","1","0","0"],
+  ["0","0","0","1","1"]
+]
+Output: 3
+```
+
+**Constraints:**
+- `m == grid.length`
+- `n == grid[i].length`
+- `1 <= m, n <= 300`
+- `grid[i][j]` is `'0'` or `'1'`.
+
+
+## Approach: 2D Grid as an Implicit Graph
+
+A 2D matrix can be modeled directly as an **undirected graph**:
+- **Vertices (Nodes):** Each individual cell `(r, c)`.
+- **Edges:** The 4 cardinal directions connecting adjacent land cells: Up, Down, Left, and Right.
+- **Goal:** Count the number of **Connected Components** of `'1'`s.
+
+We can scan through the grid cell by cell:
+1. When we land on an unvisited land cell (`"1"`), we have found the start of a new island.
+2. Increment `islandsCount` by 1.
+3. Launch a traversal (DFS or BFS) starting from `(r, c)` to visit **all connected land cells** belonging to this island.
+4. Mark every visited land cell as visited (e.g., sink it by changing `"1"` to `"0"` in-place, or maintain a `visited` structure) so it is never re-processed.
+5. Once the traversal finishes, this island is completely explored. Resume scanning the grid to find the next untouched island.
+
+
+## Mental Model
+
+<div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start my-8">
+  <div>
+    <h3 className="text-center mb-2 text-sm font-semibold text-gray-400">1. Identifying Components</h3>
+    ```mermaid
+    flowchart TD
+        subgraph Island1 ["Island 1"]
+            A["(0,0): 1"] --- B["(0,1): 1"]
+            A --- C["(1,0): 1"]
+            B --- D["(1,1): 1"]
+        end
+        subgraph Island2 ["Island 2"]
+            E["(2,2): 1"]
+        end
+        subgraph Island3 ["Island 3"]
+            F["(3,3): 1"] --- G["(3,4): 1"]
+        end
+        
+        style Island1 fill:#1e293b,stroke:#3b82f6,stroke-width:2px
+        style Island2 fill:#1e293b,stroke:#10b981,stroke-width:2px
+        style Island3 fill:#1e293b,stroke:#f59e0b,stroke-width:2px
+    ```
+    *Three distinct connected landmasses separated by water ('0').*
+  </div>
+  
+  <div>
+    <h3 className="text-center mb-2 text-sm font-semibold text-gray-400">2. Sinking Traversal (Flood Fill)</h3>
+    ```mermaid
+    flowchart TD
+        Start["Found '1' at (r, c)\nislands++"] --> Mark["Mark cell as '0' (Visited)"]
+        Mark --> Up["Explore Up: (r-1, c)"]
+        Mark --> Down["Explore Down: (r+1, c)"]
+        Mark --> Left["Explore Left: (r, c-1)"]
+        Mark --> Right["Explore Right: (r, c+1)"]
+        
+        style Start stroke:#10b981,stroke-width:2px
+        style Mark stroke:#3b82f6,stroke-width:2px
+    ```
+    *DFS/BFS expands in 4 directions, neutralizing the island before scanning continues.*
+  </div>
+</div>
+
+
+## Solution: DFS (Depth-First Search)
+
+DFS is the most concise and common solution in interviews:
+
+```javascript
+/**
+ * @param {character[][]} grid
+ * @return {number}
+ */
+var numIslands = function(grid) {
+    if (!grid || grid.length === 0) return 0;
+    
+    const rows = grid.length;
+    const cols = grid[0].length;
+    let islandCount = 0;
+    
+    /**
+     * Helper DFS to traverse and sink an entire island.
+     * @param {number} r
+     * @param {number} c
+     */
+    const dfs = (r, c) => {
+        // Boundary and water checks
+        if (r < 0 || r >= rows || c < 0 || c >= cols || grid[r][c] !== '1') {
+            return;
+        }
+        
+        // Mark cell as visited by mutating to '0' (sinking the land)
+        grid[r][c] = '0';
+        
+        // Explore all 4 adjacent directions
+        dfs(r - 1, c); // Up
+        dfs(r + 1, c); // Down
+        dfs(r, c - 1); // Left
+        dfs(r, c + 1); // Right
+    };
+    
+    // Scan every cell in the grid
+    for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+            if (grid[r][c] === '1') {
+                islandCount++;
+                dfs(r, c); // Sink the connected landmass
+            }
+        }
+    }
+    
+    return islandCount;
+};
+```
+
+
+## Alternative: BFS (Breadth-First Search)
+
+If the grid is very large (e.g., $300 \times 300 = 90,000$ cells all set to `'1'`), deep recursion in DFS can risk a call stack overflow. BFS avoids call stack depth limits by using an explicit heap-allocated queue:
+
+```javascript
+/**
+ * @param {character[][]} grid
+ * @return {number}
+ */
+var numIslandsBFS = function(grid) {
+    if (!grid || grid.length === 0) return 0;
+    
+    const rows = grid.length;
+    const cols = grid[0].length;
+    let islandCount = 0;
+    const directions = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+    
+    const bfs = (startR, startC) => {
+        const queue = [[startR, startC]];
+        grid[startR][startC] = '0';
+        
+        let head = 0;
+        while (head < queue.length) {
+            const [r, c] = queue[head++];
+            
+            for (const [dr, dc] of directions) {
+                const nr = r + dr;
+                const nc = c + dc;
+                
+                if (nr >= 0 && nr < rows && nc >= 0 && nc < cols && grid[nr][nc] === '1') {
+                    grid[nr][nc] = '0'; // Mark visited immediately on enqueue
+                    queue.push([nr, nc]);
+                }
+            }
+        }
+    };
+    
+    for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+            if (grid[r][c] === '1') {
+                islandCount++;
+                bfs(r, c);
+            }
+        }
+    }
+    
+    return islandCount;
+};
+```
+
+> **Interview Tip:** Always mark cells as visited (`grid[nr][nc] = '0'`) **immediately when adding them to the queue**, not when dequeuing! Otherwise, adjacent cells will repeatedly enqueue duplicate coordinates, leading to Memory Limit Exceeded (MLE).
+
+
+## Complexity Analysis
+
+- **Time Complexity:** $O(M \times N)$
+  - Every cell is visited at most a constant number of times: once by the outer nested loops, and once during the DFS/BFS exploration.
+- **Space Complexity:** $O(M \times N)$
+  - In DFS, the worst case call stack reaches $O(M \times N)$ if the entire grid is one snaking island.
+  - In BFS, the queue holds at most $O(\min(M, N))$ elements along a diagonal wavefront, but can reach $O(M \times N)$ in the worst case.
+  - Sinking cells in-place uses $O(1)$ additional storage for tracking visits.

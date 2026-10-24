@@ -1,0 +1,197 @@
+---
+title: "Rotting Oranges"
+description: "LeetCode #994"
+category: "NeetCode 150"
+difficulty: "medium"
+subcategory: "Graphs"
+order: 5
+---
+
+## Problem Statement
+
+You are given an `m x n` grid where each cell can have one of three values:
+- `0` representing an empty cell,
+- `1` representing a fresh orange, or
+- `2` representing a rotten orange.
+
+Every minute, any fresh orange that is **4-directionally adjacent** to a rotten orange becomes rotten.
+
+Return the **minimum number of minutes** that must elapse until no cell has a fresh orange. If this is impossible, return `-1`.
+
+**Example 1:**
+```text
+Input: grid = [
+  [2,1,1],
+  [1,1,0],
+  [0,1,1]
+]
+Output: 4
+```
+
+**Example 2:**
+```text
+Input: grid = [
+  [2,1,1],
+  [0,1,1],
+  [1,0,1]
+]
+Output: -1
+Explanation: The orange in the bottom left corner (row 2, column 0) is never rotten, 
+             because rotting only happens 4-directionally.
+```
+
+**Example 3:**
+```text
+Input: grid = [
+  [0,2]
+]
+Output: 0
+Explanation: Since there are already no fresh oranges at minute 0, the answer is just 0.
+```
+
+**Constraints:**
+- `m == grid.length`
+- `n == grid[i].length`
+- `1 <= m, n <= 10`
+- `grid[i][j]` is `0`, `1`, or `2`.
+
+
+## Approach: Multi-Source Level-Order BFS
+
+This problem is a canonical application of **Multi-Source Breadth-First Search (BFS)**:
+1. All initially rotten oranges begin spreading their contamination **simultaneously** at minute 0.
+2. Each minute of elapsed time corresponds to exactly **one layer (level)** of BFS expansion.
+3. Because all rotten sources expand at the exact same pace (1 step per minute), BFS naturally finds the minimum time to reach every reachable fresh orange.
+
+### The Algorithm:
+1. **Initial Scan:**
+   - Traverse the entire grid.
+   - Enqueue the coordinates `[r, c]` of every **rotten orange (`2`)**.
+   - Count the total number of **fresh oranges (`1`)** in `freshCount`.
+2. **Edge Case:**
+   - If `freshCount === 0`, return `0` immediately (no work needed).
+3. **Level-by-Level BFS:**
+   - While the queue is not empty and `freshCount > 0`:
+     - Record `levelSize = queue.length - head`.
+     - Process exactly `levelSize` rotten oranges from the current minute.
+     - For each rotten orange, inspect all 4 adjacent neighbors.
+     - If a neighbor is fresh (`grid[nr][nc] === 1`):
+       - Rot the orange: `grid[nr][nc] = 2`.
+       - Decrement `freshCount--`.
+       - Push `[nr, nc]` into the queue for the next minute's expansion.
+     - Increment `minutes++`.
+4. **Final Check:**
+   - If `freshCount === 0`, return `minutes`.
+   - If `freshCount > 0`, some fresh oranges were isolated or blocked by empty cells (`0`). Return `-1`.
+
+
+## Mental Model
+
+<div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start my-8">
+  <div>
+    <h3 className="text-center mb-2 text-sm font-semibold text-gray-400">1. Minute-by-Minute Wavefront</h3>
+    ```mermaid
+    flowchart TD
+        T0["Minute 0: All Rotten (2) in Queue"] -->|Contaminate neighbors| T1["Minute 1: Layer 1 Fresh -> Rotten"]
+        T1 -->|Contaminate neighbors| T2["Minute 2: Layer 2 Fresh -> Rotten"]
+        T2 -->|Contaminate neighbors| T3["Minute 3: Layer 3 Fresh -> Rotten"]
+        
+        style T0 fill:#1e293b,stroke:#ef4444,stroke-width:2px
+        style T1 fill:#1e293b,stroke:#f59e0b,stroke-width:2px
+        style T2 fill:#1e293b,stroke:#eab308,stroke-width:2px
+        style T3 fill:#1e293b,stroke:#10b981,stroke-width:2px
+    ```
+    *Each BFS level corresponds to 1 minute of real-time contamination.*
+  </div>
+  
+  <div>
+    <h3 className="text-center mb-2 text-sm font-semibold text-gray-400">2. Unreachable Oranges (-1)</h3>
+    ```mermaid
+    flowchart LR
+        Rotten["[2] Rotten"] --- Water["[0] Empty"]
+        Water --- Fresh["[1] Fresh\n(Isolated!)"]
+        
+        style Rotten fill:#1e293b,stroke:#ef4444,stroke-width:2px
+        style Water fill:#1e293b,stroke:#64748b,stroke-width:2px
+        style Fresh fill:#1e293b,stroke:#3b82f6,stroke-width:2px
+    ```
+    *If empty cells block the path, `freshCount > 0` persists -> return -1.*
+  </div>
+</div>
+
+
+## Solution: Multi-Source BFS
+
+```javascript
+/**
+ * @param {number[][]} grid
+ * @return {number}
+ */
+var orangesRotting = function(grid) {
+    if (!grid || grid.length === 0) return 0;
+    
+    const rows = grid.length;
+    const cols = grid[0].length;
+    const directions = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+    
+    const queue = [];
+    let freshCount = 0;
+    
+    // 1. Gather all initially rotten oranges and tally fresh oranges
+    for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+            if (grid[r][c] === 2) {
+                queue.push([r, c]);
+            } else if (grid[r][c] === 1) {
+                freshCount++;
+            }
+        }
+    }
+    
+    // If no fresh oranges existed from the start, elapsed time is 0
+    if (freshCount === 0) return 0;
+    
+    let minutes = 0;
+    let head = 0;
+    
+    // 2. Expand minute-by-minute (level-by-level)
+    while (head < queue.length && freshCount > 0) {
+        const levelSize = queue.length - head;
+        
+        for (let i = 0; i < levelSize; i++) {
+            const [r, c] = queue[head++];
+            
+            for (const [dr, dc] of directions) {
+                const nr = r + dr;
+                const nc = c + dc;
+                
+                // If neighbor is an uninfected fresh orange
+                if (nr >= 0 && nr < rows && nc >= 0 && nc < cols && grid[nr][nc] === 1) {
+                    grid[nr][nc] = 2; // Infect fresh orange
+                    freshCount--;
+                    queue.push([nr, nc]);
+                }
+            }
+        }
+        
+        minutes++;
+    }
+    
+    // If fresh oranges still remain, they were unreachable
+    return freshCount === 0 ? minutes : -1;
+};
+```
+
+> **Why check `freshCount > 0` in the `while` condition?**
+> If all fresh oranges have already been infected, the last level of rotten oranges will still be in the queue, but they have no fresh neighbors left to contaminate. Checking `freshCount > 0` prevents advancing `minutes++` on an idle cycle.
+
+
+## Complexity Analysis
+
+- **Time Complexity:** $O(M \times N)$
+  - Initial grid scan takes $O(M \times N)$ to find all rotten and fresh oranges.
+  - In the BFS, each cell is enqueued at most once and processed in $O(1)$ time.
+  - Total time: $O(M \times N)$, running in under 2ms for $10 \times 10$ matrices.
+- **Space Complexity:** $O(M \times N)$
+  - The queue stores at most $O(M \times N)$ coordinates.
+  - Grid state is updated in-place (`1` $\to$ `2`), requiring $O(1)$ extra space beyond the queue.

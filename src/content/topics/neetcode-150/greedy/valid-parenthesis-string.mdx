@@ -1,0 +1,185 @@
+---
+title: "Valid Parenthesis String"
+description: "LeetCode #678"
+category: "NeetCode 150"
+difficulty: "medium"
+subcategory: "Greedy"
+order: 8
+---
+
+## Problem Statement
+
+Given a string `s` containing only three types of characters: `'('`, `')'` and `'*'`, return `true` if `s` is **valid**.
+
+The following rules define a valid string:
+1. Any left parenthesis `'('` must have a corresponding right parenthesis `')'`.
+2. Any right parenthesis `')'` must have a corresponding left parenthesis `'('`.
+3. Left parenthesis `'('` must go before the corresponding right parenthesis `')'`.
+4. `'*'` could be treated as a single right parenthesis `')'` or a single left parenthesis `'('` or an empty string `""`.
+
+**Example 1:**
+```text
+Input: s = "()"
+Output: true
+```
+
+**Example 2:**
+```text
+Input: s = "(*)"
+Output: true
+```
+
+**Example 3:**
+```text
+Input: s = "(*))"
+Output: true
+Explanation: The '*' acts as '(' to match the second ')'.
+```
+
+**Constraints:**
+- `1 <= s.length <= 100`
+- `s[i]` is `'('`, `')'`, or `'*'`.
+
+
+## The Greedy Insight: Tracking the Open Bracket Range
+
+### The Classic Problem
+Without `'*'`, we simply maintain an integer `openCount`:
+- `'('` $\to$ `openCount++`
+- `')'` $\to$ `openCount--`
+- If `openCount < 0` at any time, return `false` (unmatched closing bracket).
+- At the end, return `openCount === 0`.
+
+### With Wildcards: An Interval $[minOpen, maxOpen]$
+Because `'*'` can take on three different identities, `openCount` is no longer a single scalar value. Instead, it becomes a **continuous interval** of possible unmatched left parenthesis counts:
+$$[\text{minOpen}, \text{maxOpen}]$$
+
+For each character:
+1. **If `'('`:** Both minimum and maximum open counts increase by 1.
+   - `minOpen++`, `maxOpen++`
+2. **If `')'`:** Both minimum and maximum open counts decrease by 1.
+   - `minOpen--`, `maxOpen--`
+3. **If `'*' (Wildcard):`**
+   - If `'*'` is `')'`: count decreases by 1 $\to$ `minOpen--`
+   - If `'*'` is `'('`: count increases by 1 $\to$ `maxOpen++`
+   - If `'*'` is `""`: count remains unchanged (falls safely between `minOpen` and `maxOpen`).
+
+### Critical Invariants and Boundary Clamping
+- **Too many `')'`:** If `maxOpen < 0`, even assuming **every single wildcard** was chosen as `'('`, we still have too many closing parentheses. Balancing is impossible $\to$ return `false` immediately.
+- **Negative `minOpen`:** If `minOpen < 0`, it means we assumed too many `'*'` were used as `')'`. But we are never *forced* to treat `'*'` as `')'`; we could simply treat it as an empty string `""`. Therefore, we clamp `minOpen = Math.max(minOpen, 0)`.
+- **Final Result:** At the end of the string, can the open count be exactly 0? Because the possible counts form a contiguous range without gaps, 0 is reachable if and only if:
+  $$\text{minOpen} == 0$$
+
+
+## Mental Model
+
+<div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start my-8">
+  <div>
+    <h3 className="text-center mb-2 text-sm font-semibold text-gray-400">1. Interval Transition Rules</h3>
+    ```mermaid
+    flowchart TD
+        Char["Read character: c"]
+        
+        Char -->|"c == '('"| Inc["minOpen++<br/>maxOpen++"]
+        Char -->|"c == ')'"| Dec["minOpen--<br/>maxOpen--"]
+        Char -->|"c == '*'"| Wild["minOpen-- (treated as ')')<br/>maxOpen++ (treated as '(')"]
+
+        Dec --> Validate{"maxOpen < 0 ?"}
+        Wild --> Clamp["Clamp: minOpen = max(minOpen, 0)"]
+        Validate -->|"Yes"| Invalid["Return false immediately"]
+        Validate -->|"No"| Clamp
+
+        style Invalid fill:#1e293b,stroke:#ef4444,stroke-width:2px
+        style Clamp fill:#1e293b,stroke:#10b981,stroke-width:2px
+        style Wild fill:#1e293b,stroke:#3b82f6,stroke-width:2px
+    ```
+    *Open count is tracked as a bounded range [minOpen, maxOpen].*
+  </div>
+
+  <div>
+    <h3 className="text-center mb-2 text-sm font-semibold text-gray-400">2. Step-by-Step on Example 3: "(*))"</h3>
+    ```mermaid
+    flowchart LR
+        subgraph Trace ["Tracing s = '(*))'"]
+            S0["Start<br/>[0, 0]"]
+            S1["'('<br/>[1, 1]"]
+            S2["'*'<br/>[0, 2]"]
+            S3["')'<br/>min: -1 -> 0<br/>[0, 1]"]
+            S4["')'<br/>min: -1 -> 0<br/>[0, 0]"]
+        end
+
+        S0 --> S1 --> S2 --> S3 --> S4
+
+        style S0 fill:#1e293b,stroke:#64748b,stroke-width:1px
+        style S1 fill:#1e293b,stroke:#3b82f6,stroke-width:2px
+        style S2 fill:#1e293b,stroke:#f59e0b,stroke-width:2px
+        style S3 fill:#1e293b,stroke:#3b82f6,stroke-width:2px
+        style S4 fill:#1e293b,stroke:#10b981,stroke-width:2px
+    ```
+    *At the end, minOpen == 0 proves a perfectly balanced path exists.*
+  </div>
+</div>
+
+
+## Optimal Solution ($O(N)$ Time, $O(1)$ Space)
+
+```javascript
+/**
+ * @param {string} s
+ * @return {boolean}
+ */
+var checkValidString = function(s) {
+    let minOpen = 0; // Minimum possible open '(' brackets
+    let maxOpen = 0; // Maximum possible open '(' brackets
+    
+    for (let i = 0; i < s.length; i++) {
+        const char = s[i];
+        
+        if (char === '(') {
+            minOpen++;
+            maxOpen++;
+        } else if (char === ')') {
+            minOpen--;
+            maxOpen--;
+        } else {
+            // Wildcard '*' can be:
+            // - ')' : minOpen decreases
+            // - '(' : maxOpen increases
+            // - ''  : count unchanged (already within [minOpen, maxOpen])
+            minOpen--;
+            maxOpen++;
+        }
+        
+        // If maxOpen < 0, even turning every '*' into '(' cannot save us
+        if (maxOpen < 0) {
+            return false;
+        }
+        
+        // minOpen cannot drop below 0 because '*' does not have to be ')'
+        if (minOpen < 0) {
+            minOpen = 0;
+        }
+    }
+    
+    // Valid if 0 open brackets is within the achievable range
+    return minOpen === 0;
+};
+```
+
+
+## Complexity Analysis
+
+| Metric | Complexity | Notes |
+| :--- | :--- | :--- |
+| **Time Complexity** | $O(N)$ | Single linear pass through the string of length $N$. |
+| **Space Complexity** | $O(1)$ | Uses only two scalar integer variables (`minOpen`, `maxOpen`). |
+| **Recursion / DP Alternative** | $O(N^2)$ | A 2D DP table `dp(index, openCount)` requires $O(N^2)$ time and space. |
+
+
+## Edge Cases
+
+- **Single Wildcard (`s = "*"`):** Treats `'*'` as `""`; returns `true`.
+- **Single Open / Close (`s = "("` or `s = ")"`):** Returns `false`.
+- **Closing Bracket First (`s = ")(*"`):** Index 0 triggers `maxOpen < 0`; returns `false` immediately.
+- **Wildcard Before Bracket (`s = "*(("`):** `minOpen = 2 !== 0` at end; returns `false`.
+- **All Wildcards (`s = "***"`):** Can all be treated as `""`; returns `true`.

@@ -1,0 +1,168 @@
+---
+title: "Merge Triplets to Form Target Triplet"
+description: "LeetCode #1899"
+category: "NeetCode 150"
+difficulty: "medium"
+subcategory: "Greedy"
+order: 6
+---
+
+## Problem Statement
+
+A **triplet** is an array of three integers. You are given a 2D integer array `triplets`, where `triplets[i] = [a_i, b_i, c_i]` describes the `i`-th triplet. You are also given an integer array `target = [x, y, z]` that describes the triplet you want to obtain.
+
+To obtain `target`, you may apply the following operation on `triplets` any number of times (possibly zero):
+- Choose two different indices `i` and `j` and update `triplets[j]` to become:
+  $$[\max(a_i, a_j), \max(b_i, b_j), \max(c_i, c_j)]$$
+
+Return `true` if it is possible to obtain the `target` triplet `[x, y, z]` as an element of `triplets`, or `false` otherwise.
+
+**Example 1:**
+```text
+Input: triplets = [[2,5,3],[1,8,4],[1,7,5]], target = [2,7,5]
+Output: true
+Explanation:
+Perform operation on triplets[0] and triplets[2]:
+[max(2, 1), max(5, 7), max(3, 5)] = [2, 7, 5]. Target is obtained.
+Note that triplets[1] = [1,8,4] was never used because 8 > 7.
+```
+
+**Example 2:**
+```text
+Input: triplets = [[3,4,5],[4,5,6]], target = [3,2,5]
+Output: false
+Explanation:
+It is impossible to have 2 as the second element since both triplets have a second element > 2.
+```
+
+**Example 3:**
+```text
+Input: triplets = [[2,5,3],[2,3,4],[1,2,5],[5,2,3]], target = [5,5,5]
+Output: true
+Explanation:
+1. Merge [2,5,3] and [2,3,4] -> [2,5,4]
+2. Merge with [1,2,5] -> [2,5,5]
+3. Merge with [5,2,3] -> [5,5,5]
+```
+
+**Constraints:**
+- `1 <= triplets.length <= 10^5`
+- `triplets[i].length == target.length == 3`
+- `1 <= a_i, b_i, c_i, x, y, z <= 1000`
+
+
+## The Greedy Insight: Pruning "Poisonous" Triplets
+
+### Observation 1: The Monotonic Nature of $\max()$
+The operation updates coordinates using $\max(A, B)$.
+- Values can **only grow or stay the same**; they can **never decrease**.
+- If we ever merge a triplet that has even a single component strictly greater than the target ($a > x$, $b > y$, or $c > z$), that coordinate will permanently exceed the target value!
+- Once exceeded, no future merge can ever reduce that coordinate back down.
+
+> **Rule 1 (Discard Poison):** Any triplet with $a > x$ OR $b > y$ OR $c > z$ is permanently invalid and must be completely ignored.
+
+### Observation 2: Merging All Safe Triplets is Always Optimal
+What about all remaining triplets where $a \le x$, $b \le y$, and $c \le z$?
+- Since none of their components exceed `target`, merging any number of them together can **never** overshoot the target values.
+- Therefore, there is no disadvantage to merging all valid triplets!
+- We simply need to verify that among all valid triplets:
+  1. At least one triplet provides $a == x$.
+  2. At least one triplet provides $b == y$.
+  3. At least one triplet provides $c == z$.
+
+If all three target coordinates can be contributed by at least one valid triplet, they can all be merged together to form `target = [x, y, z]`.
+
+
+## Mental Model
+
+<div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start my-8">
+  <div>
+    <h3 className="text-center mb-2 text-sm font-semibold text-gray-400">1. Triplet Filtering (Poison Detection)</h3>
+    ```mermaid
+    flowchart TD
+        T["Triplet: [a, b, c]"] --> Check{"a > x OR<br/>b > y OR<br/>c > z ?"}
+        
+        Check -->|"Yes"| Poison["Poisonous!<br/>(Discard Triplet)"]
+        Check -->|"No"| Safe["Safe Contributor<br/>(Keep & Check Matches)"]
+
+        style Poison fill:#1e293b,stroke:#ef4444,stroke-width:2px
+        style Safe fill:#1e293b,stroke:#10b981,stroke-width:2px
+        style Check fill:#1e293b,stroke:#3b82f6,stroke-width:2px
+    ```
+    *Any value exceeding target permanently poisons that coordinate.*
+  </div>
+
+  <div>
+    <h3 className="text-center mb-2 text-sm font-semibold text-gray-400">2. Coordinate Coverage Tracker</h3>
+    ```mermaid
+    flowchart LR
+        subgraph TargetCoverage ["Target Coverage Goals"]
+            C0["Match X: target[0]"]
+            C1["Match Y: target[1]"]
+            C2["Match Z: target[2]"]
+        end
+
+        Valid["Valid Triplet"] -->|"a == x"| C0
+        Valid -->|"b == y"| C1
+        Valid -->|"c == z"| C2
+
+        style C0 fill:#1e293b,stroke:#3b82f6,stroke-width:1px
+        style C1 fill:#1e293b,stroke:#3b82f6,stroke-width:1px
+        style C2 fill:#1e293b,stroke:#3b82f6,stroke-width:1px
+    ```
+    *All 3 coordinates must be satisfied by at least one safe triplet.*
+  </div>
+</div>
+
+
+## Optimal Solution ($O(N)$ Time, $O(1)$ Space)
+
+```javascript
+/**
+ * @param {number[][]} triplets
+ * @param {number[]} target
+ * @return {boolean}
+ */
+var mergeTriplets = function(triplets, target) {
+    const [tx, ty, tz] = target;
+    
+    let hasX = false;
+    let hasY = false;
+    let hasZ = false;
+    
+    for (const [a, b, c] of triplets) {
+        // Discard any triplet that exceeds target in any dimension
+        if (a > tx || b > ty || c > tz) {
+            continue;
+        }
+        
+        // Record which target values this safe triplet contributes
+        if (a === tx) hasX = true;
+        if (b === ty) hasY = true;
+        if (c === tz) hasZ = true;
+        
+        // Early exit: all 3 coordinates satisfied
+        if (hasX && hasY && hasZ) {
+            return true;
+        }
+    }
+    
+    return hasX && hasY && hasZ;
+};
+```
+
+
+## Complexity Analysis
+
+| Metric | Complexity | Notes |
+| :--- | :--- | :--- |
+| **Time Complexity** | $O(N)$ | Single linear scan through the `triplets` array of length $N$, with early exit as soon as all three dimensions are satisfied. |
+| **Space Complexity** | $O(1)$ | Constant extra space using only three boolean flags (`hasX`, `hasY`, `hasZ`). |
+
+
+## Edge Cases
+
+- **Exact Match Present (`triplets = [[2, 5, 3]], target = [2, 5, 3]`):** Single triplet matches all 3 dimensions immediately; returns `true`.
+- **Target Value Missing:** No valid triplet has coordinate matching `target[i]`; returns `false`.
+- **Target Value Only Appears in Poisonous Triplets (`triplets = [[2, 9, 3]], target = [2, 5, 3]`):** The `2` is present, but packaged with `9 > 5`, which disqualifies the triplet; returns `false`.
+- **Three Separate Disjoint Triplets:** Coordinate 0 from triplet A, coordinate 1 from triplet B, and coordinate 2 from triplet C; correctly accumulates and returns `true`.

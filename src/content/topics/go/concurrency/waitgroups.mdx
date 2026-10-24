@@ -16,21 +16,27 @@ A **`sync.WaitGroup`** is the standard way to block a function until a specific 
 
 ```mermaid
 flowchart TD
-    WG["WaitGroup\nCounter: 3"]
+    Main["Main Goroutine"]
+    WG["WaitGroup (Counter = 0)"]
     
-    Worker1["Worker 1"]
-    Worker2["Worker 2"]
-    Worker3["Worker 3"]
+    Main -->|"wg.Add(3)"| WG
+    WG -->|Spawns| Worker1["Worker 1"]
+    WG -->|Spawns| Worker2["Worker 2"]
+    WG -->|Spawns| Worker3["Worker 3"]
     
-    WG -->|wg.Add(3)| Start
+    Worker1 -->|"wg.Done()"| Dec1["Counter: 2"]
+    Worker2 -->|"wg.Done()"| Dec2["Counter: 1"]
+    Worker3 -->|"wg.Done()"| Dec3["Counter: 0"]
     
-    Worker1 -->|wg.Done()| Dec1["Counter: 2"]
-    Worker2 -->|wg.Done()| Dec2["Counter: 1"]
-    Worker3 -->|wg.Done()| Dec3["Counter: 0"]
+    Dec1 -.-> Dec2 -.-> Dec3
     
-    Wait["wg.Wait()"]
-    Wait -.->|Blocks until| Dec3
-    Dec3 -->|Unblocks| Finish["Main continues"]
+    Wait["Main calls wg.Wait()"]
+    Wait -.->|"Blocks while Counter > 0"| Dec3
+    Dec3 -->|"Counter reaches 0 (Unblocks)"| Finish["Main continues"]
+    
+    style WG fill:#1e293b,stroke:#3b82f6
+    style Wait fill:#1e293b,stroke:#f59e0b
+    style Finish fill:#1e293b,stroke:#10b981
 ```
 
 ## How It Works
@@ -81,8 +87,8 @@ func main() {
 
 ## Common Interview Questions
 
-### What happens if you pass a WaitGroup to a function by value instead of by pointer?
-This is a massive bug! If you do `func process(wg sync.WaitGroup)`, Go copies the WaitGroup. The worker will call `Done()` on its *copy*, but the main thread's WaitGroup counter will never decrease, resulting in a **Deadlock**. Always pass WaitGroups by pointer (`*sync.WaitGroup`), or use a closure.
+**Q: What happens if you pass a WaitGroup to a function by value instead of by pointer?**
+**A:** This is a massive bug! If you do `func process(wg sync.WaitGroup)`, Go copies the WaitGroup. The worker will call `Done()` on its *copy*, but the main thread's WaitGroup counter will never decrease, resulting in a **Deadlock**. Always pass WaitGroups by pointer (`*sync.WaitGroup`), or use a closure.
 
-### Why must you call `wg.Add()` outside of the goroutine?
-If you put `wg.Add(1)` *inside* the goroutine, the main thread might reach `wg.Wait()` before the goroutine even has a chance to start and call `Add(1)`. Since the counter is initially `0`, `Wait()` will unblock instantly and the program will exit prematurely.
+**Q: Why must you call `wg.Add()` outside of the goroutine?**
+**A:** If you put `wg.Add(1)` *inside* the goroutine, the main thread might reach `wg.Wait()` before the goroutine even has a chance to start and call `Add(1)`. Since the counter is initially `0`, `Wait()` will unblock instantly and the program will exit prematurely.

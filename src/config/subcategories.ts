@@ -199,5 +199,10 @@ export const SUBCATEGORY_ORDER: Record<string, string[]> = {
     "Heap",
     "Tries",
     "Graphs",
+    "1-D Dynamic Programming",
+    "2-D Dynamic Programming",
+    "Greedy",
+    "Intervals",
+    "Bit Manipulation",
   ]
 };

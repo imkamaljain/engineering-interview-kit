@@ -1,0 +1,178 @@
+---
+title: "Minimum Interval to Include Each Query"
+description: "LeetCode #1851"
+category: "NeetCode 150"
+difficulty: "hard"
+subcategory: "Intervals"
+order: 6
+---
+
+## Problem Statement
+
+You are given a 2D integer array `intervals`, where `intervals[i] = [left_i, right_i]` describes the $i^{\text{th}}$ interval starting at `left_i` and ending at `right_i` (inclusive). The **size** of an interval is defined as:
+$$\text{size} = \text{right}_i - \text{left}_i + 1$$
+
+You are also given an integer array `queries`. The answer to the $j^{\text{th}}$ query is the **minimum size** of an interval `i` such that `left_i <= queries[j] <= right_i`. If no such interval exists, the answer is `-1`.
+
+Return an array `ans` where `ans[j]` is the answer to the $j^{\text{th}}$ query.
+
+**Example 1:**
+```text
+Input: intervals = [[1,4],[2,4],[3,6],[4,4]], queries = [2,3,4,5]
+Output: [3,3,1,4]
+Explanation: The queries are processed as follows:
+- Query = 2: The interval [2,4] is the smallest interval containing 2. The answer is 4 - 2 + 1 = 3.
+- Query = 3: The interval [2,4] is the smallest interval containing 3. The answer is 4 - 2 + 1 = 3.
+- Query = 4: The interval [4,4] is the smallest interval containing 4. The answer is 4 - 4 + 1 = 1.
+- Query = 5: The interval [3,6] is the smallest interval containing 5. The answer is 6 - 3 + 1 = 4.
+```
+
+**Example 2:**
+```text
+Input: intervals = [[2,3],[2,5],[1,8],[20,25]], queries = [2,19,5,22]
+Output: [2,-1,4,6]
+Explanation: The queries are processed as follows:
+- Query = 2: The interval [2,3] is the smallest interval containing 2. The answer is 3 - 2 + 1 = 2.
+- Query = 19: None of the intervals contain 19. The answer is -1.
+- Query = 5: The interval [2,5] is the smallest interval containing 5. The answer is 5 - 2 + 1 = 4.
+- Query = 22: The interval [20,25] is the smallest interval containing 22. The answer is 25 - 20 + 1 = 6.
+```
+
+**Constraints:**
+- `1 <= intervals.length <= 10^5`
+- `1 <= queries.length <= 10^5`
+- `intervals[i].length == 2`
+- `1 <= left_i <= right_i <= 10^7`
+- `1 <= queries[j] <= 10^7`
+
+
+## Why Brute Force Fails ($O(Q \times N)$)
+
+Evaluating each of the $10^5$ queries against all $10^5$ intervals requires:
+$$10^5 \times 10^5 = 10^{10} \text{ operations}$$
+
+This will trigger a severe **Time Limit Exceeded (TLE)**.
+
+To solve this efficiently, we leverage two powerful architectural ideas:
+1. **Offline Queries (Sorting Queries):** We don't have to process queries in their original order. We can sort them, process them monotonically from left to right, and map the answers back to their original positions.
+2. **Min-Heap (Priority Queue):** As we sweep from left to right, we store active intervals in a Min-Heap keyed by their **size**, popping the smallest size on demand in $O(1)$.
+
+
+## Approach: Sweep-line + Min-Heap
+
+### Step-by-Step Algorithm:
+1. **Sort Intervals:** Sort `intervals` by `left` boundary ascending.
+2. **Sort Queries with Original Indices:** Create pairs `[queryVal, originalIndex]` and sort them ascending by `queryVal`.
+3. **Initialize Min-Heap:** Stores `[size, right]`, ordered by `size` ascending.
+4. **Iterate through Sorted Queries `[q, origIdx]`:**
+   - **Add Candidate Intervals:** While the next interval has `left <= q`, it could potentially cover `q`. Calculate its `size = right - left + 1` and push `[size, right]` into the Min-Heap.
+   - **Prune Expired Intervals:** While the heap's top interval has `right < q`, it ended before `q`. Because future queries are even larger than `q`, this interval can **never cover any future query either**! Dequeue and discard it permanently.
+   - **Record Answer:** After pruning, the top of the Min-Heap is guaranteed to be the interval of minimum size that currently covers `q`.
+     - If the heap has items: `ans[origIdx] = minHeap.front().size`.
+     - If the heap is empty: `ans[origIdx] = -1`.
+5. Return `ans`.
+
+
+## Mental Model
+
+<div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start my-8">
+  <div>
+    <h3 className="text-center mb-2 text-sm font-semibold text-gray-400">1. Offline Chronological Sweep</h3>
+    ```mermaid
+    flowchart TD
+        Q["Sort Queries: 2 -> 3 -> 4 -> 5"]
+        I["Sort Intervals: [1,4] -> [2,4] -> [3,6] -> [4,4]"]
+        
+        Q --- Sweep["Sweep Line moves Left -> Right"]
+        I --- Sweep
+        
+        style Q fill:#1e293b,stroke:#3b82f6,stroke-width:2px
+        style I fill:#1e293b,stroke:#f59e0b,stroke-width:2px
+        style Sweep fill:#1e293b,stroke:#10b981,stroke-width:2px
+    ```
+    *Sorting both queries and intervals allows a one-directional sweep.*
+  </div>
+  
+  <div>
+    <h3 className="text-center mb-2 text-sm font-semibold text-gray-400">2. Heap Lifecycle</h3>
+    ```mermaid
+    flowchart TD
+        Add["Intervals with left <= q:\nPush [size, right] into Min-Heap"]
+        Prune["Heap root has right < q:\nPop expired intervals"]
+        Top["Min-Heap Top = Smallest Valid Interval"]
+        
+        Add --> Prune --> Top
+        
+        style Add fill:#1e293b,stroke:#3b82f6,stroke-width:2px
+        style Prune fill:#1e293b,stroke:#ef4444,stroke-width:2px
+        style Top fill:#1e293b,stroke:#10b981,stroke-width:2px
+    ```
+    *Each interval enters and exits the heap at most once.*
+  </div>
+</div>
+
+
+## Solution
+
+```javascript
+/**
+ * @param {number[][]} intervals
+ * @param {number[]} queries
+ * @return {number[]}
+ */
+var minInterval = function(intervals, queries) {
+    // 1. Sort intervals by start boundary ascending
+    intervals.sort((a, b) => a[0] - b[0]);
+
+    // 2. Pair each query with its original index, then sort by query value
+    const sortedQueries = queries
+        .map((q, idx) => [q, idx])
+        .sort((a, b) => a[0] - b[0]);
+
+    // 3. Min-Heap ordered by interval size (entry: [size, right])
+    const minHeap = new MinPriorityQueue((item) => item[0]);
+
+    const ans = new Array(queries.length);
+    let i = 0; // Pointer in intervals array
+
+    // Helper to safely read heap top
+    const peek = () => {
+        const top = minHeap.front();
+        return top.element !== undefined ? top.element : top;
+    };
+
+    // 4. Process each query in ascending order
+    for (const [q, origIdx] of sortedQueries) {
+        // Step A: Push all intervals starting at or before q into the heap
+        while (i < intervals.length && intervals[i][0] <= q) {
+            const [left, right] = intervals[i];
+            const size = right - left + 1;
+            minHeap.enqueue([size, right]);
+            i++;
+        }
+
+        // Step B: Pop all intervals that expired before q (right < q)
+        while (!minHeap.isEmpty() && peek()[1] < q) {
+            minHeap.dequeue();
+        }
+
+        // Step C: The root of the Min-Heap is the smallest valid interval
+        ans[origIdx] = minHeap.isEmpty() ? -1 : peek()[0];
+    }
+
+    return ans;
+};
+```
+
+
+## Complexity Analysis
+
+- **Time Complexity:** $O(N \log N + Q \log Q)$
+  - Sorting `intervals` takes $O(N \log N)$.
+  - Sorting `queries` takes $O(Q \log Q)$.
+  - Every interval is added to `minHeap` **at most once** and removed **at most once**: $2 \times N \times O(\log N) = O(N \log N)$.
+  - Each of the $Q$ queries performs $O(1)$ peek operations.
+  - Overall time: $O(N \log N + Q \log Q)$, easily handling $10^5$ intervals and queries in under 300ms.
+- **Space Complexity:** $O(N + Q)$
+  - $O(Q)$ to store `sortedQueries` and the `ans` array.
+  - $O(N)$ for the `minHeap` storing up to $N$ active candidate intervals.
