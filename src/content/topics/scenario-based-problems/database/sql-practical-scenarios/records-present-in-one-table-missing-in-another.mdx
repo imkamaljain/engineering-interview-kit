@@ -1,0 +1,105 @@
+---
+title: "Find Records Present in One Table but Missing in Another"
+description: "Comparing NOT EXISTS, EXCEPT/MINUS, LEFT JOIN WHERE NULL, and query plan efficiency."
+category: "scenario-based-problems"
+subcategory: "Database: SQL Practical Scenarios"
+order: 8
+---
+
+## Fast Revision (10-Second Recall)
+- **The Task:** Find all rows in `Table A` that have no matching record in `Table B`.
+- **Option 1: `NOT EXISTS` (Fastest, cleanest):**
+- `SELECT * FROM a WHERE NOT EXISTS (SELECT 1 FROM b WHERE b.a_id = a.id);`
+- **Option 2: `LEFT JOIN ... WHERE b.id IS NULL`:**
+- `SELECT a.* FROM a LEFT JOIN b ON a.id = b.a_id WHERE b.id IS NULL;`
+- **Option 3: Set Difference (`EXCEPT` / `MINUS`):**
+- `SELECT id FROM a EXCEPT SELECT a_id FROM b;` (Returns only the diffed columns; deduplicates automatically; cannot return full row metadata cleanly).
+- **Option 4: `NOT IN` (Warning!):**
+- Dangerous if `b.a_id` contains any NULL values!
+
+## The 30-Second Spoken Script
+"To find records present in one table but missing in another, there are three primary approaches in SQL: NOT EXISTS, LEFT JOIN with a NULL check, and the EXCEPT set operator.
+
+My default production choice is NOT EXISTS:
+SELECT a.id, a.name, a.created_at
+FROM customers a
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM accounts b
+  WHERE b.customer_id = a.id
+);
+
+Here is why NOT EXISTS is preferred:
+First, it is 100% null-safe. Unlike NOT IN, which completely collapses and returns zero rows if the subquery returns even a single NULL value, NOT EXISTS evaluates boolean existence on each row.
+Second, query optimizers execute NOT EXISTS as a Hash Anti-Join or Merge Anti-Join. It short-circuits as soon as a single matching record is discovered, avoiding unnecessary scanning.
+
+The second common approach is a LEFT JOIN:
+SELECT a.id, a.name
+FROM customers a
+LEFT JOIN accounts b ON a.id = b.customer_id
+WHERE b.customer_id IS NULL;
+
+While LEFT JOIN produces the same result, it can consume more memory on large datasets because it first generates the outer join before filtering out non-null rows.
+
+Finally, the EXCEPT or MINUS set operator compares two query results directly:
+SELECT id FROM customers EXCEPT SELECT customer_id FROM accounts;
+While great for quick ad-hoc CLI diffs, EXCEPT discards non-projected columns and forces a sorting pass to eliminate duplicates."
+
+## Scenario / Problem Context
+Data reconciliation, ETL auditing, and orphan record detection (e.g., finding users without profiles, or order items with missing parent orders) require diffing two tables. The interviewer tests your knowledge of set operations vs relational joins.
+
+## Architectural Workflow / Sequence
+```mermaid
+flowchart LR
+    subgraph TableA["Table A (Customers)"]
+        A1["Cust 1"]
+        A2["Cust 2"]
+        A3["Cust 3"]
+    end
+
+    subgraph TableB["Table B (Accounts)"]
+        B1["Account -> Cust 1"]
+        B2["Account -> Cust 2"]
+    end
+
+    A1 -. "Match found" .-> B1
+    A2 -. "Match found" .-> B2
+    A3 ==> "NO MATCH FOUND in Table B!" ==> Diff["Customer 3: Orphaned Record!"]
+```
+
+## Deep-Dive Analysis & Root Causes
+
+| Method | Syntax | ExecutionType | BestFor |
+| --- | --- | --- | --- |
+| `NOT EXISTS` | `WHERE NOT EXISTS (SELECT 1 FROM b WHERE b.a_id = a.id)` | Anti-Join / Short Circuit | Production APIs, high performance, full row projection
+`LEFT JOIN ... WHERE NULL` | `LEFT JOIN b ON a.id = b.a_id WHERE b.id IS NULL` | Hash Outer Join + Filter | Cases where you also need some fields from table B
+`EXCEPT` (or `MINUS`) | `SELECT id FROM a EXCEPT SELECT a_id FROM b` | Set Difference (Sort + Unique) | Quick database verification scripts and ETL assertions |
+
+
+## Practical Debugging Commands & Code
+```sql
+-- 1. Optimal Anti-Join using NOT EXISTS:
+SELECT u.id, u.email, u.created_at
+FROM users u
+WHERE NOT EXISTS (
+    SELECT 1 
+    FROM profiles p 
+    WHERE p.user_id = u.id
+);
+
+-- 2. Anti-Join using LEFT JOIN with IS NULL filter:
+SELECT u.id, u.email
+FROM users u
+LEFT JOIN profiles p ON u.id = p.user_id
+WHERE p.user_id IS NULL;
+
+-- 3. Set operator EXCEPT (PostgreSQL / SQLite) or MINUS (Oracle):
+SELECT id FROM users
+EXCEPT
+SELECT user_id FROM profiles;
+```
+
+## Prevention & Senior Best Practices
+- **Enforce Foreign Key Constraints:** Prevent orphan records in the first place by configuring `FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE`.
+- **Add Indexes on Foreign Keys:** Ensure `profiles(user_id)` is indexed so the subquery executes via an index seek rather than a full table scan.
+- **Run Scheduled Integrity Audits:** Run NOT EXISTS integrity checks nightly to detect orphaned data caused by legacy migrations or unconstrained tables.

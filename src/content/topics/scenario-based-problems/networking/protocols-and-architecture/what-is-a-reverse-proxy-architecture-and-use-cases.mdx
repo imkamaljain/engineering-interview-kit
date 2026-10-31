@@ -1,0 +1,95 @@
+---
+title: "What is a Reverse Proxy: Architecture, Security & Performance"
+description: "Architecture of reverse proxies (Nginx, HAProxy, Envoy) versus forward proxies, covering load balancing, SSL termination, caching, and request routing."
+importance: "HIGH"
+difficulty: "MEDIUM"
+revisionTime: 4
+category: "Scenario Based Problems"
+subcategory: "Networking: Protocols & Architecture"
+order: 7
+---
+
+## Fast Revision (10-Second Recall)
+- Forward Proxy vs Reverse Proxy: Forward Proxy sits in front of Clients (masks client identity, enforces corporate firewalls); Reverse Proxy sits in front of Servers (masks server identity, intercepts incoming internet traffic).
+- Top 5 Responsibilities: 1) SSL/TLS Termination; 2) Load Balancing; 3) Static Asset Caching; 4) Security & DDoS Shielding; 5) Compression (Gzip / Brotli).
+- Common Technologies: Nginx (event-driven C), HAProxy (high-throughput TCP/HTTP load balancing), Envoy (cloud-native dynamic xDS), Caddy (automatic TLS).
+- Header Injection: Injects `X-Forwarded-For` (client IP), `X-Forwarded-Proto` (https), and `X-Request-ID` for distributed tracing.
+- Performance Benefit: Offloads slow client connections and SSL handshakes from application worker processes.
+
+## The 30-Second Spoken Script
+"A reverse proxy is an intermediary server that sits between external clients and backend application servers, intercepting all incoming requests.
+
+The easiest way to understand the difference between a forward proxy and a reverse proxy is the direction of protection: A forward proxy protects clients?for example, a corporate proxy that filters employee web browsing. A reverse proxy protects servers: external clients believe they are communicating directly with the origin, while the reverse proxy hides the internal backend network.
+
+In production architecture, reverse proxies provide four critical capabilities:
+
+First, Security and Isolation: Backend servers run on private IP subnets with no public internet route. The reverse proxy acts as the single exposed public entry point, filtering malicious payloads and terminating DDoS attacks.
+
+Second, SSL/TLS Termination: The proxy decrypts incoming HTTPS traffic at the edge, freeing application runtimes?like Node.js, Python, or Java?from burning CPU on TLS cryptography.
+
+Third, Performance Offloading: The reverse proxy compresses payloads with Gzip or Brotli, caches static assets directly in RAM, and absorbs slow mobile client connections using asynchronous socket buffers.
+
+Fourth, Routing and Load Balancing: It distributes traffic across multiple application instances and coordinates zero-downtime rolling deployments."
+
+## Scenario / Problem Context
+You are deploying a Node.js microservice architecture to production. A junior developer suggests exposing Node.js directly to the public internet on port 80/443 without Nginx or Envoy. The interviewer asks you to justify why a reverse proxy is mandatory.
+
+## Architectural Workflow / Sequence
+```mermaid
+flowchart LR
+    Clients["External Internet Clients"] -->|Public HTTPS (Port 443)| RP["Reverse Proxy (Nginx / Envoy)<br/>SSL Termination, Caching, WAF"]
+    
+    subgraph PrivateVPC["Private Cloud VPC (Zero Public IPs)"]
+      RP -->|Internal HTTP / mTLS| Pod1["App Pod 1 (Node.js)"]
+      RP -->|Internal HTTP / mTLS| Pod2["App Pod 2 (Node.js)"]
+      RP -->|Internal HTTP / mTLS| Pod3["App Pod 3 (Node.js)"]
+    end
+```
+
+## Deep-Dive Analysis & Root Causes
+### The Slowloris Attack & Slow Client Buffering
+In single-threaded or thread-per-request runtimes (like Node.js or older Tomcat), an attacker can open 500 connections and send 1 byte every 10 seconds. The application thread pool exhausts immediately. A reverse proxy like Nginx uses an asynchronous non-blocking event loop: it buffers the slow incoming request completely in proxy memory before dispatching the assembled request to the application in 1 millisecond, shielding application workers from socket starvation.
+
+### Header Spoofing and X-Forwarded-For Security
+When an application inspects client IP for rate limiting, checking `req.headers["x-forwarded-for"]` is dangerous if an external client sent a spoofed header. The reverse proxy must be configured to append the real socket IP (`$remote_addr`) and the application must configure trusted proxy counts to parse only the verified upstream IP.
+
+### Dynamic Upstream Re-resolution
+In Kubernetes or AWS ECS, container IPs change constantly. If a traditional reverse proxy resolves the DNS name of an upstream service once at startup, traffic will continue routing to dead container IPs after a deployment. Modern proxies use active service discovery or configure DNS resolvers with valid TTLs (`resolver 10.96.0.10 valid=10s;`).
+
+## Practical Debugging Commands & Code
+### Production Nginx Reverse Proxy Configuration
+```bash
+# Production Nginx Reverse Proxy Configuration
+upstream backend_app {
+    server 10.0.1.10:3000 max_fails=3 fail_timeout=10s;
+    server 10.0.1.11:3000 max_fails=3 fail_timeout=10s;
+    keepalive 32; # Maintain 32 persistent idle connections
+}
+
+server {
+    listen 443 ssl http2;
+    server_name api.example.com;
+
+    ssl_certificate /etc/ssl/certs/fullchain.pem;
+    ssl_certificate_key /etc/ssl/private/privkey.pem;
+
+    location / {
+        proxy_pass http://backend_app;
+        proxy_http_version 1.1;
+        proxy_set_header Connection ""; # Enable Keep-Alive to backend
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        
+        proxy_connect_timeout 2s;
+        proxy_read_timeout 10s;
+    }
+}
+```
+
+## Prevention & Senior Best Practices
+- Never Expose Application Runtimes Directly: Always place a battle-tested reverse proxy (Nginx, Envoy, ALB) in front of Node.js, Python, or Go runtimes.
+- Enable Upstream Keep-Alive: Configure `proxy_http_version 1.1; proxy_set_header Connection "";` in Nginx to prevent opening a new TCP socket for every upstream call.
+- Enforce Request Size Limits: Set `client_max_body_size 5M` at the proxy layer to prevent memory exhaustion from unexpected large payload uploads.
+- Harmonize Timeouts: Ensure reverse proxy read timeouts are shorter than edge load balancer timeouts to avoid dangling gateway connections.

@@ -1,0 +1,193 @@
+---
+title: "Word Break"
+description: "LeetCode #139"
+category: "NeetCode 150"
+difficulty: "medium"
+subcategory: "1-D Dynamic Programming"
+order: 10
+---
+
+## Problem Statement
+
+Given a string `s` and a dictionary of strings `wordDict`, return `true` if `s` can be segmented into a space-separated sequence of one or more dictionary words.
+
+**Note:** The same word in the dictionary may be reused multiple times in the segmentation.
+
+**Example 1:**
+```text
+Input: s = "leetcode", wordDict = ["leet","code"]
+Output: true
+Explanation: Return true because "leetcode" can be segmented as "leet code".
+```
+
+**Example 2:**
+```text
+Input: s = "applepenapple", wordDict = ["apple","pen"]
+Output: true
+Explanation: Return true because "applepenapple" can be segmented as "apple pen apple".
+Note that you are allowed to reuse a dictionary word.
+```
+
+**Example 3:**
+```text
+Input: s = "catsandog", wordDict = ["cats","dog","sand","and","cat"]
+Output: false
+```
+
+**Constraints:**
+- `1 <= s.length <= 300`
+- `1 <= wordDict.length <= 1000`
+- `1 <= wordDict[i].length <= 20`
+- `s` and `wordDict[i]` consist of only lowercase English letters.
+- All the strings of `wordDict` are **unique**.
+
+
+## The Dynamic Programming Intuition
+
+### Defining the State
+Let $\text{dp}[i]$ be a boolean representing whether the prefix of length $i$ (`s[0 ... i - 1]`) can be segmented into valid dictionary words:
+- $\text{dp}[0] = \text{true}$: An empty string prefix is trivially valid (the base case).
+- Our final goal is to determine if $\text{dp}[n]$ is true, where $n = s.\text{length}$.
+
+### The Recurrence Relation
+For any prefix of length $i$, it can be segmented if there exists **some split point $j$** ($0 \le j < i$) such that:
+1. The prefix up to $j$ is valid: $\text{dp}[j] == \text{true}$
+2. The remaining word from $j$ to $i$ exists in the dictionary: $s[j \dots i - 1] \in \text{wordDict}$
+
+$$\text{dp}[i] = \bigvee_{j=0}^{i-1} (\text{dp}[j] \;\land\; (s[j \dots i - 1] \in \text{wordDict}))$$
+
+Once any valid split point $j$ is found that satisfies both conditions, $\text{dp}[i]$ becomes `true`, and we can immediately break early to the next prefix length.
+
+
+## Mental Model
+
+<div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start my-8">
+  <div>
+    <h3 className="text-center mb-2 text-sm font-semibold text-gray-400">1. Prefix Segmentation Chain ("leetcode")</h3>
+    ```mermaid
+    flowchart LR
+        D0["dp[0] = true<br/>(empty)"]
+        D4["dp[4] = true<br/>('leet')"]
+        D8["dp[8] = true<br/>('code')"]
+
+        D0 -->|"Word 'leet' found"| D4
+        D4 -->|"Word 'code' found"| D8
+
+        style D0 fill:#1e293b,stroke:#64748b,stroke-width:1px
+        style D4 fill:#1e293b,stroke:#3b82f6,stroke-width:1px
+        style D8 fill:#1e293b,stroke:#10b981,stroke-width:2px
+    ```
+    *Each valid prefix enables matching the subsequent word.*
+  </div>
+
+  <div>
+    <h3 className="text-center mb-2 text-sm font-semibold text-gray-400">2. Dead End Detection ("catsandog")</h3>
+    ```mermaid
+    flowchart TD
+        Root["dp[0] = true"]
+        
+        Root -->|"Match 'cat'"| C3["dp[3] = true ('cat')"]
+        Root -->|"Match 'cats'"| C4["dp[4] = true ('cats')"]
+        
+        C3 -->|"Match 'sand'"| C7["dp[7] = true ('catsand')"]
+        C4 -->|"Match 'and'"| C7
+        
+        C7 -.->|"No 'og' in dict!"| Fail["dp[9] remains FALSE"]
+
+        style Root fill:#1e293b,stroke:#64748b,stroke-width:1px
+        style C7 fill:#1e293b,stroke:#3b82f6,stroke-width:1px
+        style Fail fill:#1e293b,stroke:#ef4444,stroke-width:2px
+    ```
+    *All segmentation paths stall before reaching index 9.*
+  </div>
+</div>
+
+
+## Solution 1: Bottom-Up DP with Dictionary Matching ($O(N \cdot M)$ Time) - Recommended
+
+Instead of checking every possible substring $s[j \dots i]$, for each position $i$ we check which words in `wordDict` can end at $i$:
+
+```javascript
+/**
+ * @param {string} s
+ * @param {string[]} wordDict
+ * @return {boolean}
+ */
+var wordBreak = function(s, wordDict) {
+    const n = s.length;
+    // dp[i] is true if prefix s[0...i-1] can be segmented
+    const dp = new Uint8Array(n + 1);
+    dp[0] = 1; // Base case: empty string
+    
+    for (let i = 1; i <= n; i++) {
+        for (const word of wordDict) {
+            const len = word.length;
+            
+            // If the word fits before index i and the prefix before it is valid
+            if (i >= len && dp[i - len] === 1) {
+                // Check if s ending at index i matches the word
+                if (s.startsWith(word, i - len)) {
+                    dp[i] = 1;
+                    break; // Early exit: prefix of length i is confirmed valid
+                }
+            }
+        }
+    }
+    
+    return dp[n] === 1;
+};
+```
+
+> **Why `s.startsWith(word, i - len)`?**  
+> `s.startsWith(word, offset)` compares characters directly in-place without creating intermediate substring memory allocations (`s.substring()`), making it significantly faster in V8.
+
+
+## Solution 2: Top-Down Recursion with Memoization
+
+```javascript
+/**
+ * @param {string} s
+ * @param {string[]} wordDict
+ * @return {boolean}
+ */
+var wordBreakMemo = function(s, wordDict) {
+    const wordSet = new Set(wordDict);
+    const memo = new Map();
+    
+    const canBreak = (start) => {
+        if (start === s.length) return true;
+        if (memo.has(start)) return memo.get(start);
+        
+        for (let end = start + 1; end <= s.length; end++) {
+            const prefix = s.substring(start, end);
+            
+            if (wordSet.has(prefix) && canBreak(end)) {
+                memo.set(start, true);
+                return true;
+            }
+        }
+        
+        memo.set(start, false);
+        return false;
+    };
+    
+    return canBreak(0);
+};
+```
+
+
+## Complexity Analysis
+
+| Metric | Complexity | Notes |
+| :--- | :--- | :--- |
+| **Time Complexity** | $O(N \times M \times L)$ | Where $N = s.\text{length}$, $M = \text{wordDict.length}$, and $L = \text{max word length} \le 20$. In practice, early exits make it run in $< 5\text{ms}$. |
+| **Space Complexity** | $O(N)$ | A 1D boolean array (`Uint8Array`) of size $N + 1$. |
+| **Trie Optimization** | $O(N^2 + \text{Trie})$ | A Trie allows matching characters forward from $i$, avoiding redundant dictionary iteration. |
+
+
+## Edge Cases
+
+- **Single Character Match (`s = "a"`, `wordDict = ["a"]`):** `dp[1] = 1`; returns `true`.
+- **Word Reuse (`s = "aaaa"`, `wordDict = ["a"]`):** Reuses `"a"` 4 times; returns `true`.
+- **Dead End Suffix (`s = "catsandog"`):** Correctly branches through `"cat"` and `"cats"`, but stops when `"og"` cannot be matched.
+- **Dictionary Words Longer than String:** Guard `i >= len` cleanly skips words that cannot fit.

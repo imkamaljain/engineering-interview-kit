@@ -1,0 +1,98 @@
+---
+title: "Designing Disaster Recovery: RPO & RTO Multi-Region Strategies"
+description: "System design for enterprise Disaster Recovery (DR) architectures, contrasting Backup & Restore, Pilot Light, Warm Standby, and Multi-Site Active-Active."
+importance: "HIGH"
+difficulty: "HARD"
+revisionTime: 5
+category: "Scenario Based Problems"
+subcategory: "System Design: Scale & Resilience"
+order: 14
+---
+
+## Fast Revision (10-Second Recall)
+- RPO (Recovery Point Objective): Maximum acceptable data loss measured in time (e.g., RPO = 5 mins means at most 5 minutes of data lost).
+- RTO (Recovery Time Objective): Maximum acceptable downtime before service is restored (e.g., RTO = 15 mins means back online within 15 minutes).
+- DR Strategies (Cost vs Speed): 1) Backup & Restore (Hours RTO, Hours RPO - Cheap); 2) Pilot Light (Mins RTO, Mins RPO); 3) Warm Standby (Seconds RTO); 4) Active-Active Multi-Site (Near-Zero RTO/RPO - Expensive).
+- Data Replication Modes: Asynchronous Replication (low latency, minor RPO risk) vs Synchronous Multi-Region Replication (zero RPO, latency overhead).
+- DNS Failover: Automated Route 53 health-checked weighted DNS routing with low TTL (60s).
+
+## The 30-Second Spoken Script
+"Designing a Disaster Recovery (DR) architecture starts by aligning business requirements with technical cost: specifically defining our Recovery Point Objective (RPO) and Recovery Time Objective (RTO).
+
+For mission-critical applications requiring sub-minute RTO and near-zero RPO, we implement the Warm Standby or Active-Active Multi-Region strategy.
+
+In Warm Standby, our primary region (e.g., us-east-1) handles 100% of production traffic. Our secondary region (e.g., us-west-2) maintains a continuously synchronized data tier with streaming cross-region database replication, accompanied by a scaled-down fleet of compute pods.
+
+Route 53 continuously probes the primary region's ingress health. If a catastrophic disaster strikes?such as a major cloud provider regional network failure?Route 53 automated health checks detect the failure within 30 seconds and update DNS records to point to Region 2.
+
+Simultaneously, an automated runbook script triggers the secondary database to promote itself to primary Master, while Kubernetes HPA scales up the compute pods to 100% capacity within 90 seconds, achieving a verified RTO of under 2 minutes.
+
+We conduct quarterly unannounced Disaster Recovery drills to validate that automated failovers execute seamlessly."
+
+## Scenario / Problem Context
+Design a disaster recovery plan for an enterprise healthcare SaaS platform that must satisfy a strict RPO of under 1 minute and an RTO of under 5 minutes during a total primary cloud region failure.
+
+## Architectural Workflow / Sequence
+```mermaid
+flowchart TD
+    Users["Customer Traffic"] --> Route53["Route 53 DNS (Failover Routing | TTL: 60s)"]
+    
+    Route53 -- "Primary (Healthy)" --> ALB1["Primary Region: us-east-1"]
+    Route53 -.->|Auto Failover on Outage| ALB2["Secondary Region: us-west-2"]
+    
+    subgraph PrimaryRegion["Primary Region (us-east-1)"]
+      ALB1 --> K8s1["K8s Cluster (100% Capacity)"]
+      K8s1 --> DB1[("PostgreSQL Master DB")]
+    end
+    
+    subgraph SecondaryRegion["DR Region: us-west-2 (Warm Standby)"]
+      ALB2 --> K8s2["K8s Cluster (Scaled Down to 20% Capacity)"]
+      K8s2 --> DB2[("PostgreSQL Read Replica<br/>(Cross-Region Streaming Sync)")]
+    end
+    
+    DB1 -->|Cross-Region Streaming Replication (RPO < 5s)| DB2
+    
+    Route53 -.->|Health Check Probe| ALB1
+```
+
+## Deep-Dive Analysis & Root Causes
+### The 4 Disaster Recovery Tiers Compared
+1) Backup & Restore: Daily snapshots to S3 (RTO: 12-24h, RPO: 24h, lowest cost); 2) Pilot Light: Core database replicated continuously, compute deployed with 0 instances until disaster (RTO: 30-60m, RPO: < 1m); 3) Warm Standby: Scaled-down compute fleet running 24/7 in DR region (RTO: < 5m, RPO: < 1m); 4) Multi-Site Active-Active: Full compute running in both regions taking live traffic (RTO: 0s, RPO: 0s, highest cost).
+
+### The "Split-Brain" Promotion Risk
+When Region 1 becomes unreachable from Region 2, Region 2 promotes its database to Master. If Region 1 was merely suffering a transient network partition and continues accepting writes from local clients, the database suffers "Split-Brain", creating diverging conflicting transaction histories. Fencing tokens and automated STONITH (Shoot The Other Node In The Head) protocols prevent concurrent masters.
+
+### DNS Caching and RTO Limits
+Even if Route 53 switches DNS in 10 seconds, recursive ISP DNS resolvers frequently ignore TTL records and cache DNS for 15 to 30 minutes. Using an Anycast IP network (like Cloudflare or AWS Global Accelerator) eliminates DNS caching lag by routing traffic at the IP layer with BGP route withdraws.
+
+## Practical Debugging Commands & Code
+### PostgreSQL Standby Promotion & AWS Failover CLI
+```bash
+# 1. Promote PostgreSQL Standby Replica to Master in DR Region
+pg_ctl promote -D /var/lib/postgresql/data
+
+# 2. Scale Kubernetes deployment in DR region from 20% to 100%
+kubectl scale deployment/core-api --replicas=50 -n prod --context=dr-cluster
+
+# 3. Force DNS failover via AWS CLI
+aws route53 change-resource-record-sets --hosted-zone-id Z123456 \
+  --change-batch '{
+    "Changes": [{
+      "Action": "UPSERT",
+      "ResourceRecordSet": {
+        "Name": "api.example.com",
+        "Type": "A",
+        "SetIdentifier": "Primary-Region",
+        "Failover": "PRIMARY",
+        "TTL": 60,
+        "ResourceRecords": [{"Value": "52.95.245.1"}]
+      }
+    }]
+  }'
+```
+
+## Prevention & Senior Best Practices
+- Quarterly DR GameDays: Conduct mandatory failover exercises in production or staging where an entire region is severed to verify RTO/RPO.
+- S3 Cross-Region Replication (CRR): Replicate all uploaded assets and backups to a secondary AWS region with S3 Object Lock.
+- Infrastructure as Code (Terraform) Parity: Maintain identical declarative Terraform definitions for both regions to prevent configuration drift.
+- Automated Standby Health Verification: Continuously monitor cross-region replication lag; alert if lag exceeds 30 seconds.

@@ -9,7 +9,8 @@ export const CATEGORY_DISPLAY_NAMES: Record<string, string> = {
   'sql': 'SQL',
   'system-design': 'System Design',
   'typescript': 'TypeScript',
-  'neetcode-150': 'NeetCode 150'
+  'neetcode-150': 'NeetCode 150',
+  'scenario-based-problems': 'Scenario Based Problems'
 };
 
 export const ALL_CATEGORIES = Object.keys(CATEGORY_DISPLAY_NAMES);

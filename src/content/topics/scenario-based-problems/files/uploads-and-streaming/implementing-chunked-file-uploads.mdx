@@ -1,0 +1,232 @@
+---
+title: "Implementing Chunked File Uploads: Browser File Slicing, Range Headers, and Server Stitching"
+description: "Master chunked file upload architecture: frontend Blob.slice(), checksum hashing (SHA-256), Content-Range headers, out-of-order chunk assembly, and S3 multipart coordination."
+category: "scenario-based-problems"
+subcategory: "Files: Uploads & Streaming"
+tags: ["file-upload", "chunked-upload", "blobs", "range-headers", "multipart", "resilience"]
+date: 2026-10-31
+---
+
+## Fast Revision (10-Second Recall)
+- **Why Chunk?** Monolithic file uploads fail on unstable networks (if packet drops at 99%, you restart from 0%). Chunking slices files into discrete 5MB to 20MB parts.
+- **Frontend Slicing:** Use the browser's standard `File.prototype.slice(start, end)` (inherits from `Blob.slice()`) to slice large files without reading the whole file into RAM.
+- **Protocol Semantics:** Each chunk request includes metadata: `Upload-Id`, `Chunk-Index` (e.g. 3 of 20), `Content-Range: bytes 10485760-15728639/104857600`, and `Content-MD5` / SHA-256 checksum.
+- **Server Assembly Strategies:**
+  - *Option A (S3 Native):* Each chunk is forwarded directly to S3 as a Multipart Part; S3 handles assembly.
+  - *Option B (Local/NFS Storage):* Server writes chunks to temporary chunk files named `<uploadId>_<chunkIndex>.part`, assembling them in index order once all chunks arrive.
+- **Concurrency & Speed:** Upload 3 to 6 chunks in parallel across multiple HTTP connections to maximize bandwidth utilization.
+
+## The 30-Second Spoken Script
+> "Implementing chunked file uploads allows applications to reliably transmit large files across unstable network connections without failing.
+>
+> The architecture consists of three synchronized steps:
+> First, **Client-Side Slicing**: Using the browser's native `File.slice()` API, we partition the file into uniform chunks—typically 10MB each. We generate a unique `upload_id` and compute an MD5 or SHA-256 hash for each chunk to detect bit corruption during transit.
+> Second, **Parallel & Resilient Transmission**: We dispatch chunk uploads concurrently using an internal queue with 3-4 parallel worker slots. Each chunk HTTP request transmits standard headers, including `Chunk-Index`, `Total-Chunks`, and `Content-Range`. If an individual chunk upload drops due to a mobile network switch, our client automatically retries only that single 10MB chunk with exponential backoff.
+> Third, **Server Verification and Assembly**: On the server, we track chunk receipts in a database or Redis set. Once all chunks are confirmed, the server triggers the assembly phase: either calling Amazon S3's `CompleteMultipartUpload` or concatenating raw file streams on disk using `fs.createWriteStream({ flags: 'a' })`, and then validates the final file checksum against the original client manifest."
+
+## Scenario / Problem Context
+A construction project management platform allowed field engineers to upload 1.5GB 3D CAD models and drone orthomosaic maps from job sites using iPad cellular connections.
+
+Field engineers complained that uploads constantly failed:
+- On 4G/5G connections, brief signal drops caused the browser's single `fetch()` upload to fail with `TypeError: Failed to fetch`.
+- Engineers were forced to restart the entire 1.5GB upload 4 to 5 times, wasting gigabytes of cellular data and hours of working time.
+- The company's customer churn rate among field engineers was spiking.
+
+The engineering department requires a resilient, fault-tolerant chunked upload framework that automatically recovers from network drops and never forces a user to restart from zero.
+
+## Architectural Workflow / Sequence
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Browser as Client Browser (File: 100MB)
+    participant API as Upload Coordinator API
+    participant Redis as Redis State Cache
+    participant S3 as Amazon S3 Object Storage
+
+    Browser->>Browser: Slice file into 10 x 10MB Chunks via Blob.slice()
+    Browser->>API: 1. POST /uploads/initiate { fileName, fileSize, totalChunks: 10 }
+    API->>Redis: SADD uploads:upload_123:pending [0..9]
+    API-->>Browser: Return uploadId: "upload_123"
+
+    par Concurrently Upload Chunks 0, 1, 2
+        Browser->>API: PUT /uploads/upload_123/chunk?index=0 (Body: 10MB Blob)
+        API->>S3: Upload Part 1 -> Return ETag_0
+        API->>Redis: SREM pending 0; SADD completed 0
+        
+        Browser->>API: PUT /uploads/upload_123/chunk?index=1 (Network Drop!)
+        Note over Browser: Retry Chunk 1 with Exponential Backoff (Success!)
+        API->>S3: Upload Part 2 -> Return ETag_1
+        
+        Browser->>API: PUT /uploads/upload_123/chunk?index=2
+        API->>S3: Upload Part 3 -> Return ETag_2
+    end
+
+    Note over Browser,API: All 10 Chunks Uploaded
+    Browser->>API: 2. POST /uploads/upload_123/finalize
+    API->>Redis: SCARD uploads:upload_123:pending (Verify pending == 0)
+    API->>S3: CompleteMultipartUpload(upload_123, [ETags])
+    API-->>Browser: HTTP 200 OK (File Successfully Assembled)
+```
+
+## Deep-Dive Analysis & Root Causes
+
+### 1. The Power of `File.slice()`
+The HTML5 `File` interface inherits from `Blob`. Calling:
+`const chunk = file.slice(startByte, endByte)`
+does **not** load the file into memory. It creates a lightweight slice pointer to the underlying disk file. Memory consumption remains negligible regardless of whether the source file is 10MB or 50GB.
+
+### 2. Handling Out-of-Order Delivery
+Because chunks are uploaded concurrently over separate TCP sockets, Chunk 5 will often arrive at the server before Chunk 2.
+- The server must never assume sequential arrival.
+- Each chunk must carry its explicit zero-based index or byte range (`bytes 20971520-31457279/104857600`).
+- If assembling on local disk, the server writes chunks to separate files (`chunk_0`, `chunk_1`, `chunk_2`) and merges them in sorted order only during the finalization step.
+
+### 3. Checksum Verification per Chunk
+To prevent silent TCP bit flips or truncated uploads:
+- Client computes an MD5 or SHA-256 hash of the chunk before sending.
+- Client passes `Digest: sha-256=<base64-hash>`.
+- Server computes the hash of the received bytes. If it does not match, the server returns `HTTP 400 Bad Checksum`, and the client retries that specific chunk immediately.
+
+## Practical Debugging Commands & Code
+
+### Step 1: Client-Side Chunking and Parallel Dispatcher (TypeScript)
+```typescript
+// frontend/src/chunkedUploader.ts
+export interface ChunkUploadOptions {
+  file: File;
+  chunkSize?: number; // Default: 10MB
+  concurrency?: number; // Default: 3 parallel uploads
+  onProgress?: (percent: number) => void;
+}
+
+export async function uploadFileInChunks({
+  file,
+  chunkSize = 10 * 1024 * 1024,
+  concurrency = 3,
+  onProgress,
+}: ChunkUploadOptions) {
+  const totalChunks = Math.ceil(file.size / chunkSize);
+
+  // 1. Initiate upload session
+  const initRes = await fetch('/api/v1/uploads/chunked/initiate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fileName: file.name, fileSize: file.size, totalChunks }),
+  });
+  const { uploadId } = await initRes.json();
+
+  let uploadedBytes = 0;
+  const chunkIndices = Array.from({ length: totalChunks }, (_, i) => i);
+
+  // 2. Parallel upload worker pool
+  const worker = async () => {
+    while (chunkIndices.length > 0) {
+      const index = chunkIndices.shift()!;
+      const start = index * chunkSize;
+      const end = Math.min(start + chunkSize, file.size);
+      
+      // Native browser zero-memory slice!
+      const chunkBlob = file.slice(start, end);
+
+      const formData = new FormData();
+      formData.append('chunk', chunkBlob);
+      formData.append('chunkIndex', index.toString());
+      formData.append('uploadId', uploadId);
+
+      let success = false;
+      let attempts = 0;
+      while (!success && attempts < 3) {
+        try {
+          attempts++;
+          const res = await fetch('/api/v1/uploads/chunked/part', {
+            method: 'POST',
+            body: formData,
+          });
+          if (res.ok) {
+            success = true;
+            uploadedBytes += (end - start);
+            if (onProgress) onProgress(Math.round((uploadedBytes / file.size) * 100));
+          }
+        } catch (err) {
+          if (attempts >= 3) throw err;
+          await new Promise((r) => setTimeout(r, 1000 * attempts)); // Backoff
+        }
+      }
+    }
+  };
+
+  // Run concurrency workers
+  const workers = Array.from({ length: concurrency }, () => worker());
+  await Promise.all(workers);
+
+  // 3. Finalize upload
+  const finalRes = await fetch('/api/v1/uploads/chunked/finalize', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ uploadId, totalChunks, fileName: file.name }),
+  });
+
+  return finalRes.json();
+}
+```
+
+### Step 2: Server-Side Chunk Reception and Stream Concatenation
+```typescript
+// src/routes/chunkedUploadServer.ts
+import { Request, Response } from 'express';
+import fs from 'node:fs';
+import path from 'node:path';
+import { pipeline } from 'node:stream/promises';
+
+const UPLOAD_TEMP_DIR = '/tmp/chunk_staging';
+
+export async function handleReceiveChunk(req: Request, res: Response) {
+  const { uploadId, chunkIndex } = req.body;
+  const chunkFile = req.file; // From multer or busboy
+
+  const sessionDir = path.join(UPLOAD_TEMP_DIR, uploadId);
+  fs.mkdirSync(sessionDir, { recursive: true });
+
+  // Store chunk file using its index as name
+  const chunkDest = path.join(sessionDir, `chunk_${chunkIndex}.part`);
+  fs.renameSync(chunkFile.path, chunkDest);
+
+  res.status(200).json({ status: 'CHUNK_SAVED', chunkIndex });
+}
+
+export async function handleFinalizeUpload(req: Request, res: Response) {
+  const { uploadId, totalChunks, fileName } = req.body;
+  const sessionDir = path.join(UPLOAD_TEMP_DIR, uploadId);
+  const finalFilePath = path.join('/storage/permanent', `${Date.now()}-${fileName}`);
+
+  // Verify all chunks exist
+  for (let i = 0; i < totalChunks; i++) {
+    if (!fs.existsSync(path.join(sessionDir, `chunk_${i}.part`))) {
+      return res.status(400).json({ error: `Missing chunk ${i}` });
+    }
+  }
+
+  // Concatenate chunks in index order using streams
+  const finalWriteStream = fs.createWriteStream(finalFilePath, { flags: 'a' });
+
+  for (let i = 0; i < totalChunks; i++) {
+    const chunkPath = path.join(sessionDir, `chunk_${i}.part`);
+    const chunkReadStream = fs.createReadStream(chunkPath);
+    await pipeline(chunkReadStream, finalWriteStream, { end: false });
+    fs.unlinkSync(chunkPath); // Clean up part file
+  }
+
+  finalWriteStream.end();
+  fs.rmdirSync(sessionDir); // Clean up session folder
+
+  res.status(200).json({ status: 'FILE_ASSEMBLED', path: finalFilePath });
+}
+```
+
+## Prevention & Senior Best Practices
+1. **Always Use `Blob.slice()` on the Client:** Never read the entire file into an `ArrayBuffer` in browser memory before chunking; use zero-copy `file.slice()`.
+2. **Implement Idempotent Chunk Uploads:** If a client retries uploading Chunk 3 because an HTTP timeout occurred, the server should overwrite the chunk and return HTTP 200 without duplicating state.
+3. **Clean Up Abandoned Chunk Directories:** Implement a nightly cron sweep that deletes chunk staging directories older than 24 hours to prevent orphan chunks from exhausting server disk space.
+4. **Enforce Checksum Validation:** Compute MD5 or SHA-256 digests per chunk to detect cellular network bit corruption before saving chunks to storage.
+5. **Consider the Open tus.io Protocol:** For complex resumable requirements, evaluate standardizing on the **tus.io** open protocol, which provides production-tested open-source clients and servers for chunked resumable uploads.
+

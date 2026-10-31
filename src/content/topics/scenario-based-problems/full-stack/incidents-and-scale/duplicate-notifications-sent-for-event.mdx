@@ -1,0 +1,179 @@
+---
+title: "Duplicate Notifications Sent for the Same Event: Outbox Pattern, Deduplication Keys, and At-Least-Once Delivery"
+description: "Eliminate duplicate email, SMS, and push notifications: the Transactional Outbox Pattern, message broker redelivery semantics, Redis deduplication windows, and idempotency."
+category: "scenario-based-problems"
+subcategory: "Full-Stack: Incidents & Scale"
+tags: ["notifications", "idempotency", "outbox-pattern", "kafka", "deduplication", "event-driven"]
+date: 2026-10-31
+---
+
+## Fast Revision (10-Second Recall)
+- **The Core Cause:** Distributed message queues (Kafka, SQS, RabbitMQ) provide **At-Least-Once delivery**. If an SMS or email worker sends a message but network latency delays the ACK response to the queue broker, the broker redelivers the message to another worker, dispatching a duplicate notification!
+- **The Dual-Write Problem:** Saving an order to the database and publishing an event to Kafka in separate operations means one can succeed while the other fails.
+- **The Transactional Outbox Pattern:** Save the event into an `outbox` table in the same database transaction as the business entity. A Debezium CDC (Change Data Capture) or background poller reads the outbox and publishes to the broker safely.
+- **Notification Deduplication Key:** Calculate a unique hash: `SHA256(event_type + entity_id + recipient_id)`.
+- **Redis Lock / Deduplication Window:** Worker checks `SET notif:<hash> 1 NX EX 86400`. If key exists, drop message immediately as duplicate.
+
+## The 30-Second Spoken Script
+> "Duplicate notifications occur because distributed message brokers guarantee **at-least-once delivery**, combined with network latency during worker acknowledgments. If a notification worker calls Twilio or SendGrid to send an SMS, and the worker experiences a brief network timeout before acknowledging the queue broker, the broker assumes the worker died and redelivers the message to a second worker—sending the customer two identical text messages.
+>
+> To eliminate duplicate notifications completely, we implement three architectural controls:
+> First, **The Transactional Outbox Pattern**: We eliminate dual-write race conditions by writing the notification event directly to an `outbox` table in the exact same database transaction that created the order or event.
+> Second, **Deterministic Deduplication Keys**: Every notification event carries a composite deduplication key—for example, `order_shipped:ord_9921:user_44`.
+> Third, **Atomic Deduplication Windows in Workers**: Before calling Twilio or SendGrid, the worker executes `SET notification:key 1 NX EX 86400` in Redis. If the key already exists, the worker acknowledges the queue and drops the duplicate message immediately. Furthermore, we pass this deduplication key directly to the email or push provider (such as SendGrid's custom arguments or Apple APNs `apns-collapse-id`), ensuring even third-party retries are deduplicated."
+
+## Scenario / Problem Context
+An international delivery platform sent automated SMS delivery alerts to package recipients.
+
+A package was marked "Delivered" by a courier. Two minutes later, the customer received **two identical SMS messages** on their phone:
+- `14:02: "Your package #PKG-8821 has been delivered to your front porch."`
+- `14:02: "Your package #PKG-8821 has been delivered to your front porch."`
+
+The customer complained, assuming the system had glitched or delivered two packages.
+
+The engineering team checked the worker logs:
+- Worker Pod A processed the `package_delivered` event from RabbitMQ, sent the SMS via Twilio, and attempted to send an `ack` back to RabbitMQ.
+- A transient 3-second network packet drop caused the RabbitMQ connection to drop before the ACK was received.
+- RabbitMQ requeued the message and immediately delivered it to Worker Pod B.
+- Worker Pod B picked up the message and sent the identical SMS via Twilio a second time.
+
+The company needs an airtight notification deduplication architecture that guarantees each customer receives exactly one notification per business event.
+
+## Architectural Workflow / Sequence
+```mermaid
+sequenceDiagram
+    autonumber
+    participant App as Core Order Service
+    participant DB as Postgres (Outbox Table)
+    participant Broker as RabbitMQ / SQS Queue
+    participant WorkerA as Notification Worker A
+    participant Redis as Redis Deduplication Cache
+    participant Twilio as Twilio SMS Gateway
+
+    App->>DB: BEGIN TX: UPDATE package status = 'DELIVERED'; INSERT outbox event
+    App->>DB: COMMIT TX (Guaranteed Atomic Consistency)
+
+    DB-)Broker: Outbox Relayer publishes message (dedup_key: "pkg_8821_delivered")
+    
+    Broker->>WorkerA: Deliver Message
+    WorkerA->>Redis: SET notif:pkg_8821_delivered 1 NX EX 86400
+    Note over Redis: Key set successfully (Return OK)
+    
+    WorkerA->>Twilio: Send SMS: "Package delivered"
+    Twilio-->>WorkerA: SMS Dispatched
+    Note over WorkerA: Network drop! Worker fails to ACK RabbitMQ in time!
+
+    Note over Broker: Redelivers message to Worker B
+    Broker->>WorkerB: Deliver Duplicate Message
+    WorkerB->>Redis: SET notif:pkg_8821_delivered 1 NX EX 86400
+    Note over Redis: Key ALREADY EXISTS! Returns nil!
+    
+    Note over WorkerB: Duplicate Detected! Worker B drops message & ACKs queue!
+    Note over Twilio: Zero duplicate SMS sent! (100% Deduplicated!)
+```
+
+## Deep-Dive Analysis & Root Causes
+
+### 1. The Dual-Write Problem
+Many naive implementations attempt:
+```typescript
+await db.updateOrderStatus(orderId, 'SHIPPED'); // Database write
+await messageQueue.publish('order_shipped', { orderId }); // Network call
+```
+- If the database write succeeds, but the network call to RabbitMQ fails (or process crashes), the notification is lost forever.
+- If developers wrap both in a retry loop, the message queue can receive duplicate events!
+- **Solution (Transactional Outbox):** Write the event into an `outbox` table in the *same* database transaction. A separate process (Debezium or poller) guarantees reliable queue publication.
+
+### 2. At-Least-Once Delivery Semantics
+In cloud queues (SQS, Kafka, RabbitMQ):
+- SQS documentation explicitly states: *"Under rare circumstances, a message might be delivered more than once."*
+- Consumer workers must assume that **duplicates are normal operational occurrences**.
+- Workers must maintain an idempotency record for every notification sent.
+
+### 3. Apple APNs Collapse ID and SendGrid Custom Args
+Many notification gateways have built-in deduplication:
+- **Apple Push Notifications (APNs):** Set `apns-collapse-id: <key>`. If a duplicate push notification arrives, iOS collapses and replaces the previous notification on the lock screen instead of making the phone buzz twice.
+- **Android FCM:** Use `collapse_key`.
+
+## Practical Debugging Commands & Code
+
+### Step 1: Transactional Outbox Pattern Schema (PostgreSQL)
+```sql
+-- migrations/create_outbox_table.sql
+CREATE TABLE notification_outbox (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    dedup_key VARCHAR(150) NOT NULL UNIQUE,
+    channel VARCHAR(20) NOT NULL, -- SMS, EMAIL, PUSH
+    recipient VARCHAR(150) NOT NULL,
+    payload JSONB NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    processed_at TIMESTAMPTZ
+);
+
+CREATE INDEX idx_outbox_pending ON notification_outbox(status) WHERE status = 'PENDING';
+```
+
+### Step 2: Idempotent Notification Worker with Redis Deduplication
+```typescript
+// src/workers/notificationWorker.ts
+import { Worker, Job } from 'bullmq';
+import Redis from 'ioredis';
+import twilio from 'twilio';
+
+const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
+const twilioClient = twilio(process.env.TWILIO_SID, process.env.TWILIO_AUTH_TOKEN);
+
+export const notificationWorker = new Worker(
+  'notification-queue',
+  async (job: Job) => {
+    const { dedupKey, recipientPhone, messageBody } = job.data;
+    const redisLockKey = `dedup:notif:${dedupKey}`;
+
+    // 1. ATOMIC CHECK-AND-SET in Redis with 24-hour expiration
+    // SET key value NX EX seconds -> Returns 'OK' if key did NOT exist; returns null if it did
+    const acquired = await redis.set(redisLockKey, 'DISPATCHED', 'EX', 86400, 'NX');
+
+    if (!acquired) {
+      console.warn(`DUPLICATE NOTIFICATION PREVENTED: Key ${dedupKey} was already sent in the last 24h. Dropping.`);
+      return { status: 'DROPPED_DUPLICATE' };
+    }
+
+    try {
+      // 2. Dispatch SMS via Twilio
+      const twilioRes = await twilioClient.messages.create({
+        to: recipientPhone,
+        from: process.env.TWILIO_PHONE_NUMBER,
+        body: messageBody,
+      });
+
+      console.log(`Notification sent cleanly: SID ${twilioRes.sid} for key ${dedupKey}`);
+      return { status: 'SENT', sid: twilioRes.sid };
+
+    } catch (err: any) {
+      // If external API call failed (e.g. invalid phone number), release the Redis key so retry can run!
+      await redis.del(redisLockKey);
+      throw err;
+    }
+  },
+  {
+    connection: { host: process.env.REDIS_HOST, port: 6379 },
+    concurrency: 10,
+  }
+);
+```
+
+### Step 3: Fast CLI Diagnostic: Checking Redis Deduplication Keys
+```bash
+# Verify if a specific notification was already recorded in Redis
+redis-cli GET "dedup:notif:order_shipped_ord_9921_user_44"
+# Output returns "DISPATCHED" if sent, or (nil) if not
+```
+
+## Prevention & Senior Best Practices
+1. **Never Assume Exactly-Once Message Queuing:** Design all notification consumers with the assumption that message queues will redeliver duplicate messages.
+2. **Use Atomic `SET ... NX EX` Deduplication Windows:** Check Redis before making third-party API calls, locking the deduplication key for 24 hours.
+3. **Adopt the Transactional Outbox Pattern:** Save notification events to an `outbox` database table within the same transaction as business mutations to prevent dual-write race conditions.
+4. **Leverage APNs `collapse-id` and FCM `collapse_key`:** Configure mobile push notifications with collapse IDs so duplicate push deliveries collapse into a single alert on the user's lock screen.
+5. **Construct Deterministic Composite Deduplication Keys:** Generate keys using explicit business identifiers (`${eventType}_${entityId}_${recipientId}`) rather than random UUIDs.
+

@@ -1,0 +1,188 @@
+---
+title: "Implementing Background Report Generation: Distributed Job Workers, Redis Queues, and State Persistence"
+description: "End-to-end implementation of background report generation: BullMQ job lifecycles, worker autoscaling with KEDA, durable job state in PostgreSQL, and S3 artifact storage."
+category: "scenario-based-problems"
+subcategory: "Background: Jobs & Workers"
+tags: ["background-jobs", "distributed-systems", "bullmq", "redis", "keda", "architecture"]
+date: 2026-10-31
+---
+
+## Fast Revision (10-Second Recall)
+- **The Core Architecture:** Ingress API $\rightarrow$ Redis Job Queue (BullMQ) $\rightarrow$ Autoscaling Worker Fleet (KEDA) $\rightarrow$ Object Storage (S3) $\rightarrow$ Durable Database State (PostgreSQL) $\rightarrow$ Notification.
+- **Durable State Tracking:** Never store job metadata exclusively in in-memory Redis! Always mirror job lifecycle states (`PENDING`, `PROCESSING`, `COMPLETED`, `FAILED`) in PostgreSQL for auditability and compliance.
+- **Autoscaling with KEDA:** Scale worker pods dynamically from 0 to 50 based on Redis queue length (`bullmq_jobs_waiting > 5`) rather than CPU/RAM.
+- **Worker Concurrency Limit:** Set worker concurrency strictly based on available vCPUs and memory (e.g. 2-4 concurrent PDF/Excel jobs per 2-vCPU pod) to prevent OOM kills.
+- **Artifact Expiration:** Implement automated S3 Lifecycle rules to delete generated temporary reports after 7 to 30 days.
+
+## The 30-Second Spoken Script
+> "Implementing a robust background report generation pipeline requires decoupling job orchestration from physical compute execution while maintaining durable state.
+>
+> In production architectures, we divide the system into five synchronized components:
+> First, **Job Enqueueing & State Initialization**: When a user submits an export request, our API writes a row in PostgreSQL with status `PENDING` and pushes a job payload to a Redis queue using BullMQ.
+> Second, **Autoscaled Worker Pool**: We deploy a dedicated fleet of stateless background worker pods in Kubernetes. Using **KEDA (Kubernetes Event-driven Autoscaling)**, the cluster automatically spins up worker pods when jobs enter the queue and scales down to zero when the queue is empty, optimizing cloud compute costs.
+> Third, **Isolated Execution & Streaming**: The worker acquires the job, transitions the DB state to `PROCESSING`, streams data from the database using cursors, formats the report, and streams the finished file directly to Amazon S3.
+> Fourth, **Failure Handling**: If an unexpected crash occurs, BullMQ automatically retries the job with exponential backoff up to 3 times before moving it to a Dead Letter Queue.
+> Finally, **Completion Handshake**: The worker updates the database to `COMPLETED`, saves the S3 file key, and triggers an event to notify the user."
+
+## Scenario / Problem Context
+An HR payroll platform served 10,000 businesses. On the last day of each month, thousands of HR managers clicked "Generate Monthly Payroll Summary Report."
+
+The company's initial background architecture had several critical flaws:
+1. Jobs were tracked purely in memory in a single Redis instance with no database persistence. When Redis restarted during a cloud maintenance event, 4,000 in-flight payroll jobs vanished without a trace.
+2. The worker fleet was statically sized to 5 pods. On payroll day, the queue backlog exploded to 8,500 jobs. Reports took 14 hours to process because the cluster could not autoscale based on queue depth.
+3. When a worker ran out of memory generating an enterprise report with 200,000 employees, the container crashed. The job remained permanently stuck in `active` state, blocking that company from ever generating a payroll report again.
+
+The engineering organization mandates a resilient, autoscaling background report generation framework with durable state persistence and automated crash recovery.
+
+## Architectural Workflow / Sequence
+```mermaid
+flowchart TD
+    User["HR Manager Clicks 'Generate Report'"] --> API["API Service"]
+    API -->|1. Insert Job (PENDING)| DB[("PostgreSQL Database (Durable State)")]
+    API -->|2. Enqueue Job| Redis[("Redis Queue (BullMQ)")]
+
+    Redis -->|3. Event-Driven Autoscaling| KEDA["KEDA Autoscaler"]
+    KEDA -->|Scale Pods 1 -> 25| Workers["Worker Pod Fleet"]
+
+    subgraph WorkerProcessing["Worker Execution Lifecycle"]
+        Workers -->|4. Pull Job & Update DB to PROCESSING| DB
+        Workers -->|5. Stream DB Records via Cursor| DB
+        Workers -->|6. Stream Rendered PDF/Excel| S3["Amazon S3 Bucket"]
+        Workers -->|7. Update DB to COMPLETED + S3 Key| DB
+    end
+
+    Workers -->|8. Emit Event| EventBus["Kafka / Redis PubSub"]
+    EventBus --> Notification["WebSocket / Email Notification Service"]
+
+    style WorkerProcessing fill:#dfd,stroke:#090,stroke-width:2px
+    style S3 fill:#ddf,stroke:#009,stroke-width:2px
+```
+
+## Deep-Dive Analysis & Root Causes
+
+### 1. The Dual-State Architecture (Redis + PostgreSQL)
+- **Redis (BullMQ):** High-speed, in-memory queue management, atomic job locking, delay timers, and pub/sub.
+- **PostgreSQL:** Durable source of truth. If Redis experiences catastrophic eviction or loss:
+  - You can query `SELECT * FROM report_jobs WHERE status = 'PENDING' OR status = 'PROCESSING'`.
+  - Rehydrate the Redis queue cleanly without losing customer transactions.
+
+### 2. Zombie Job Detection and Stalled Jobs
+If a worker container crashes abruptly (e.g. EC2 spot instance termination or OOMKill):
+- BullMQ's **Stalled Job Mechanism** continuously monitors heartbeats (locks) on active jobs.
+- If a worker fails to renew its lock within `lockDuration` (default 30 seconds), BullMQ automatically marks the job as stalled, releases it back to the queue, and assigns it to another worker pod.
+
+### 3. Kubernetes Autoscaling via KEDA
+Standard Kubernetes HPA scales on CPU or memory. In a queue:
+- 5,000 jobs can sit in a queue while the 2 existing worker pods are at 30% CPU, meaning standard HPA will **never scale up**!
+- KEDA queries the Redis queue depth directly (`LLEN bull:report-queue:wait`). If queue depth > 5, KEDA immediately scales the worker deployment from 1 to 20 pods.
+
+## Practical Debugging Commands & Code
+
+### Step 1: Database Schema for Durable Report Tracking
+```sql
+-- migrations/create_report_jobs_table.sql
+CREATE TABLE report_jobs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL,
+    user_id UUID NOT NULL,
+    report_type VARCHAR(50) NOT NULL,
+    parameters JSONB NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'PENDING', -- PENDING, PROCESSING, COMPLETED, FAILED
+    progress_percent INT DEFAULT 0,
+    s3_key VARCHAR(500),
+    error_message TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    started_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ
+);
+
+CREATE INDEX idx_report_jobs_tenant_status ON report_jobs(tenant_id, status);
+CREATE INDEX idx_report_jobs_stuck ON report_jobs(status, started_at) WHERE status = 'PROCESSING';
+```
+
+### Step 2: Resilient Worker Implementation with State Synchronization
+```typescript
+// src/workers/reportProcessor.ts
+import { Worker, Job } from 'bullmq';
+import { Pool } from 'pg';
+import { generateAndStreamReport } from '../services/reportGenerator';
+
+const db = new Pool({ connectionString: process.env.DATABASE_URL });
+
+export const reportProcessor = new Worker(
+  'report-queue',
+  async (job: Job) => {
+    const { reportJobId } = job.data;
+
+    // 1. Synchronize DB state to PROCESSING
+    await db.query(
+      'UPDATE report_jobs SET status = $1, started_at = NOW() WHERE id = $2',
+      ['PROCESSING', reportJobId]
+    );
+
+    try {
+      // 2. Execute report generation with streaming progress updates
+      const s3Key = await generateAndStreamReport(reportJobId, async (percent) => {
+        await job.updateProgress(percent);
+        await db.query('UPDATE report_jobs SET progress_percent = $1 WHERE id = $2', [percent, reportJobId]);
+      });
+
+      // 3. Synchronize DB state to COMPLETED
+      await db.query(
+        'UPDATE report_jobs SET status = $1, s3_key = $2, progress_percent = 100, completed_at = NOW() WHERE id = $3',
+        ['COMPLETED', s3Key, reportJobId]
+      );
+
+      return { s3Key };
+
+    } catch (error: any) {
+      // 4. On permanent failure, record error message in DB
+      await db.query(
+        'UPDATE report_jobs SET status = $1, error_message = $2, completed_at = NOW() WHERE id = $3',
+        ['FAILED', error.message, reportJobId]
+      );
+      throw error; // Re-throw so BullMQ triggers retry or DLQ routing
+    }
+  },
+  {
+    connection: { host: process.env.REDIS_HOST, port: 6379 },
+    concurrency: 2, // Concurrency limit per pod
+    lockDuration: 30000, // 30s lock heartbeat
+    stalledInterval: 15000, // Check for dead crashed workers every 15s
+  }
+);
+```
+
+### Step 3: KEDA ScaledObject Configuration in Kubernetes
+Autoscale report worker pods based on BullMQ Redis queue depth:
+
+```yaml
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: report-worker-autoscaler
+  namespace: workers
+spec:
+  scaleTargetRef:
+    name: report-worker-deployment
+  minReplicaCount: 1
+  maxReplicaCount: 30
+  cooldownPeriod: 300
+  triggers:
+    - type: redis
+      metadata:
+        type: list
+        listName: "bull:report-queue:wait"
+        targetListLength: "5" # Scale up 1 pod for every 5 waiting jobs
+        enableTLS: "false"
+      authenticationRef:
+        name: keda-redis-auth
+```
+
+## Prevention & Senior Best Practices
+1. **Never Rely Solely on Redis for Job State:** Always mirror job metadata in PostgreSQL so that Redis flushes or restarts do not erase customer job history.
+2. **Auto-scale Workers with KEDA:** Scale background worker pods based on queue backlog depth rather than CPU utilization.
+3. **Tune Worker Concurrency Strictly:** Restrict heavy document workers to 2-3 concurrent jobs per pod to prevent container memory thrashing and CPU starvation.
+4. **Enforce Heartbeat Stalled Job Recovery:** Configure BullMQ `stalledInterval` to detect and reassign jobs within 30 seconds if a worker pod is killed by spot eviction or OOM.
+5. **Set S3 Expiration Lifecycles:** Configure S3 to automatically delete temporary generated reports after 14-30 days to keep cloud storage costs lean.
+

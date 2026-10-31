@@ -14,6 +14,8 @@ export const categoryIcons: Record<string, string> = {
     'java': 'https://cdn.jsdelivr.net/gh/devicons/devicon@latest/icons/java/java-original.svg',
     'neetcode 150': 'https://cdn.jsdelivr.net/gh/devicons/devicon@latest/icons/leetcode/leetcode-plain.svg',
     'neetcode-150': 'https://cdn.jsdelivr.net/gh/devicons/devicon@latest/icons/leetcode/leetcode-plain.svg',
+    'scenario-based-problems': 'https://cdn.jsdelivr.net/gh/devicons/devicon@latest/icons/githubactions/githubactions-original.svg',
+    'scenario based problems': 'https://cdn.jsdelivr.net/gh/devicons/devicon@latest/icons/githubactions/githubactions-original.svg',
 };
 
 export const getCategoryIcon = (category: string) => {

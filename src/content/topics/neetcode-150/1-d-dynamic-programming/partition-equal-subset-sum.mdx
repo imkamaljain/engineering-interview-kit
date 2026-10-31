@@ -1,0 +1,189 @@
+---
+title: "Partition Equal Subset Sum"
+description: "LeetCode #416"
+category: "NeetCode 150"
+difficulty: "medium"
+subcategory: "1-D Dynamic Programming"
+order: 12
+---
+
+## Problem Statement
+
+Given an integer array `nums`, return `true` if you can partition the array into two subsets such that the sum of the elements in both subsets is equal, or `false` otherwise.
+
+**Example 1:**
+```text
+Input: nums = [1,5,11,5]
+Output: true
+Explanation: The array can be partitioned as [1, 5, 5] and [11].
+```
+
+**Example 2:**
+```text
+Input: nums = [1,2,3,5]
+Output: false
+Explanation: The array cannot be partitioned into equal sum subsets.
+```
+
+**Constraints:**
+- `1 <= nums.length <= 200`
+- `1 <= nums[i] <= 100`
+
+
+## The 0/1 Knapsack Reduction
+
+### Mathematical Transformation
+Let $S$ be the total sum of all elements in `nums`:
+1. If $S$ is **odd**, it is mathematically impossible to divide the integers into two subsets with equal integer sums $\to$ return `false` immediately.
+2. If $S$ is **even**, each subset must sum to exactly:
+   $$\text{target} = \frac{S}{2}$$
+
+The problem reduces directly to the classic **0/1 Subset Sum Problem**:
+> Can we choose a subset of numbers from `nums` whose sum equals exactly `target`?
+
+### The Recurrence Relation
+Let $\text{dp}[t]$ be a boolean indicating whether a subset sum equal to $t$ can be formed:
+- **Base Case:** $\text{dp}[0] = \text{true}$ (the empty subset always sums to 0).
+- For each number $x$ in `nums`, we can either:
+  1. **Exclude $x$:** Keep the previous state $\text{dp}[t]$.
+  2. **Include $x$:** Transition from $\text{dp}[t - x]$ (if $t \ge x$).
+
+$$\text{dp}[t] = \text{dp}[t] \;\lor\; \text{dp}[t - x]$$
+
+### Why We Iterate Backwards
+When using a single 1D array of size $\text{target} + 1$, we must iterate $t$ in **reverse order** (from $\text{target}$ down to $x$):
+- In a 0/1 Knapsack, each number can only be used **once**.
+- If we iterate forward ($x \dots \text{target}$), updating $\text{dp}[t]$ would use the newly updated value of $\text{dp}[t - x]$ from the *same* number, effectively allowing $x$ to be reused multiple times (Unbounded Knapsack).
+- Iterating backward guarantees that $\text{dp}[t - x]$ represents the state from previous elements only!
+
+
+## Mental Model
+
+<div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start my-8">
+  <div>
+    <h3 className="text-center mb-2 text-sm font-semibold text-gray-400">1. Problem Reduction Workflow</h3>
+    ```mermaid
+    flowchart TD
+        Total["Calculate Total Sum: S"] --> Parity{"Is S odd or even?"}
+        
+        Parity -->|"Odd"| Odd["Impossible to partition<br/>Return false immediately"]
+        Parity -->|"Even"| Target["target = S / 2<br/>Solve 0/1 Subset Sum"]
+        
+        Target --> Knapsack["dp[target] == true ?"]
+        Knapsack -->|"Yes"| Win["Return true"]
+        Knapsack -->|"No"| Lose["Return false"]
+
+        style Odd fill:#1e293b,stroke:#ef4444,stroke-width:2px
+        style Win fill:#1e293b,stroke:#10b981,stroke-width:2px
+        style Target fill:#1e293b,stroke:#3b82f6,stroke-width:1px
+    ```
+    *Odd total sum is rejected in O(1).*
+  </div>
+
+  <div>
+    <h3 className="text-center mb-2 text-sm font-semibold text-gray-400">2. Subset Sum Evolution ([1, 5, 11, 5])</h3>
+    ```mermaid
+    flowchart LR
+        S0["Start: {0}"] --> S1["+ 1: {0, 1}"]
+        S1 --> S2["+ 5: {0, 1, 5, 6}"]
+        S2 --> S3["+ 11: {..., 11, ...}<br/>target 11 REACHED!"]
+
+        style S0 fill:#1e293b,stroke:#64748b,stroke-width:1px
+        style S2 fill:#1e293b,stroke:#3b82f6,stroke-width:1px
+        style S3 fill:#1e293b,stroke:#10b981,stroke-width:2px
+    ```
+    *Early exit as soon as dp[target] is marked true.*
+  </div>
+</div>
+
+
+## Solution 1: 1D Space-Optimized DP ($O(N \cdot \text{target})$ Time, $O(\text{target})$ Space) - Recommended
+
+```javascript
+/**
+ * @param {number[]} nums
+ * @return {boolean}
+ */
+var canPartition = function(nums) {
+    const totalSum = nums.reduce((sum, x) => sum + x, 0);
+    
+    // If total sum is odd, cannot partition into two equal integer halves
+    if (totalSum % 2 !== 0) {
+        return false;
+    }
+    
+    const target = totalSum / 2;
+    
+    // dp[t] is true if a subset sum of t is achievable
+    const dp = new Uint8Array(target + 1);
+    dp[0] = 1; // Base case: sum of 0 is always possible
+    
+    for (const x of nums) {
+        // If an individual number exceeds target, it can never belong to either half
+        if (x > target) {
+            return false;
+        }
+        
+        // Iterate backwards to prevent reusing the same number
+        for (let t = target; t >= x; t--) {
+            if (dp[t - x] === 1) {
+                dp[t] = 1;
+            }
+        }
+        
+        // Early exit: target sum is already achievable
+        if (dp[target] === 1) {
+            return true;
+        }
+    }
+    
+    return dp[target] === 1;
+};
+```
+
+
+## Solution 2: Bitwise Shift Optimization ($O(N)$ BigInt Operations)
+
+Because the recurrence is simply a set of boolean shifts, we can represent all reachable sums as bits in a `BigInt`:
+
+```javascript
+/**
+ * @param {number[]} nums
+ * @return {boolean}
+ */
+var canPartitionBitset = function(nums) {
+    const totalSum = nums.reduce((sum, x) => sum + x, 0);
+    if (totalSum % 2 !== 0) return false;
+    
+    const target = totalSum / 2;
+    let dp = 1n; // Bit 0 is set: sum 0 is reachable
+    
+    for (const x of nums) {
+        dp |= (dp << BigInt(x));
+        
+        // Check if the bit at position 'target' is set
+        if ((dp >> BigInt(target)) & 1n) {
+            return true;
+        }
+    }
+    
+    return ((dp >> BigInt(target)) & 1n) === 1n;
+};
+```
+
+
+## Complexity Analysis
+
+| Metric | Complexity | Notes |
+| :--- | :--- | :--- |
+| **Time Complexity** | $O(N \times \text{target})$ | Where $\text{target} = \frac{\sum \text{nums}}{2} \le 10,000$. Maximum operations $\approx 200 \times 10,000 = 2 \times 10^6$ (executes in $< 10\text{ms}$). |
+| **Space Complexity** | $O(\text{target})$ | A 1D typed boolean array of size $\text{target} + 1 \le 10,001$. |
+| **Bitwise Time** | $O(N \times \frac{\text{target}}{64})$ | 64x speedup utilizing hardware bitwise parallel shifts. |
+
+
+## Edge Cases
+
+- **Odd Total Sum (`nums = [1, 2, 5]`):** Sum is 8... wait, `1+2+5 = 8`. For `nums = [1, 2, 4]`, sum is 7 $\to$ `false` in $O(1)$.
+- **Single Element Larger Than Target (`nums = [10, 1, 1]`):** Total is 12, target is 6. `10 > 6` $\to$ `false`.
+- **Exact Pair (`nums = [5, 5]`):** Sum is 10, target is 5 $\to$ returns `true`.
+- **All Identical Elements (`nums = [2, 2, 2, 2]`):** Even sum 8, target 4 $\to$ `true`.

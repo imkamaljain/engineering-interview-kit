@@ -1,0 +1,185 @@
+---
+title: "Maximum Product Subarray"
+description: "LeetCode #152"
+category: "NeetCode 150"
+difficulty: "medium"
+subcategory: "1-D Dynamic Programming"
+order: 9
+---
+
+## Problem Statement
+
+Given an integer array `nums`, find a subarray that has the largest product, and return the product.
+
+A **subarray** is a contiguous, non-empty sequence of elements within an array.
+
+The test cases are generated so that the answer will fit in a **32-bit integer**.
+
+**Example 1:**
+```text
+Input: nums = [2,3,-2,4]
+Output: 6
+Explanation: [2,3] has the largest product 6.
+```
+
+**Example 2:**
+```text
+Input: nums = [-2,0,-1]
+Output: 0
+Explanation: The result cannot be 2, because [-2,-1] is not a contiguous subarray.
+```
+
+**Constraints:**
+- `1 <= nums.length <= 2 * 10^4`
+- `-10 <= nums[i] <= 10`
+- The product of any prefix or suffix of `nums` is guaranteed to fit in a 32-bit integer.
+
+
+## The Dynamic Programming Intuition
+
+### Why Kadane's Sum Algorithm Doesn't Directly Work
+In standard *Maximum Subarray* (sum), adding a negative number always makes the total smaller.
+
+With **multiplication**, signs flip:
+- A large positive number multiplied by a negative number becomes a **very small (large negative) number**.
+- But multiplying that small negative number by *another* negative number suddenly becomes a **very large positive number**!
+
+$$\text{Negative} \times \text{Negative} = \text{Positive}$$
+
+Therefore, the **minimum product** seen so far holds the potential to become the **maximum product** the instant a negative number appears!
+
+### The Dual-State Tracking Strategy
+To capture sign reversals, we must maintain **both** the minimum and maximum running products ending at the current index:
+- `currMax`: The maximum product of a contiguous subarray ending at index $i$.
+- `currMin`: The minimum product of a contiguous subarray ending at index $i$.
+
+When extending to the next number `x = nums[i]`, the new max and min can come from three possibilities:
+1. `x` multiplied by the previous maximum: `currMax * x`
+2. `x` multiplied by the previous minimum: `currMin * x` (e.g. negative $\times$ negative)
+3. Starting a fresh subarray from `x` alone: `x`
+
+$$\text{nextMax} = \max(x,\; \text{currMax} \times x,\; \text{currMin} \times x)$$
+$$\text{nextMin} = \min(x,\; \text{currMax} \times x,\; \text{currMin} \times x)$$
+
+
+## Mental Model
+
+<div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start my-8">
+  <div>
+    <h3 className="text-center mb-2 text-sm font-semibold text-gray-400">1. Sign Inversion on Negative Numbers</h3>
+    ```mermaid
+    flowchart TD
+        Num["Encounter Negative Number (x < 0)"]
+        
+        Num -->|"Swaps roles"| Swap["currMin * x -> Huge Positive!<br/>currMax * x -> Lowest Negative!"]
+        Swap --> Update["nextMax = max(x, currMin * x)<br/>nextMin = min(x, currMax * x)"]
+
+        style Num fill:#1e293b,stroke:#f59e0b,stroke-width:1px
+        style Swap fill:#1e293b,stroke:#3b82f6,stroke-width:1px
+        style Update fill:#1e293b,stroke:#10b981,stroke-width:2px
+    ```
+    *Tracking currMin captures negative-times-negative surges.*
+  </div>
+
+  <div>
+    <h3 className="text-center mb-2 text-sm font-semibold text-gray-400">2. Trace on nums = [2, 3, -2, 4]</h3>
+    ```mermaid
+    flowchart LR
+        S0["[2]<br/>max: 2<br/>min: 2"]
+        S1["[3]<br/>max: 6<br/>min: 3"]
+        S2["[-2]<br/>max: -2<br/>min: -12"]
+        S3["[4]<br/>max: 4<br/>min: -48"]
+
+        S0 --> S1 --> S2 --> S3
+
+        style S0 fill:#1e293b,stroke:#64748b,stroke-width:1px
+        style S1 fill:#1e293b,stroke:#10b981,stroke-width:2px
+        style S2 fill:#1e293b,stroke:#3b82f6,stroke-width:1px
+        style S3 fill:#1e293b,stroke:#3b82f6,stroke-width:1px
+    ```
+    *Peak product 6 is preserved in global result.*
+  </div>
+</div>
+
+
+## Optimal Solution: $O(N)$ Time, $O(1)$ Space
+
+```javascript
+/**
+ * @param {number[]} nums
+ * @return {number}
+ */
+var maxProduct = function(nums) {
+    let result = nums[0];
+    let currMax = nums[0];
+    let currMin = nums[0];
+    
+    for (let i = 1; i < nums.length; i++) {
+        const x = nums[i];
+        
+        // When x is negative, multiplying by currMax and currMin swaps their values
+        // We cache the previous max to prevent using the updated value when calculating min
+        const tempMax = currMax;
+        
+        currMax = Math.max(x, tempMax * x, currMin * x);
+        currMin = Math.min(x, tempMax * x, currMin * x);
+        
+        result = Math.max(result, currMax);
+    }
+    
+    return result;
+};
+```
+
+> **How does it handle zeroes?**  
+> If `nums[i] === 0`, both `currMax` and `currMin` collapse to `0` (and `result` updates with `0` if applicable). In the next step, `Math.max(x, 0, 0)` simply restarts a fresh subarray at `x`, naturally partitioning the array at zero boundaries without any special branching!
+
+
+## Alternative: Prefix & Suffix Products ($O(N)$ Time, $O(1)$ Space)
+
+An elegant mathematical observation:
+- Any zero splits the array into independent sub-segments.
+- Within any non-zero segment:
+  - If there are an **even** number of negative numbers, the product of the **entire segment** is positive (and maximal).
+  - If there are an **odd** number of negative numbers, removing either the prefix up to the first negative or the suffix after the last negative yields the maximum product.
+- Thus, the answer is always either a **prefix product** or a **suffix product**!
+
+```javascript
+/**
+ * @param {number[]} nums
+ * @return {number}
+ */
+var maxProductPrefixSuffix = function(nums) {
+    const n = nums.length;
+    let result = nums[0];
+    let prefix = 1;
+    let suffix = 1;
+    
+    for (let i = 0; i < n; i++) {
+        // Reset product to 1 if previously collapsed to 0
+        prefix = (prefix === 0 ? 1 : prefix) * nums[i];
+        suffix = (suffix === 0 ? 1 : suffix) * nums[n - 1 - i];
+        
+        result = Math.max(result, prefix, suffix);
+    }
+    
+    return result;
+};
+```
+
+
+## Complexity Analysis
+
+| Approach | Time Complexity | Space Complexity | Notes |
+| :--- | :--- | :--- | :--- |
+| **Dual Min/Max DP** | $O(N)$ | $O(1)$ | Optimal. Single pass tracking `currMax` and `currMin`. |
+| **Prefix & Suffix Pass** | $O(N)$ | $O(1)$ | Elegant symmetric sweep utilizing odd/even negative parity. |
+| **Brute Force** | $O(N^2)$ | $O(1)$ | Evaluates all subarray products; TLE on $N = 2 \times 10^4$. |
+
+
+## Edge Cases
+
+- **Single Element (`nums = [-5]`):** Returns `-5`.
+- **Zeros in Array (`nums = [-2, 0, -1]`):** Subarray resets across `0`; returns `0`.
+- **Two Negative Numbers (`nums = [-2, -3]`):** Product flips positive; returns `6`.
+- **Odd Number of Negatives (`nums = [-1, -2, -3]`):** Maximum is `(-2) * (-3) = 6` or `(-1) * (-2) = 2`; returns `6`.

@@ -70,12 +70,17 @@ export const TECHNOLOGY_GROUPS = [
 		]
 	},
 	{
-		groupName: "Coding",
+		groupName: "Interview Practice",
 		items: [
 			{
 				title: "NeetCode 150",
 				slug: "neetcode-150",
 				description: "Curated list of 150 top coding interview questions grouped by patterns like Sliding Window, Two Pointers, and more."
+			},
+			{
+				title: "Scenario Based Problems",
+				slug: "scenario-based-problems",
+				description: "Real-world engineering problems and interview solutions covering backend, frontend, database, DevOps, and production debugging."
 			}
 		]
 	}

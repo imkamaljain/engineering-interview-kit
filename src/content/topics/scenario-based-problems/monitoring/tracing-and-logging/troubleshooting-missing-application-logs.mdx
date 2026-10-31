@@ -1,0 +1,172 @@
+---
+title: "Troubleshooting Missing Application Logs: Collector Drops, Buffer Backpressure, and Container stdout"
+description: "Diagnose why application logs are missing during an incident: container runtime log rotation, FluentBit backpressure buffer overflow, stdout blocking, and OOM kills."
+category: "scenario-based-problems"
+subcategory: "Monitoring: Tracing & Logging"
+tags: ["monitoring", "logging", "fluentbit", "kubernetes", "troubleshooting", "stdout", "debugging"]
+date: 2026-10-31
+---
+
+## Fast Revision (10-Second Recall)
+- **The Log Delivery Pipeline:** Application writes to `stdout` $\rightarrow$ Container Runtime writes to `/var/log/pods/` $\rightarrow$ Node DaemonSet (FluentBit/Vector) scrapes file $\rightarrow$ Central Log Store (Elasticsearch/Loki).
+- **Failure Point 1: Pod Crashed Before Flush:** If a container is killed with `SIGKILL` (OOMKilled - Exit 137), buffered log lines in memory are lost permanently.
+- **Failure Point 2: FluentBit / Agent Backpressure:** When log volume spikes 10x, log shippers exhaust local memory buffers and silently drop chunks (`[warn] [engine] chunk drop`).
+- **Failure Point 3: Container Log Driver Disk Rotation:** Kubernetes node disk reaches capacity; kubelet purges `/var/log/pods/` files before the collector has finished reading them.
+- **Immediate Triage Step:** Bypass the centralized logging system! Run `kubectl logs <pod> --previous` directly against the Kubernetes node container runtime.
+
+## The 30-Second Spoken Script
+> "When an incident occurs and application logs are missing from our centralized aggregator (like Datadog or Elasticsearch), we methodically inspect the logging pipeline from the node level out to the storage cluster.
+>
+> First, **Direct Node Verification**: We immediately bypass the centralized log pipeline by running `kubectl logs <pod> -n production` and `kubectl logs <pod> --previous`. If logs appear directly in the container runtime but not in Elasticsearch, we know the application is producing output and the failure is in the collection pipeline.
+>
+> Second, **Log Shipper Backpressure**: We inspect the local node collector DaemonSet (such as FluentBit or Vector). During massive error storms, applications produce 100x their normal log volume. If the shipper's in-memory queue fills up, it enters a backpressure state and drops log chunks to avoid crashing the node. We check FluentBit metrics for `storage_layer_chunks_dropped`.
+>
+> Third, **Log Level Configuration and OOM Abruptness**: If `kubectl logs` is also empty, we verify whether a recent Helm chart deployment accidentally set `LOG_LEVEL=silent`, or whether the container suffered an un-catchable Linux kernel `OOMKill` (Exit Code 137), which kills the process instantly before buffered I/O streams can flush to stdout."
+
+## Scenario / Problem Context
+A critical payment settlement microservice deployed in Kubernetes began failing to reconcile transactions. The on-call engineer went to Grafana Loki to investigate the failure:
+`{app="settlement-service"} |= "error"`
+The query returned: `No logs found in the selected time range.`
+
+In fact, there were zero logs for the settlement service for the last 4 hours!
+
+The engineer panicked: Was the service even running? 
+
+They ran `kubectl get pods -n production`. The pod had been restarted 14 times in the last 4 hours with `CrashLoopBackOff`. 
+
+The post-mortem revealed two compounding issues:
+1. The container was allocating a 2GB transaction file in memory, triggering a Linux kernel `OOMKill` (`kill -9`). Because the process died instantly, the Node.js Winston file transport buffer never flushed its in-flight logs to disk.
+2. During the boot loop, the service generated 50MB of debug output per second. The node's FluentBit collector hit its `Mem_Buf_Limit`, paused scraping, and dropped all logs to protect the node from crashing.
+
+The team needs a comprehensive diagnostic procedure to recover missing logs and harden the logging pipeline against data loss.
+
+## Architectural Workflow / Sequence
+```mermaid
+flowchart TD
+    App["Application Process (Winston / Logback)"] --> Buffer["Memory Buffer (Unflushed!)"]
+    Buffer -->|Process OOMKilled! (Logs Lost!)| Death["Container SIGKILL (Exit 137)"]
+    
+    Buffer -->|Flush to stdout| Docker["Containerd /var/log/pods/*.log"]
+    
+    Docker --> FluentBit["FluentBit DaemonSet (Node Log Shipper)"]
+    
+    subgraph ShipperBottlenecks["Common Ingestion Drops"]
+        FluentBit -- "Backpressure > Mem_Buf_Limit" --> DropChunk["Silent Chunk Drop!"]
+        FluentBit -- "Network Throttle to ES" --> RetryDrop["Max Retries Exceeded"]
+    end
+
+    FluentBit --> CentralLog["Centralized Storage (Elasticsearch / Loki)"]
+    CentralLog --> UI["Engineer Query: 'No logs found'"]
+
+    style Death fill:#fbb,stroke:#d00,stroke-width:2px
+    style DropChunk fill:#fbb,stroke:#d00,stroke-width:2px
+```
+
+## Deep-Dive Analysis & Root Causes
+
+### 1. In-Memory Log Buffering vs Synchronous stdout
+Many logging libraries buffer log statements in memory (e.g. 100 records or 5 seconds) to reduce I/O system call overhead.
+- If the application crashes with `process.exit(1)` or is killed by the kernel `SIGKILL`, the in-memory buffer is wiped without ever hitting stdout.
+- **Rule:** Critical errors must trigger immediate stream flush, and high-severity logs (`ERROR`, `FATAL`) should not be deferred in asynchronous queues during uncaught exceptions.
+
+### 2. FluentBit / Vector Backpressure
+Log collectors read log files from `/var/log/pods/`. When an upstream log cluster (Elasticsearch) slows down or rate-limits ingestion:
+1. FluentBit buffers logs in memory.
+2. Once memory hits `Mem_Buf_Limit` (e.g. 10MB per container), FluentBit **pauses** ingestion for that container file.
+3. Meanwhile, the container keeps writing to disk.
+4. Kubernetes log rotation (`max-size: 10M`, `max-file: 3`) rotates the log file, overwriting old files before FluentBit ever resumes reading them!
+
+### 3. Log Shippers Missing Multiline Stack Traces
+If an application outputs raw Java or Node.js multiline stack traces without a structured JSON formatter:
+- The log collector treats every line of the stack trace as an independent log event.
+- If regex parsers fail, unparsed lines are routed to an unindexed "dead-letter" file or discarded.
+
+## Practical Debugging Commands & Code
+
+### Step 1: Direct Container Runtime Log Retrieval
+Bypass all log forwarders, agents, and aggregators:
+
+```bash
+# 1. Fetch logs directly from the active container
+kubectl logs deployment/settlement-service -n production --tail=500
+
+# 2. Fetch logs from the PREVIOUS crashed container instance (Crucial for CrashLoopBackOff!)
+kubectl logs deployment/settlement-service -n production --previous --tail=500
+
+# 3. Stream live logs directly from container stdout
+kubectl logs -f pod/settlement-service-88bca-z91 -n production
+```
+
+### Step 2: Diagnosing FluentBit Log Dropping on the Kubernetes Node
+Inspect the FluentBit DaemonSet running on the exact node where your application pod lives:
+
+```bash
+# 1. Find which node the pod is running on
+NODE_NAME=$(kubectl get pod settlement-service-88bca-z91 -n production -o jsonpath='{.spec.nodeName}')
+
+# 2. Find the FluentBit pod running on that node
+FLUENT_POD=$(kubectl get pods -n logging -l app.kubernetes.io/name=fluent-bit --field-selector spec.nodeName=$NODE_NAME -o jsonpath='{.items[0].metadata.name}')
+
+# 3. Check FluentBit logs for backpressure and dropped chunks
+kubectl logs $FLUENT_POD -n logging | grep -i -E "drop|buffer full|error|retry"
+```
+
+Sample output revealing silent drops:
+```text
+[warn] [storage] [input: tail.0] memory buffer limit reached (10.0M), pausing input
+[error] [engine] chunk 'tail.0-17049281.flb' reached max retries (5), dropping chunk!
+```
+
+### Step 3: Hardening Application Log Flushing on Uncaught Errors
+Ensure critical exceptions flush synchronously to `stdout` before process termination:
+
+```typescript
+// src/logger.ts
+import winston from 'winston';
+
+export const logger = winston.createLogger({
+  level: process.env.LOG_LEVEL || 'info',
+  format: winston.format.json(),
+  transports: [
+    new winston.transports.Console({
+      // Ensure stdout does not block or fail on high throughput
+      handleExceptions: true,
+      handleRejections: true,
+    }),
+  ],
+});
+
+// Force flush before process exit
+process.on('uncaughtException', (err) => {
+  logger.error({
+    message: 'FATAL: Uncaught exception! Process terminating.',
+    error: err.message,
+    stack: err.stack,
+  });
+
+  // Give stdout stream 500ms to flush bytes to kernel before hard exit
+  setTimeout(() => {
+    process.exit(1);
+  }, 500);
+});
+```
+
+### Step 4: Inspecting Raw Log Files on the Node Filesystem
+If Kubernetes API fails, access the raw file on the host machine:
+```bash
+# Connect to node shell
+kubectl node-shell $NODE_NAME
+
+# Inspect raw container log files directly
+cd /var/log/pods/production_settlement-service-*/settlement-service/
+ls -la
+head -n 20 0.log
+```
+
+## Prevention & Senior Best Practices
+1. **Always Use `kubectl logs --previous` During Crash Loops:** Train on-call engineers to immediately run `--previous` when investigating pods with restart counts greater than zero.
+2. **Configure Disk-Backed Buffering in FluentBit / Vector:** Switch log shippers from pure in-memory buffers to disk-backed buffers (`storage.type: filesystem`) so high log spikes buffer safely on host SSDs without dropping data.
+3. **Always Log in Structured Single-Line JSON:** Avoid multiline plaintext stack traces that break collector parsing rules; emit structured single-line JSON so log agents never lose context.
+4. **Tune Kubernetes Container Log Rotation:** Increase container log limits on nodes (`containerLogMaxSize: 50Mi`, `containerLogMaxFiles: 5`) to give log collectors ample time to drain buffers before files rotate.
+5. **Monitor Log Shipper Metrics:** Set alerts on `fluentbit_output_dropped_records_total > 0` to know when logs are being dropped before an engineer struggles to find them during an incident.
+

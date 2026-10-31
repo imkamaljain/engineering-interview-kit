@@ -1,0 +1,143 @@
+---
+title: "The Saga Pattern: Orchestration vs Choreography"
+description: "Architectural comparison of Saga implementations: Event-Driven Choreography vs Centralized Orchestration, evaluating decoupling, observability, and compensation complexity."
+category: "scenario-based-problems"
+subcategory: "Microservices: Resilience & Transactions"
+---
+
+## Fast Revision (10-Second Recall)
+The Saga pattern maintains data consistency across distributed microservices through a sequence of local transactions coordinated via events or commands. Choose Choreography (event-driven pub/sub) for simple 2-service workflows with high decoupling. Choose Orchestration (centralized state coordinator like Temporal or Step Functions) for complex multi-step workflows requiring strict visibility and predictable error compensation.
+
+## The 30-Second Spoken Script
+> "A Saga is a sequence of local database transactions where each step updates data within a single service and triggers the next step. If an intermediate step fails, compensating transactions execute in reverse order to undo changes. Sagas are implemented in two distinct architectural styles: Choreography and Orchestration. In Choreography, there is no central coordinator: services react to events emitted by other services via a message broker like Kafka. It offers high autonomy and loose coupling, but as workflows grow beyond 2 or 3 services, it degenerates into 'event spaghetti' where tracking state and debugging compensations becomes nearly impossible. In Orchestration, a dedicated orchestrator service or state machine explicitly instructs each microservice which command to execute and waits for a response. Orchestration provides centralized visibility, simple audit trails, and deterministic rollback handling, making it the industry standard for complex enterprise workflows."
+
+## Scenario / Problem Context
+An online marketplace implemented the Choreography Saga pattern using Kafka topics for order checkout involving 6 services: Order, Fraud, Payment, Inventory, Shipping, and Email. When payment authorizations began failing intermittently, engineers could not determine which services had compensated and which had hung waiting for events. Circular event dependencies emerged, causing phantom refunds. The team must transition to an architectural model that provides absolute workflow visibility.
+
+## Architectural Workflow / Sequence
+```mermaid
+flowchart TD
+    subgraph ChoreographyStyle ["1. Choreography Saga (Decentralized Event Pub/Sub)"]
+        OrderSvc1["Order Service"] -->|"Publishes: OrderCreated"| Broker1[("Kafka Topic")]
+        Broker1 --> PaymentSvc1["Payment Service"]
+        PaymentSvc1 -->|"Publishes: PaymentProcessed"| Broker2[("Kafka Topic")]
+        Broker2 --> InventorySvc1["Inventory Service"]
+        InventorySvc1 -.->|"Publishes: InventoryFailed (Compensation Spaghetti)"| Broker1
+    end
+
+    subgraph OrchestrationStyle ["2. Orchestration Saga (Centralized State Coordinator)"]
+        Orchestrator["Saga Orchestrator (Temporal / Step Functions)"]
+        Orchestrator -->|"Command 1: CreateOrder"| OrderSvc2["Order Service"]
+        OrderSvc2 -->>|"Success"| Orchestrator
+        Orchestrator -->|"Command 2: ChargePayment"| PaymentSvc2["Payment Service"]
+        PaymentSvc2 -->>|"Success"| Orchestrator
+        Orchestrator -->|"Command 3: ReserveInventory"| InventorySvc2["Inventory Service"]
+        InventorySvc2 -->>|"FAILURE"| Orchestrator
+        
+        Orchestrator -->|"Compensate: RefundPayment"| PaymentSvc2
+        Orchestrator -->|"Compensate: CancelOrder"| OrderSvc2
+    end
+```
+
+## Deep-Dive Analysis & Root Causes
+
+### 1. Architectural Comparison Matrix
+| Dimension | Choreography Saga (Event-Driven) | Orchestration Saga (Command-Driven) |
+|---|---|---|
+| **Coordination** | Decentralized: services react to pub/sub events | Centralized: orchestrator sends explicit commands |
+| **Coupling** | Loose: services know only event schemas | Tighter: orchestrator knows participating services |
+| **Visibility / Tracing** | Poor: state scattered across multiple databases | Excellent: single state machine dashboard |
+| **Complexity** | Simple for 2-3 steps; chaotic for 4+ steps | Requires running a workflow engine (Temporal/Cadence) |
+| **Compensation Logic** | Complex: each service must listen for error events | Simple: orchestrator executes backward rollbacks |
+| **Cyclic Dependencies** | High risk: services can easily trigger event loops | Low risk: linear or branching state graph |
+
+### 2. When to Choose Choreography
+- Simple workflows involving only 2 or 3 services (e.g., `OrderPlaced` $\rightarrow$ `SendWelcomeEmail`).
+- When maximum throughput and autonomy outweigh the need for a centralized audit dashboard.
+- Teams are small and cross-service dependencies are well understood.
+
+### 3. When to Choose Orchestration
+- Workflows with 4 or more participants (e.g. Order $\rightarrow$ Fraud $\rightarrow$ Payment $\rightarrow$ Inventory $\rightarrow$ Shipping).
+- Workflows that require time-based delays or human approvals (e.g., waiting 24 hours for customer confirmation before shipping).
+- Strict compliance environments (banking, healthcare) where an auditor must inspect the exact execution history of every transaction.
+
+### 4. Modern Workflow Engines: Temporal and AWS Step Functions
+Rather than building fragile state machines in relational databases with polling loops:
+- **Temporal.io**: Code-as-configuration orchestrator. Write plain TypeScript or Go code; Temporal guarantees durable execution, automatic retries, and compensation even if servers crash mid-execution.
+- **AWS Step Functions**: Serverless visual state machine with native JSONPath state transitions.
+
+## Practical Debugging Commands & Code
+
+#### Temporal.io Orchestration Saga Workflow (TypeScript)
+```typescript
+import { proxyActivities, ApplicationFailure } from '@temporalio/workflow';
+
+// Define external microservice activities
+const { createOrder, cancelOrder } = proxyActivities<{
+  createOrder(orderId: string): Promise<void>;
+  cancelOrder(orderId: string): Promise<void>;
+}>({ startToCloseTimeout: '5s' });
+
+const { processPayment, refundPayment } = proxyActivities<{
+  processPayment(orderId: string, amount: number): Promise<string>;
+  refundPayment(paymentId: string): Promise<void>;
+}>({ startToCloseTimeout: '10s' });
+
+const { reserveStock, releaseStock } = proxyActivities<{
+  reserveStock(orderId: string): Promise<void>;
+  releaseStock(orderId: string): Promise<void>;
+}>({ startToCloseTimeout: '5s' });
+
+// The Saga Workflow: Clean, linear, deterministic orchestration
+export async function orderFulfillmentSaga(orderId: string, amount: number): Promise<void> {
+  const compensations: (() => Promise<void>)[] = [];
+
+  try {
+    // Step 1: Create Order in Order Service
+    await createOrder(orderId);
+    compensations.push(() => cancelOrder(orderId));
+
+    // Step 2: Process Payment in Payment Service
+    const paymentId = await processPayment(orderId, amount);
+    compensations.push(() => refundPayment(paymentId));
+
+    // Step 3: Reserve Inventory (May fail if out of stock)
+    await reserveStock(orderId);
+    // Success: Clear compensations as order is fulfilled!
+    console.log(`[Saga Complete] Order ${orderId} successfully fulfilled.`);
+  } catch (err: any) {
+    console.error(`[Saga Error] Workflow failed. Executing compensations in reverse order: ${err.message}`);
+
+    // Execute backward compensations in LIFO (Last-In-First-Out) order
+    for (const compensate of compensations.reverse()) {
+      try {
+        await compensate();
+      } catch (compErr) {
+        console.error('[CRITICAL] Compensation failed! Alerting operations team:', compErr);
+      }
+    }
+
+    throw ApplicationFailure.nonRetryable(`Order ${orderId} failed and was rolled back.`);
+  }
+}
+```
+
+#### Inspecting Temporal Saga Executions via CLI
+```bash
+# List all running or failed Saga workflows in Temporal cluster
+temporal workflow list --query "WorkflowType = 'orderFulfillmentSaga' AND ExecutionStatus = 'Failed'"
+
+# Show complete execution history and compensation events for a specific Saga ID
+temporal workflow show --workflow-id "order-saga-88219"
+```
+
+## Prevention & Senior Best Practices
+
+### 1. Architectural Guardrails
+- **Idempotent Compensations**: Every single compensating action must be idempotent. If a network blip occurs during a refund call, the orchestrator will retry the refund. The payment service must handle duplicate refund requests safely.
+- **Rule of Thumb on Saga Complexity**: If a Choreography Saga requires more than 3 distinct Kafka topics or services are listening to their own error events, refactor immediately to an Orchestration Saga.
+
+### 2. Operational Hardening
+- **Alert on Uncompensated Sagas**: Set up automated monitoring that flags Sagas stuck in a partial rollback state for more than 5 minutes.
+- **Set Global Saga Deadlines**: Attach an overall workflow execution timeout (e.g. 5 minutes). If a participating service hangs indefinitely, the orchestrator triggers timeouts and rolls back the workflow.
+

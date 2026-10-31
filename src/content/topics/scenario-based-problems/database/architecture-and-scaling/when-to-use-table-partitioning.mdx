@@ -1,0 +1,85 @@
+---
+title: "Table Partitioning Strategies: Range, List, and Hash"
+description: "Declarative table partitioning, partition pruning, managing massive tables on a single instance, and lifecycle data retention."
+category: "scenario-based-problems"
+subcategory: "Database: Architecture & Scaling"
+order: 6
+---
+
+## Fast Revision (10-Second Recall)
+- **Partitioning vs Sharding:** Partitioning divides a table into smaller physical child tables **on the same database instance**. Sharding distributes data across **multiple independent database servers**.
+- **When to Use Partitioning:**
+- 1. **Table exceeds RAM:** Total table and index size exceeds database RAM (e.g., &gt; 100GB).
+- 2. **Time-Series / Audit / Financial Data:** Rows are naturally segmented by date or lifecycle status.
+- 3. **Fast Data Purging:** Dropping an old partition (`DROP TABLE orders_2022_q1`) is instant metadata cleanup (0ms) vs a catastrophic `DELETE FROM orders` that bloats the table and locks rows for hours.
+- **Partitioning Types:**
+- 1. **Range Partitioning:** By date or numerical ranges (`FOR VALUES FROM ('2024-01-01') TO ('2024-02-01')`).
+- 2. **List Partitioning:** By discrete values (`FOR VALUES IN ('US', 'EU', 'APAC')`).
+- 3. **Hash Partitioning:** By modulus/hash to evenly distribute write concurrency.
+- **The Superpower:** **Partition Pruning**—the query planner automatically skips scanning partitions that do not match the WHERE clause.
+
+## The 30-Second Spoken Script
+"Table partitioning is the technique of breaking a single massive logical table into smaller, physically separate child tables on the same database server. The application continues to query the parent table name, but the database engine routes reads and writes to the appropriate child partition.
+
+I recommend table partitioning in three primary scenarios:
+First, when a table exceeds the available RAM—typically over 100 gigabytes or 100 million rows. In an unpartitioned table, B-Tree indexes grow too large to fit in the buffer pool, resulting in constant disk I/O. With partitioning, queries filtering on recent dates only scan recent partitions whose indexes fit entirely in memory.
+
+Second, for time-series, audit, and event logs where queries consistently filter by date ranges. The database query planner uses Partition Pruning to completely ignore scanning partitions outside the requested range, turning multi-second full table scans into millisecond partition scans.
+
+Third, for data retention and archival. Deleting 10 million expired records using DELETE FROM table generates massive Write-Ahead Log bloat, locks rows, and triggers table fragmentation. With range partitioning, purging historical data is an instantaneous metadata operation: you simply run DROP TABLE or DETACH PARTITION, releasing gigabytes of disk space instantly without locks or downtime."
+
+## Scenario / Problem Context
+A table with 500 million records has degraded in query performance and daily maintenance (VACUUM, indexing) takes 12 hours. The interviewer wants to know how table partitioning works on a single database, when to use it over sharding, and how partition pruning accelerates queries.
+
+## Architectural Workflow / Sequence
+```mermaid
+flowchart TD
+    Query["SELECT * FROM events WHERE event_date = '2024-03-15'"] --> Parent[("Logical Parent Table: events")]
+    Parent --> Planner{"Partition Pruning Engine"}
+    Planner -. "SKIPPED (Pruned)" .-> P1[("Child: events_2024_01")]
+    Planner -. "SKIPPED (Pruned)" .-> P2[("Child: events_2024_02")]
+    Planner ==> "SCANNED DIRECTLY" ==> P3[("Child: events_2024_03 (Matched!)")]
+    Planner -. "SKIPPED (Pruned)" .-> P4[("Child: events_2024_04")]
+```
+
+## Deep-Dive Analysis & Root Causes
+
+| Type | UseCase | Mechanism | Advantages |
+| --- | --- | --- | --- |
+| Range Partitioning | Audit logs, orders, analytics, financial ledgers | Partitioned by date/timestamp or sequential IDs | Instant partition pruning on date ranges; instant data archival via `DROP PARTITION`
+List Partitioning | Multi-region tenancy, regulatory compliance (GDPR) | Partitioned by explicit enum or string list (e.g., country_code) | Data residency compliance; isolation of high-volume country traffic
+Hash Partitioning | Tables lacking natural date access patterns with heavy concurrent INSERTs | Modulus of hash function across N equal partitions | Distributes concurrent write I/O across separate storage tables |
+
+
+## Practical Debugging Commands & Code
+```sql
+-- 1. PostgreSQL: Create Range-Partitioned Parent Table:
+CREATE TABLE audit_logs (
+    id BIGSERIAL,
+    user_id INT NOT NULL,
+    action VARCHAR(50) NOT NULL,
+    created_at DATE NOT NULL,
+    PRIMARY KEY (id, created_at) -- Partition key MUST be part of primary key!
+) PARTITION BY RANGE (created_at);
+
+-- 2. Create Monthly Child Partitions:
+CREATE TABLE audit_logs_2024_01 PARTITION OF audit_logs
+    FOR VALUES FROM ('2024-01-01') TO ('2024-02-01');
+
+CREATE TABLE audit_logs_2024_02 PARTITION OF audit_logs
+    FOR VALUES FROM ('2024-02-01') TO ('2024-03-01');
+
+-- 3. Verify Partition Pruning in EXPLAIN output:
+EXPLAIN SELECT * FROM audit_logs 
+WHERE created_at = '2024-01-15';
+-- Notice only 'audit_logs_2024_01' is scanned; '2024_02' is completely ignored!
+
+-- 4. Instant Zero-Downtime Data Purging (No DELETE bloat!):
+ALTER TABLE audit_logs DETACH PARTITION audit_logs_2024_01;
+DROP TABLE audit_logs_2024_01; -- Instantly frees disk space!
+```
+
+## Prevention & Senior Best Practices
+- **Ensure Partition Pruning is Enabled:** Verify that `enable_partition_pruning = on` is set in PostgreSQL config.
+- **Avoid Over-Partitioning:** Creating thousands of partitions (e.g., daily partitions for 10 years) causes the query planner to choke and consume high CPU during plan generation. Target tens to low hundreds of partitions.
+- **Automate Future Partition Creation:** Use tools like `pg_partman` or cron jobs to pre-create future partitions ahead of time to avoid INSERT failures.

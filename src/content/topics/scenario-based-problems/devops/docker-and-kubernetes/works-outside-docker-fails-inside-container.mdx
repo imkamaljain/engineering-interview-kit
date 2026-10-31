@@ -1,0 +1,84 @@
+---
+title: "Application Works Outside Docker but Fails Inside the Container: Root Causes"
+description: "Diagnosing container isolation issues, localhost binding, missing environment files, non-root permissions, and architecture mismatches."
+category: "scenario-based-problems"
+subcategory: "DevOps: Docker & Kubernetes"
+order: 3
+---
+
+## Fast Revision (10-Second Recall)
+- **Top 5 Discrepancies Inside vs Outside Docker:**
+- 1. **Localhost Network Namespace:** Outside Docker, `localhost:5432` reaches Postgres. Inside a container, `localhost` means **the container itself**, NOT the host machine! (Must use `host.docker.internal` or Docker network name).
+- 2. **Interface Binding (`127.0.0.1` vs `0.0.0.0`):** App binds to `127.0.0.1`; port mapping `-p 8080:8080` fails to forward external traffic.
+- 3. **User Permissions (Non-Root User):** Host runs as your user; container runs as unprivileged user `node` lacking write access to root-owned paths.
+- 4. **Missing Environment Variables:** Host reads local `.env` file that was omitted by `.dockerignore`.
+- 5. **Operating System & Native C++ Bindings:** Native packages built on macOS (Darwin) copied into a Linux container fail with `invalid ELF header`.
+
+## The 30-Second Spoken Script
+"When an application works on the host machine but fails inside a Docker container, the failure almost always stems from the container's isolated network, filesystem, or process namespaces.
+
+Here are the top five root causes I check:
+
+Cause 1: Network Namespace Isolation ('localhost' is not the host).
+On the host, the app connects to the database via 'localhost:5432'. Inside Docker, 'localhost' refers to the container's own isolated network loopback. It cannot see the database running on the host machine. To connect to a database on the host, you must use 'host.docker.internal', or better yet, place both containers on the same Docker user-defined bridge network.
+
+Cause 2: Listening on 127.0.0.1 instead of 0.0.0.0.
+If the application server binds to 127.0.0.1 inside the container, Docker port forwarding (-p 8080:8080) cannot route traffic from the host to the process. The application must explicitly bind to 0.0.0.0.
+
+Cause 3: Missing Environment Variables or .dockerignore Exclusions.
+Locally, the application reads a local .env file. During the Docker build, .dockerignore appropriately excluded .env for security, but the developer forgot to pass those variables via 'docker run --env-file' or docker-compose.
+
+Cause 4: Architecture and Native Binary Mismatch.
+A developer on an Apple Silicon M-series Mac builds native C++ dependencies (like bcrypt) in their local node_modules, and then copies their local node_modules into a Linux AMD64 container. The container crashes immediately with 'invalid ELF header'. node_modules must always be built inside the container.
+
+Cause 5: File Permissions and Non-Root Users.
+Locally, the developer runs with full write permissions. In a hardened container running as USER node or appuser, attempts to write logs or temp files fail with EACCES: permission denied."
+
+## Scenario / Problem Context
+The code runs flawlessly with `npm start` or `python app.py` on the host machine. But when run inside a Docker container, it crashes or cannot connect to the database. The interviewer tests your understanding of container network namespaces, file systems, and isolation primitives.
+
+## Architectural Workflow / Sequence
+```mermaid
+flowchart TD
+    Host["Host Machine"] --> Container["Docker Container (Isolated Namespace)"]
+    
+    subgraph InsideContainer["Inside Container"]
+        App["App calls: http://localhost:5432"]
+        App -.x|"Fails! No DB inside container!"| Loopback["Container 127.0.0.1"]
+    end
+    
+    subgraph OnHost["On Host Machine"]
+        DB[("PostgreSQL Database (Port 5432)")]
+    end
+    
+    App ==>|"Fix: host.docker.internal:5432<br/>or Docker Bridge Network"| DB
+```
+
+## Deep-Dive Analysis & Root Causes
+
+| Issue | HostBehavior | ContainerBehavior | Fix |
+| --- | --- | --- | --- |
+| `localhost` Resolution | Resolves to host services (Postgres, Redis) | Resolves to container loopback; fails with `ECONNREFUSED` | Use Docker network service name (`postgres`) or `host.docker.internal`
+Port Binding | Works bound to `127.0.0.1` | Unreachable via `-p 8080:8080` from outside | Configure `HOST=0.0.0.0`
+Native Binaries (`node_modules`) | Compiled for macOS Darwin ARM64 | Crashes on Linux with `invalid ELF header` | Add `node_modules` to `.dockerignore` and run `npm ci` inside Dockerfile |
+
+
+## Practical Debugging Commands & Code
+```bash
+# 1. Test database reachability from inside running container:
+docker exec -it <container_id> nc -zv host.docker.internal 5432
+
+# 2. Check bound listening IP inside the container:
+docker exec -it <container_id> netstat -tuln
+
+# 3. Connect to container with bash to inspect environment and files:
+docker run -it --rm --entrypoint sh my-image:latest -c "id && env"
+
+# 4. Correct Docker run command with environment file and proper port mapping:
+docker run -d -p 8080:8080 --env-file .env.production my-image:latest
+```
+
+## Prevention & Senior Best Practices
+- **Always Put `node_modules` and `.env` in `.dockerignore`:** Never copy host binaries into Linux containers; install dependencies fresh inside the Docker image.
+- **Use Docker Compose for Multi-Container Local Dev:** Put the app and database in a `docker-compose.yml` so they communicate cleanly over a shared bridge network.
+- **Explicitly Set `USER` and File Ownership in Dockerfile:** Chown `/app` to non-root user (`chown -R node:node /app`) before switching to `USER node`.

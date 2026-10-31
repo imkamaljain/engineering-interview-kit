@@ -1,0 +1,185 @@
+---
+title: "Uploading Large Files Without Blocking the Backend: Node.js Streams, Backpressure, and Busboy"
+description: "Architect non-blocking file ingestion in Node.js backends: utilizing Node.js Streams, pipe backpressure management, Busboy chunk parsing, and direct-to-S3 passthrough."
+category: "scenario-based-problems"
+subcategory: "Files: Uploads & Streaming"
+tags: ["file-upload", "nodejs", "streams", "backpressure", "busboy", "memory-optimization"]
+date: 2026-10-31
+---
+
+## Fast Revision (10-Second Recall)
+- **The Node.js Event Loop Trap:** Buffering a file in memory with `fs.readFile()` or `multer.memoryStorage()` blocks the V8 garbage collector and exhausts heap memory.
+- **Node.js Streams (`stream.Readable` / `stream.Writable`):** Process data chunk-by-chunk (typically 64KB buffers) as it arrives over the TCP socket, keeping memory consumption flat at ~64KB regardless of whether the file is 100MB or 10GB.
+- **Backpressure (`highWaterMark`):** If the destination (S3/Disk) writes slower than the incoming network socket receives bytes, backpressure pauses the source socket stream, preventing memory buffer accumulation.
+- **Busboy vs Multer:** Use `busboy` for streaming `multipart/form-data` directly to cloud storage without touching local temporary disk drives.
+- **Streaming S3 Upload:** Use the AWS SDK `@aws-sdk/lib-storage` `Upload` class, which consumes a Node.js Readable stream and automatically performs a multipart S3 upload under the hood.
+
+## The 30-Second Spoken Script
+> "When architecture requirements mandate that files must pass through our backend (for example, to perform streaming encryption, on-the-fly virus scanning, or proprietary transformations), the only way to avoid blocking the backend is through **Node.js Streams and Backpressure Management**.
+>
+> In naive implementations, developers buffer the incoming file into server memory or write it to temporary disk files with `multer`. This consumes gigabytes of RAM, starves the event loop, and blocks other API requests.
+>
+> In senior engineering architectures, we process uploads as an unbroken streaming pipeline:
+> 1. We use **Busboy** to parse incoming `multipart/form-data` streams on the fly as chunks arrive from the HTTP request socket.
+> 2. Instead of writing chunks to disk, we pipe the file stream directly into an **AWS SDK v3 Upload** manager.
+> 3. The pipeline respects **TCP backpressure**: if the cloud storage bucket cannot absorb bytes as fast as the client uploads them, the Node.js stream automatically signals the incoming network socket to pause transmission.
+>
+> This guarantees that our backend container consumes a constant, predictable 20MB of RAM even when streaming multiple gigabyte-sized files concurrently."
+
+## Scenario / Problem Context
+A SaaS document compliance platform allowed legal enterprises to upload confidential legal bundles (typically 2GB to 5GB). Because compliance required files to be dynamically encrypted with an AES-256 customer-managed key before leaving the boundary, the company could not use direct presigned S3 uploads.
+
+The initial implementation used Express with `multer` disk storage:
+```typescript
+const upload = multer({ dest: '/tmp/uploads/' });
+app.post('/api/v1/compliance/upload', upload.single('bundle'), async (req, res) => {
+  // Multer saves the full 4GB to local Docker container disk first!
+  const fileStream = fs.createReadStream(req.file.path);
+  await uploadToS3(fileStream);
+  fs.unlinkSync(req.file.path);
+  res.json({ success: true });
+});
+```
+
+During a multi-firm legal audit, three firms uploaded 4GB bundles simultaneously:
+1. The Docker container's root disk partition ran out of disk space (`ENOSPC: no space left on device`). The entire container crashed.
+2. The heavy synchronous disk I/O saturated the node's disk write operations, causing all other microservices on the same Kubernetes worker node to experience severe latency degradation.
+
+The engineering team needs a non-blocking, zero-disk, zero-memory-buffering streaming pipeline.
+
+## Architectural Workflow / Sequence
+```mermaid
+flowchart LR
+    subgraph Client["Client Browser"]
+        ClientSocket["Incoming HTTP Request Stream (4GB)"]
+    end
+
+    subgraph Backend["Node.js Application Container (Flat ~30MB RAM)"]
+        ClientSocket -->|Stream Chunks (64KB)| Busboy["Busboy Streaming Parser"]
+        Busboy -->|Stream File| Crypto["Streaming AES-256 Cipher"]
+        Crypto -->|Stream Ciphertext| S3Upload["@aws-sdk/lib-storage Upload (Stream Manager)"]
+        
+        S3Upload -.->|Backpressure Signal: 'Pause Incoming'| ClientSocket
+    end
+
+    subgraph ObjectStorage["Amazon S3"]
+        S3Upload -->|Multipart PUT (10MB Chunks)| S3Bucket["S3 Encrypted Bucket"]
+    end
+
+    style Backend fill:#dfd,stroke:#090,stroke-width:2px
+    style ObjectStorage fill:#ddf,stroke:#009,stroke-width:2px
+```
+
+## Deep-Dive Analysis & Root Causes
+
+### 1. Understanding Stream Backpressure
+When streaming data from Source $A$ to Destination $B$:
+- If Client $A$ sends at 100 MB/s, but S3 $B$ accepts at 20 MB/s:
+- Without backpressure, Node.js buffers the 80 MB/s delta in system RAM. Within 20 seconds, the Node.js process exhausts its V8 heap and crashes with `JavaScript heap out of memory`.
+- **With backpressure:** When Node's internal buffer reaches `highWaterMark` (typically 64KB), `writable.write()` returns `false`. Node pauses reading from the client network socket until the destination flushes its buffer, keeping memory usage flat.
+
+### 2. Disk Storage vs Zero-Disk Streaming
+Writing to `/tmp/` inside Docker containers is an anti-pattern:
+- Container root filesystems have strict size limits (often 10GB-20GB).
+- Disk I/O introduces disk latency and wears out SSD write endurance.
+- Container restarts leave abandoned temporary files that leak disk space.
+- Zero-disk streaming pipes bytes directly from the network socket into the S3 client without touching container storage.
+
+### 3. Asynchronous Streaming Encryption
+Using `crypto.createCipheriv()` creates a `Transform` stream. By piping `request -> busboy -> cipher -> s3Upload`, data is encrypted in 64KB blocks on the fly with zero CPU-blocking pauses.
+
+## Practical Debugging Commands & Code
+
+### Step 1: Zero-Disk Non-Blocking Streaming Pipeline in Express / Node.js
+```typescript
+// src/routes/streamingUpload.ts
+import { Request, Response } from 'express';
+import busboy from 'busboy';
+import { S3Client } from '@aws-sdk/client-s3';
+import { Upload } from '@aws-sdk/lib-storage';
+import crypto from 'node:crypto';
+import { PassThrough } from 'node:stream';
+
+const s3 = new S3Client({ region: 'us-east-1' });
+
+export function handleStreamingUpload(req: Request, res: Response) {
+  // 1. Initialize Busboy streaming parser from request headers
+  const bb = busboy({ headers: req.headers, limits: { files: 1 } });
+
+  bb.on('file', (fieldname, fileStream, info) => {
+    const { filename, mimeType } = info;
+    const fileKey = `secure-vault/${Date.now()}-${filename}`;
+
+    // 2. Optional: Setup on-the-fly streaming AES-256 encryption
+    const encryptionKey = Buffer.from(process.env.ENCRYPTION_KEY_32_BYTES!, 'hex');
+    const iv = crypto.randomBytes(16);
+    const cipher = crypto.createCipheriv('aes-256-gcm', encryptionKey, iv);
+
+    // 3. Pipe file through cipher stream
+    const encryptedStream = fileStream.pipe(cipher);
+
+    // 4. Stream directly to S3 without touching local disk
+    const s3Upload = new Upload({
+      client: s3,
+      params: {
+        Bucket: 'compliance-vault-prod',
+        Key: fileKey,
+        Body: encryptedStream,
+        ContentType: mimeType,
+        Metadata: {
+          'x-encryption-iv': iv.toString('hex'),
+        },
+      },
+      queueSize: 4,          // Upload 4 parts in parallel
+      partSize: 10 * 1024 * 1024, // 10MB chunk threshold
+      leavePartsOnError: false,
+    });
+
+    s3Upload.done()
+      .then(() => {
+        res.status(201).json({ success: true, key: fileKey });
+      })
+      .catch((err) => {
+        console.error('S3 upload failed:', err);
+        res.status(500).json({ error: 'Streaming upload failed' });
+      });
+  });
+
+  bb.on('error', (err) => {
+    console.error('Busboy parsing error:', err);
+    res.status(400).json({ error: 'Malformed multipart body' });
+  });
+
+  // Pipe the incoming HTTP socket into Busboy
+  req.pipe(bb);
+}
+```
+
+### Step 2: Monitoring Process Memory During 5GB Stream
+Verify that process memory stays flat regardless of file size:
+
+```typescript
+// Memory logger confirming flat memory footprint during upload
+setInterval(() => {
+  const mem = process.memoryUsage();
+  console.log(`Heap: ${(mem.heapUsed / 1024 / 1024).toFixed(2)} MB | RSS: ${(mem.rss / 1024 / 1024).toFixed(2)} MB`);
+}, 5000);
+// Output will remain stable at ~40MB even while streaming a 5GB file!
+```
+
+### Step 3: Fast CLI Stress Test (Stream 2GB Dummy File)
+```bash
+# Generate and stream a 2GB test file directly through curl without saving to disk
+head -c 2147483648 /dev/urandom | curl -v -X POST \
+  -H "Content-Type: multipart/form-data" \
+  -F "bundle=@-;filename=test-2gb.bin" \
+  http://localhost:3000/api/v1/compliance/upload
+```
+
+## Prevention & Senior Best Practices
+1. **Never Buffer Uploads in Memory:** Ban `multer.memoryStorage()` in code reviews; buffering 500MB+ in memory will crash containers under concurrent load.
+2. **Never Write to Container Ephemeral Disk:** Ban writing uploads to `/tmp/`; stream directly to object storage via `stream.pipe()`.
+3. **Always Respect Stream Backpressure:** Use standard Node.js pipeline methods (`stream.pipeline()` or `pipe()`) which automatically handle `drain` events and backpressure pauses.
+4. **Use `@aws-sdk/lib-storage` for S3 Uploads:** Never use raw `PutObjectCommand` for streaming; use the AWS SDK `Upload` helper which handles multipart chunking and concurrent part uploads automatically.
+5. **Enforce Global Socket Timeouts with Keep-Alive:** Set explicit socket timeouts (`req.setTimeout(300000)`) on streaming upload routes to prevent hanging connections from stalled mobile devices.
+

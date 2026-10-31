@@ -1,0 +1,218 @@
+---
+title: "Decode Ways"
+description: "LeetCode #91"
+category: "NeetCode 150"
+difficulty: "medium"
+subcategory: "1-D Dynamic Programming"
+order: 7
+---
+
+## Problem Statement
+
+You have intercepted a secret message encoded as a string of numbers. The message is decoded via the following mapping:
+- `"1"` $\to$ `'A'`
+- `"2"` $\to$ `'B'`
+- ...
+- `"26"` $\to$ `'Z'`
+
+However, while decoding the message, you realize that there are many different ways you can decode the message because some codes are contained in other codes (`"2"` and `"5"` vs `"25"`).
+
+For example, `"11106"` can be decoded into:
+- `"AAJF"` with the grouping `(1, 1, 10, 6)`
+- `"KJF"` with the grouping `(11, 10, 6)`
+
+The grouping `(1, 11, 06)` is invalid because `"06"` is not a valid code (only `"6"` is valid, leading zeros are not allowed).
+
+Given a string `s` containing only digits, return the **number of ways to decode it**. If the entire string cannot be decoded in any valid way, return `0`.
+
+The test cases are generated so that the answer fits in a **32-bit** integer.
+
+**Example 1:**
+```text
+Input: s = "12"
+Output: 2
+Explanation: "12" could be decoded as "AB" (1 2) or "L" (12).
+```
+
+**Example 2:**
+```text
+Input: s = "226"
+Output: 3
+Explanation: "226" could be decoded as "BZ" (2 26), "VF" (22 6), or "BBF" (2 2 6).
+```
+
+**Example 3:**
+```text
+Input: s = "06"
+Output: 0
+Explanation: "06" cannot be mapped to "F" because of the leading zero ("6" is different from "06").
+```
+
+**Constraints:**
+- `1 <= s.length <= 100`
+- `s` consists of digits and may contain leading zero(s).
+
+
+## The Dynamic Programming Intuition
+
+This problem is a constrained variation of the classic *Climbing Stairs* recurrence:
+- In *Climbing Stairs*, from step $i$ you can always take 1 step or 2 steps.
+- In *Decode Ways*, you can decode either the **last 1 digit** or the **last 2 digits**, but **only if the formed numbers are valid!**
+
+### Validity Rules
+1. **Single-digit decode (`s[i]`):**
+   - Must be between `'1'` and `'9'`.
+   - `'0'` by itself cannot be mapped to any letter.
+   - If valid, it contributes `dp[i - 1]` ways.
+
+2. **Two-digit decode (`s[i-1 ... i]`):**
+   - Must be between `"10"` and `"26"` inclusive.
+   - Values with a leading zero (`"01"` through `"09"`) or values $> 26$ (`"27"` through `"99"`) are invalid.
+   - If valid, it contributes `dp[i - 2]` ways.
+
+### Recurrence Relation
+$$\text{dp}[i] = (\text{single valid ? } \text{dp}[i - 1] : 0) + (\text{double valid ? } \text{dp}[i - 2] : 0)$$
+
+If at any point both single-digit and two-digit decodings are invalid, $\text{dp}[i] = 0$, meaning the string cannot be decoded.
+
+
+## Mental Model
+
+<div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start my-8">
+  <div>
+    <h3 className="text-center mb-2 text-sm font-semibold text-gray-400">1. Decision Branches at Index i</h3>
+    ```mermaid
+    flowchart TD
+        Curr["At Digit s[i]"]
+        
+        Curr -->|"Single Digit: s[i] != '0'"| S1["Add prev1 ways"]
+        Curr -->|"Two Digits: '10' <= s[i-1..i] <= '26'"| S2["Add prev2 ways"]
+
+        S1 --> Sum["curr = single + double"]
+        S2 --> Sum
+
+        style S1 fill:#1e293b,stroke:#3b82f6,stroke-width:1px
+        style S2 fill:#1e293b,stroke:#f59e0b,stroke-width:1px
+        style Sum fill:#1e293b,stroke:#10b981,stroke-width:2px
+    ```
+    *Each position branches on valid 1-digit and 2-digit chunks.*
+  </div>
+
+  <div>
+    <h3 className="text-center mb-2 text-sm font-semibold text-gray-400">2. Evaluation on s = "226"</h3>
+    ```mermaid
+    flowchart LR
+        D0["Empty: dp[0] = 1"]
+        D1["'2': dp[1] = 1<br/>('B')"]
+        D2["'2': dp[2] = 2<br/>('BB', 'V')"]
+        D3["'6': dp[3] = 3<br/>('BBF', 'VF', 'BZ')"]
+
+        D0 --> D1 --> D2 --> D3
+
+        style D0 fill:#1e293b,stroke:#64748b,stroke-width:1px
+        style D1 fill:#1e293b,stroke:#3b82f6,stroke-width:1px
+        style D2 fill:#1e293b,stroke:#3b82f6,stroke-width:1px
+        style D3 fill:#1e293b,stroke:#10b981,stroke-width:2px
+    ```
+    *Index 2 adds both '6' (+dp[2]) and '26' (+dp[1]).*
+  </div>
+</div>
+
+
+## Solution 1: Space-Optimized DP ($O(N)$ Time, $O(1)$ Space) - Recommended
+
+Because calculating `dp[i]` only depends on `dp[i - 1]` and `dp[i - 2]`, we only need two variables:
+
+```javascript
+/**
+ * @param {string} s
+ * @return {number}
+ */
+var numDecodings = function(s) {
+    // A string starting with '0' cannot be decoded
+    if (!s || s[0] === '0') {
+        return 0;
+    }
+    
+    // prev2 represents dp[i - 2], prev1 represents dp[i - 1]
+    let prev2 = 1; // Empty string base case: 1 way
+    let prev1 = 1; // First character (known != '0'): 1 way
+    
+    for (let i = 1; i < s.length; i++) {
+        let curr = 0;
+        
+        // 1. Single digit decode: s[i]
+        if (s[i] !== '0') {
+            curr += prev1;
+        }
+        
+        // 2. Two-digit decode: s[i - 1 ... i]
+        const twoDigit = parseInt(s.substring(i - 1, i + 1), 10);
+        if (twoDigit >= 10 && twoDigit <= 26) {
+            curr += prev2;
+        }
+        
+        // Early exit: impossible to decode further
+        if (curr === 0) {
+            return 0;
+        }
+        
+        prev2 = prev1;
+        prev1 = curr;
+    }
+    
+    return prev1;
+};
+```
+
+
+## Solution 2: Bottom-Up Tabulation ($O(N)$ Time, $O(N)$ Space)
+
+```javascript
+/**
+ * @param {string} s
+ * @return {number}
+ */
+var numDecodingsTabulation = function(s) {
+    if (!s || s[0] === '0') return 0;
+    
+    const n = s.length;
+    const dp = new Int32Array(n + 1);
+    
+    dp[0] = 1; // Base case: 1 way to decode empty string
+    dp[1] = 1; // Base case: 1 way to decode first character
+    
+    for (let i = 2; i <= n; i++) {
+        const oneDigit = s[i - 1];
+        const twoDigit = s.substring(i - 2, i);
+        
+        if (oneDigit !== '0') {
+            dp[i] += dp[i - 1];
+        }
+        
+        const val = parseInt(twoDigit, 10);
+        if (val >= 10 && val <= 26) {
+            dp[i] += dp[i - 2];
+        }
+    }
+    
+    return dp[n];
+};
+```
+
+
+## Complexity Analysis
+
+| Metric | Complexity | Notes |
+| :--- | :--- | :--- |
+| **Time Complexity** | $O(N)$ | Single linear pass through the string of length $N$. |
+| **Space Complexity** | $O(1)$ | Space-optimized solution uses only two scalar integer variables (`prev1`, `prev2`). |
+| **Tabulation Space** | $O(N)$ | Array of size $N + 1$. |
+
+
+## Edge Cases
+
+- **Leading Zero (`s = "0"` or `s = "06"`):** Returns `0` immediately.
+- **Valid Embedded Zeros (`s = "10"` or `s = "20"`):** `'0'` cannot be decoded alone, but `"10"` and `"20"` are valid 2-digit characters; returns `1`.
+- **Invalid Embedded Zeros (`s = "30"` or `s = "100"`):** `"30"` is $> 26$, and `"00"` is invalid; both return `0`.
+- **Maximum Consecutive Decodings (`s = "1111"`):** Generates sequence `1, 2, 3, 5` (Fibonacci); returns `5`.
